@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilo de corpo base para um fundo suave */
+body {
+  @apply bg-gray-50 font-sans;
+}
