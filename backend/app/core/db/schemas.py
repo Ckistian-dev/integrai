@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any, Dict, Type
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
 # Importar Enums do models.py para garantir consistência
@@ -9,9 +9,9 @@ from .models import (
     EmpresaCRTEnum, EmpresaEmissaoEnum, UsuarioPerfilEnum, 
     CadastroTipoPessoaEnum, CadastroTipoCadastroEnum, ProdutoUnidadeEnum,
     ProdutoTipoEnum, ProdutoOrigemEnum, ContaTipoEnum, ContaSituacaoEnum,
-    ContaPlanoContasEnum, ContaCaixaEnum, EstoqueSituacaoEnum, PedidoSituacaoEnum,
+    EstoqueSituacaoEnum, PedidoSituacaoEnum,
     RegraRegimeEmitenteEnum, RegraTipoOperacaoEnum, RegraTipoClienteEnum,
-    RegraLocalizacaoDestinoEnum, CadastroIndicadorIEEnum
+    RegraLocalizacaoDestinoEnum, CadastroIndicadorIEEnum, PedidoModalidadeFreteEnum
 )
 
 # --- Schemas de Autenticação e Suporte ---
@@ -60,7 +60,9 @@ class EmpresaBase(BaseModel):
     cnpj: str = Field(..., max_length=18)
     razao: str
     fantasia: Optional[str] = None
+    url_logo: Optional[str] = None
     inscricao_estadual: Optional[str] = None
+    telefone: Optional[str] = None
     cep: str = Field(..., max_length=9)
     estado: Optional[str] = Field(None, max_length=2)
     cidade: Optional[str] = None
@@ -80,7 +82,9 @@ class EmpresaUpdate(BaseModel):
     cnpj: Optional[str] = Field(None, max_length=18)
     razao: Optional[str] = None
     fantasia: Optional[str] = None
+    url_logo: Optional[str] = None
     inscricao_estadual: Optional[str] = None
+    telefone: Optional[str] = None
     cep: Optional[str] = Field(None, max_length=9)
     estado: Optional[str] = Field(None, max_length=2)
     cidade: Optional[str] = None
@@ -229,8 +233,8 @@ class ProdutoBase(BaseModel):
     origem: ProdutoOrigemEnum = ProdutoOrigemEnum.nacional
     ncm: Optional[str] = None
     cfop: Optional[str] = None
-    preco: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    custo: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    preco: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    custo: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     estoque_negativo: bool = False
     peso: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
     altura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
@@ -261,8 +265,8 @@ class ProdutoUpdate(BaseModel):
     origem: Optional[ProdutoOrigemEnum] = None
     ncm: Optional[str] = None
     cfop: Optional[str] = None
-    preco: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    custo: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    preco: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    custo: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     estoque_negativo: Optional[bool] = None
     peso: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
     altura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
@@ -292,14 +296,14 @@ class ContaBase(BaseModel):
     situacao: ContaSituacaoEnum = ContaSituacaoEnum.em_aberto
     descricao: Optional[str] = None
     numero_conta: Optional[int] = None
-    data_emissao: Optional[datetime] = None
-    data_vencimento: Optional[datetime] = None # Corrigido de data_vendimento no models para data_vencimento
-    data_baixa: Optional[datetime] = None
-    plano_contas: ContaPlanoContasEnum = ContaPlanoContasEnum.despesas
-    caixa_destino_origem: ContaCaixaEnum = ContaCaixaEnum.sicredi
+    data_emissao: Optional[date] = None
+    data_vencimento: Optional[date] = None # Corrigido de data_vendimento no models para data_vencimento
+    data_baixa: Optional[date] = None
+    plano_contas: Optional[str] = None
+    caixa_destino_origem: Optional[str] = None
     observacoes: Optional[str] = None
     pagamento: Optional[str] = None
-    valor: Decimal = Field(..., max_digits=10, decimal_places=2)
+    valor: Decimal = Field(..., max_digits=15, decimal_places=2)
     
     id_fornecedor: Optional[int] = None
 
@@ -311,14 +315,14 @@ class ContaUpdate(BaseModel):
     situacao: Optional[ContaSituacaoEnum] = None
     descricao: Optional[str] = None
     numero_conta: Optional[int] = None
-    data_emissao: Optional[datetime] = None
-    data_vencimento: Optional[datetime] = None
-    data_baixa: Optional[datetime] = None
-    plano_contas: Optional[ContaPlanoContasEnum] = None
-    caixa_destino_origem: Optional[ContaCaixaEnum] = None
+    data_emissao: Optional[date] = None
+    data_vencimento: Optional[date] = None
+    data_baixa: Optional[date] = None
+    plano_contas: Optional[str] = None
+    caixa_destino_origem: Optional[str] = None
     observacoes: Optional[str] = None
     pagamento: Optional[str] = None
-    valor: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    valor: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     id_fornecedor: Optional[int] = None
 
 class Conta(ContaBase):  # RENOMEADO de ContaRead para Conta
@@ -373,21 +377,20 @@ class Estoque(EstoqueBase):  # RENOMEADO de EstoqueRead para Estoque
 # --- 8. Schemas de Pedido ---
 
 class PedidoBase(BaseModel):
-    data_emissao: Optional[datetime] = None
-    data_validade: Optional[datetime] = None
-    data_finalizacao: Optional[datetime] = None
+    data_emissao: Optional[date] = None
+    data_validade: Optional[date] = None
+    data_finalizacao: Optional[date] = None
     origem_venda: Optional[str] = None
-    modalidade_frete: Optional[str] = None
-    valor_frete: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    prazo_entrega: Optional[str] = None
-    total: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    desconto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    total_desconto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    modalidade_frete: Optional[PedidoModalidadeFreteEnum] = None
+    valor_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    prazo_entrega: Optional[int] = None
+    total: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    total_desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     itens: Optional[List[Dict[str, Any]]] = None
     pagamento: Optional[str] = None
     observacao: Optional[str] = None
-    ordem_finalizacao: Optional[str] = None
-    endereco_expedicao: Optional[str] = None
+    ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
     natureza_operacao: Optional[str] = None
     cfop: Optional[str] = None
     icms_cst: Optional[str] = None
@@ -413,21 +416,20 @@ class PedidoCreate(PedidoBase):
     pass
 
 class PedidoUpdate(BaseModel):
-    data_emissao: Optional[datetime] = None
-    data_validade: Optional[datetime] = None
-    data_finalizacao: Optional[datetime] = None
+    data_emissao: Optional[date] = None
+    data_validade: Optional[date] = None
+    data_finalizacao: Optional[date] = None
     origem_venda: Optional[str] = None
-    modalidade_frete: Optional[str] = None
-    valor_frete: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    prazo_entrega: Optional[str] = None
-    total: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    desconto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    total_desconto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    modalidade_frete: Optional[PedidoModalidadeFreteEnum] = None
+    valor_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    prazo_entrega: Optional[int] = None
+    total: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    total_desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     itens: Optional[List[Dict[str, Any]]] = None
     pagamento: Optional[str] = None
     observacao: Optional[str] = None
-    ordem_finalizacao: Optional[str] = None
-    endereco_expedicao: Optional[str] = None
+    ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
     natureza_operacao: Optional[str] = None
     cfop: Optional[str] = None
     icms_cst: Optional[str] = None

@@ -15,7 +15,7 @@ def get_user(db: Session, user_id: int) -> Optional[models. Usuario]:
     """Busca um usuário pelo ID."""
     return db.query(models. Usuario).filter(models. Usuario.id == user_id).first()
 
-def create_user(db: Session, *, obj_in:  UsuarioCreate) -> models. Usuario:
+def create_user(db: Session, *, obj_in:  UsuarioCreate, id_empresa: int) -> models. Usuario:
     """Cria um novo usuário no banco de dados."""
     senha = get_password_hash(obj_in.senha)
     
@@ -24,7 +24,8 @@ def create_user(db: Session, *, obj_in:  UsuarioCreate) -> models. Usuario:
     
     db_user = models. Usuario(
         **db_obj_data,
-        senha=senha
+        senha=senha,
+        id_empresa=id_empresa
     )
     db.add(db_user)
     db.commit()

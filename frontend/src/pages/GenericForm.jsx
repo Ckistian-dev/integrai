@@ -197,7 +197,7 @@ const GenericForm = () => {
     <div className="bg-gray-100 min-h-screen p-16 overflow-y-scroll">
       <div className="container mx-auto max-w-7xl"> {/* Limita a largura máxima */}
         <form onSubmit={handleSubmit}>
-          <div className="overflow-hidden">
+          <div className="">
 
             {/* 1. CABEÇALHO DO CARD: Título e Separador */}
             <h1 className="text-4xl font-bold text-gray-800 mb-6">
@@ -267,6 +267,7 @@ const GenericForm = () => {
                           value={formData[field.name] || ''}
                           onChange={handleChange}
                           error={formErrors[field.name]}
+                          modelName={modelName}
                         />
                       ))}
                     </div>

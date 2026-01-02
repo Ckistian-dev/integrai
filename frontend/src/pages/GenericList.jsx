@@ -5,6 +5,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../api/axiosConfig';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import ProgramacaoPedidoModal from '../components/ui/ProgramacaoPedidoModal'; // 1. IMPORTAR O NOVO MODAL
+import ModalVisualizarPedido from '../components/ModalVisualizarPedido'; // Importar o modal de visualização
+import ConferenciaPedidoModal from '../components/ui/ConferenciaPedidoModal'; // Importar o modal de conferência
 import Modal from '../components/ui/Modal';
 import {
   Plus,
@@ -17,7 +19,10 @@ import {
   Loader2,
   CheckSquare,
   ThumbsUp,
-  Send
+  Send,
+  Package,
+  CheckCircle,
+  Eye // Ícone para visualizar
 } from 'lucide-react';
 
 function useDebounce(value, delay) {
@@ -97,6 +102,30 @@ const statusChangeActions = {
       // Chave especial para nosso handler customizado
       onClickHandler: 'programar'
     },
+    {
+      // Ação para finalizar Produção -> ir para Embalagem
+      currentStatus: "Produção",
+      newStatus: "Embalagem",
+      buttonLabel: "Finalizar Produção",
+      buttonIcon: Package,
+      buttonClasses: "bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400",
+      onClickHandler: 'conferencia', // Handler genérico para conferência
+      modalTitle: "Conferência de Produção",
+      modalConfirmText: "Confirmar e Enviar para Embalagem",
+      modalVariant: "indigo"
+    },
+    {
+      // Ação para finalizar Embalagem -> ir para Expedição
+      currentStatus: "Embalagem",
+      newStatus: "Expedição",
+      buttonLabel: "Finalizar Embalagem",
+      buttonIcon: CheckCircle,
+      buttonClasses: "bg-teal-600 hover:bg-teal-700 disabled:bg-teal-400",
+      onClickHandler: 'conferencia',
+      modalTitle: "Conferência de Embalagem",
+      modalConfirmText: "Concluir Embalagem",
+      modalVariant: "teal"
+    },
   ]
 };
 
@@ -118,6 +147,12 @@ const GenericList = () => {
   const [isProgramacaoModalOpen, setIsProgramacaoModalOpen] = useState(false);
   const [currentPedidoDetails, setCurrentPedidoDetails] = useState(null);
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
+
+  const [isConferenciaModalOpen, setIsConferenciaModalOpen] = useState(false);
+  const [conferenciaConfig, setConferenciaConfig] = useState(null);
+
+  const [isVisualizarModalOpen, setIsVisualizarModalOpen] = useState(false);
+  const [pedidoParaVisualizar, setPedidoParaVisualizar] = useState(null);
 
   const [selectedRowId, setSelectedRowId] = useState(null);
 
@@ -163,7 +198,12 @@ const GenericList = () => {
 
       try {
         const skip = (page - 1) * limit;
-        const params = { skip, limit };
+        const params = { 
+          skip, 
+          limit,
+          sort_by: 'updated_at',
+          sort_order: 'desc'
+        };
         if (debouncedSearchTerm) {
           params.search_term = debouncedSearchTerm;
         }
@@ -328,6 +368,86 @@ const GenericList = () => {
     }
   };
 
+  /**
+   * Handler para abrir o modal de conferência (Produção/Embalagem)
+   */
+  const handleOpenConferenciaModal = async (actionDetails) => {
+    if (!selectedRowId) return;
+    
+    setIsFetchingDetails(true);
+    setConferenciaConfig(actionDetails); // Salva a config (título, novo status, etc)
+    
+    try {
+      const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+      setCurrentPedidoDetails(res.data);
+      setIsConferenciaModalOpen(true);
+    } catch (err) {
+      console.error("Falha ao buscar detalhes:", err);
+      alert("Não foi possível carregar os detalhes do pedido.");
+    } finally {
+      setIsFetchingDetails(false);
+    }
+  };
+
+  const handleCloseConferenciaModal = () => {
+    setIsConferenciaModalOpen(false);
+    setConferenciaConfig(null);
+    setCurrentPedidoDetails(null);
+  };
+
+  const handleConfirmConferencia = async () => {
+    if (!selectedRowId || !conferenciaConfig) return;
+
+    try {
+      await api.put(`/generic/pedidos/${selectedRowId}`, {
+        situacao: conferenciaConfig.newStatus
+      });
+      setData(data.filter((item) => item.id !== selectedRowId));
+      setTotalCount(prev => prev - 1);
+      setSelectedRowId(null);
+      handleCloseConferenciaModal();
+    } catch (err) {
+      console.error("Erro ao atualizar status:", err);
+      alert("Erro ao atualizar o status do pedido.");
+    }
+  };
+
+  /**
+   * Handler para abrir o modal de visualização do pedido.
+   */
+  const handleOpenVisualizarModal = async () => {
+    if (!selectedRowId) return;
+
+    setIsFetchingDetails(true);
+    try {
+      const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+      const rawPedido = res.data;
+
+      // O modal de visualização espera um formato um pouco diferente do que a API retorna.
+      // Criamos um objeto adaptado para ele.
+      const pedidoAdaptado = {
+        ...rawPedido,
+        cliente_nome: rawPedido.cliente?.nome_razao || 'Não informado',
+        vendedor_nome: rawPedido.vendedor?.nome_razao || 'Não informado',
+        transportadora_nome: rawPedido.transportadora?.nome_razao || '',
+        // O modal espera 'itens' e 'pagamento' no formato que vem do backend,
+        // então não precisamos converter para string aqui.
+      };
+
+      setPedidoParaVisualizar(pedidoAdaptado);
+      setIsVisualizarModalOpen(true);
+    } catch (err) {
+      console.error("Falha ao buscar detalhes do pedido para visualização:", err);
+      alert("Não foi possível carregar os detalhes do pedido.");
+    } finally {
+      setIsFetchingDetails(false);
+    }
+  };
+
+  const handleCloseVisualizarModal = () => {
+    setIsVisualizarModalOpen(false);
+    setPedidoParaVisualizar(null);
+  };
 
   const handleExportCSV = async () => {
     setIsExporting(true);
@@ -407,7 +527,13 @@ const GenericList = () => {
 
   // Na imagem, a coluna ID é mostrada. 
   // Vamos garantir que 'id' esteja na lista de colunas e seja a primeira.
-  const displayColumns = columns.filter(col => col !== 'id');
+  // CORREÇÃO DO ERRO: Filtramos colunas de objetos complexos (itens, retiradas) para não quebrar a lista
+  const displayColumns = columns.filter(col => 
+    col !== 'id' && 
+    col !== 'itens' && 
+    col !== 'retiradas_detalhadas' && 
+    col !== 'retiradas_detalhadas_json'
+  );
 
 
   return (
@@ -442,6 +568,20 @@ const GenericList = () => {
               )}
               {isExporting ? 'Exportando...' : 'Exportar CSV'}
             </button>
+
+            {/* Botão Visualizar Pedido */}
+            {modelName === 'pedidos' && (
+              <button
+                type="button"
+                onClick={handleOpenVisualizarModal}
+                disabled={!selectedRowId || isFetchingDetails}
+                className="flex items-center px-4 py-2 bg-gray-500 text-white rounded-md shadow-sm hover:bg-gray-600 text-sm font-medium disabled:cursor-not-allowed"
+              >
+                <Eye size={16} className="mr-2" />
+                Visualizar
+              </button>
+            )}
+
           </div>
 
           {/* Filtros Lado Direito (Conforme a Imagem) */}
@@ -502,6 +642,8 @@ const GenericList = () => {
                 let onClickAction;
                 if (action.onClickHandler === 'programar') {
                   onClickAction = handleOpenProgramacaoModal;
+                } else if (action.onClickHandler === 'conferencia') {
+                  onClickAction = () => handleOpenConferenciaModal(action);
                 } else {
                   // O padrão genérico
                   onClickAction = () => handleStatusChangeClick(action);
@@ -583,9 +725,29 @@ const GenericList = () => {
                     {displayColumns.map((colName) => {
 
                       // --- LÓGICA DE RENDERIZAÇÃO DA CÉLULA ---
-                      const value = item[colName];
+                      let value = item[colName];
                       // Busca o 'field' (ex: {name: "is_active", type: "boolean"})
                       const field = fieldMetaMap.get(colName);
+
+                      // --- LÓGICA PARA EXIBIR LABEL DE RELACIONAMENTO (FK) ---
+                      if (field && field.foreign_key_model) {
+                        // Tenta inferir o nome da propriedade de relacionamento no objeto (ex: id_cliente -> cliente)
+                        let relationProp = colName;
+                        if (relationProp.startsWith('id_')) {
+                          relationProp = relationProp.substring(3);
+                        } else if (relationProp.endsWith('_id')) {
+                          relationProp = relationProp.slice(0, -3);
+                        }
+
+                        // Se o objeto relacionado existir no item e tiver o campo de label configurado
+                        if (item[relationProp] && typeof item[relationProp] === 'object') {
+                           const labelField = field.foreign_key_label_field || 'id';
+                           // Atualiza o valor para ser exibido
+                           if (item[relationProp][labelField] !== undefined) {
+                             value = item[relationProp][labelField];
+                           }
+                        }
+                      }
 
                       return (
                         <td
@@ -596,6 +758,10 @@ const GenericList = () => {
                           {(field && field.type === 'boolean')
                             ? <BooleanDisplay value={value} />
                             : (field && field.ui_type === 'password') || // Verifica metadados (ex: ui_type)
+                              // CORREÇÃO DE SEGURANÇA: Se for objeto e não for null, não renderiza para evitar crash
+                              (typeof value === 'object' && value !== null) 
+                              ? <span className="text-gray-400 text-xs">[Detalhes]</span> 
+                              :
                               colName.toLowerCase().includes('password') || // Fallback pelo nome (inglês)
                               colName.toLowerCase().includes('senha') // Fallback pelo nome (português)
                               ? '*********'
@@ -680,10 +846,26 @@ const GenericList = () => {
           pedido={currentPedidoDetails} // Passa o pedido completo
         // O modal vai mostrar seu próprio loading se 'pedido' for nulo
         />
+
+        {/* NOVO MODAL DE CONFERÊNCIA (PRODUZIR / EMBALAR) */}
+        <ConferenciaPedidoModal
+          isOpen={isConferenciaModalOpen}
+          onClose={handleCloseConferenciaModal}
+          onConfirm={handleConfirmConferencia}
+          pedido={currentPedidoDetails}
+          title={conferenciaConfig?.modalTitle}
+          confirmText={conferenciaConfig?.modalConfirmText}
+          variant={conferenciaConfig?.modalVariant}
+        />
+
+        {/* MODAL DE VISUALIZAÇÃO DE PEDIDO */}
+        {isVisualizarModalOpen && (
+          <ModalVisualizarPedido pedido={pedidoParaVisualizar} onClose={handleCloseVisualizarModal} />
+        )}
+
       </div>
     </div >
   );
 };
 
 export default GenericList;
-

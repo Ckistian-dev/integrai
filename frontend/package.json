@@ -13,6 +13,8 @@
     "@headlessui/react": "^2.2.9",
     "axios": "^1.7.2",
     "framer-motion": "^12.23.26",
+    "html2pdf": "^0.0.11",
+    "html2pdf.js": "^0.12.1",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.552.0",
     "react": "^18.2.0",
@@ -21,6 +23,8 @@
     "react-imask": "^7.6.1",
     "react-router-dom": "^6.23.1",
     "react-select": "^5.10.2",
+    "react-toastify": "^11.0.5",
+    "recharts": "^3.6.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

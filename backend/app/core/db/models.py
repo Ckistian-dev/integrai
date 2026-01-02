@@ -4,6 +4,7 @@ from sqlalchemy import (
     DateTime, Numeric, JSON, Text, Date
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -68,30 +69,21 @@ class ProdutoOrigemEnum(str, enum.Enum):
     
 # Para Conta 
 class ContaTipoEnum(str, enum.Enum):
-    a_receber = "a receber"
-    a_pagar = "a pagar"
+    a_receber = "A Receber"
+    a_pagar = "A Pagar"
 
 class ContaSituacaoEnum(str, enum.Enum):
-    em_aberto = "em aberto"
-    pago = "pago"
-    vencido = "vencido"
-    cancelado = "cancelado"
+    em_aberto = "Em Aberto"
+    pago = "Pago"
+    vencido = "Vencido"
+    cancelado = "Cancelado"
 
-class ContaPlanoContasEnum(str, enum.Enum):
-    receitas = "receitas"
-    despesas = "despesas"
-    custos = "custos"
-    
-class ContaCaixaEnum(str, enum.Enum):
-    sicredi = "sicredi"
-    caixa_interno = "caixa interno"
-    nubank = "nubank"
 
 # Para Estoque 
 class EstoqueSituacaoEnum(str, enum.Enum):
-    disponivel = "disponivel"
-    reservado = "reservado"
-    indisponivel = "indisponivel"
+    disponivel = "Disponivel"
+    reservado = "Reservado"
+    indisponivel = "Indisponível"
 
 # Para Pedido 
 class PedidoSituacaoEnum(str, enum.Enum):
@@ -104,11 +96,19 @@ class PedidoSituacaoEnum(str, enum.Enum):
     expedicao = "Expedição"
     cancelado = "Cancelado"
 
+class PedidoModalidadeFreteEnum(str, enum.Enum):
+    cif = "0"
+    fob = "1"
+    terceiros = "2"
+    proprio_remetente = "3"
+    proprio_destinatario = "4"
+    sem_frete = "9"
+
 # Para Tributacao 
 class RegraRegimeEmitenteEnum(str, enum.Enum):
-    simples_nacional = "SimplesNacional"
-    lucro_presumido = "LucroPresumido"
-    lucro_real = "LucroReal"
+    simples_nacional = "Simples Nacional"
+    lucro_presumido = "Lucro Presumido"
+    lucro_real = "Lucro Real"
 
 class RegraTipoOperacaoEnum(str, enum.Enum):
     venda = "Venda"
@@ -127,6 +127,12 @@ class RegraLocalizacaoDestinoEnum(str, enum.Enum):
     exterior = "Exterior"
 
 
+# --- Tipos Customizados ---
+class Currency(Numeric):
+    """Tipo customizado para valores monetários (BRL)."""
+    def __init__(self, precision=15, scale=2, asdecimal=True, **kwargs):
+        super().__init__(precision=precision, scale=scale, asdecimal=asdecimal, **kwargs)
+
 # --- Modelos (Tabelas) ---
 
 class Empresa(Base):
@@ -144,8 +150,12 @@ class Empresa(Base):
                    info={'tab': 'Dados Gerais'})
     fantasia = Column(String, 
                       info={'tab': 'Dados Gerais'})
+    url_logo = Column(String, 
+                      info={'tab': 'Dados Gerais', 'label': 'URL do Logo'})
     inscricao_estadual = Column(String, 
                                 info={'tab': 'Dados Gerais'})
+    telefone = Column(String, 
+                      info={'format_mask': 'phone', 'tab': 'Dados Gerais'})
     
     # --- Aba: Endereço ---
     cep = Column(String(9), nullable=False, 
@@ -166,9 +176,9 @@ class Empresa(Base):
     # --- Aba: Configurações ---
     cnae = Column(String, 
                   info={'tab': 'Configurações'})
-    crt = Column(SQLAlchemyEnum(EmpresaCRTEnum), nullable=False, default=EmpresaCRTEnum.simples_nacional, 
+    crt = Column(SQLAlchemyEnum(EmpresaCRTEnum, native_enum=False), nullable=False, default=EmpresaCRTEnum.simples_nacional, 
                  info={'tab': 'Configurações'})
-    emissao = Column(SQLAlchemyEnum(EmpresaEmissaoEnum), nullable=False, default=EmpresaEmissaoEnum.desenvolvimento, 
+    emissao = Column(SQLAlchemyEnum(EmpresaEmissaoEnum, native_enum=False), nullable=False, default=EmpresaEmissaoEnum.desenvolvimento, 
                      info={'tab': 'Configurações'})
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Configurações'})
@@ -176,6 +186,14 @@ class Empresa(Base):
     # Campos Internos
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @hybrid_property
+    def id_empresa(self):
+        return self.id
+
+    @id_empresa.expression
+    def id_empresa(cls):
+        return cls.id
 
     # Relacionamentos (One-to-Many para todos os outros modelos)
     usuarios = relationship("Usuario", back_populates="empresa")
@@ -203,7 +221,7 @@ class Usuario(Base):
                    info={'tab': 'Dados Gerais'})
     senha = Column(String, nullable=False, 
                    info={'tab': 'Dados Gerais'}) # Hashed password
-    perfil = Column(SQLAlchemyEnum(UsuarioPerfilEnum), nullable=False, default=UsuarioPerfilEnum.vendedor, 
+    perfil = Column(SQLAlchemyEnum(UsuarioPerfilEnum, native_enum=False), nullable=False, default=UsuarioPerfilEnum.vendedor, 
                     info={'tab': 'Dados Gerais'})
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais'})
@@ -235,13 +253,13 @@ class Cadastro(Base):
                         info={'tab': 'Dados Gerais'})
     fantasia = Column(String, 
                       info={'tab': 'Dados Gerais'})
-    tipo_pessoa = Column(SQLAlchemyEnum(CadastroTipoPessoaEnum), nullable=False, default=CadastroTipoPessoaEnum.fisica, 
+    tipo_pessoa = Column(SQLAlchemyEnum(CadastroTipoPessoaEnum, native_enum=False), nullable=False, default=CadastroTipoPessoaEnum.fisica, 
                          info={'tab': 'Dados Gerais'})
-    tipo_cadastro = Column(SQLAlchemyEnum(CadastroTipoCadastroEnum), nullable=False, default=CadastroTipoCadastroEnum.cliente, 
+    tipo_cadastro = Column(SQLAlchemyEnum(CadastroTipoCadastroEnum, native_enum=False), nullable=False, default=CadastroTipoCadastroEnum.cliente, 
                            info={'tab': 'Dados Gerais'})
     
     # Fiscal (ainda em Dados Gerais)
-    indicador_ie = Column( SQLAlchemyEnum( CadastroIndicadorIEEnum, native_enum=False, values_callable=lambda x: [e.value for e in x], empty_strings_to_null=True ),
+    indicador_ie = Column( SQLAlchemyEnum( CadastroIndicadorIEEnum, native_enum=False, values_callable=lambda x: [e.value for e in x] ),
         nullable=True, default=CadastroIndicadorIEEnum.nao_contribuinte,
         info={'tab': 'Dados Gerais'} )
     inscricao_estadual = Column(String, 
@@ -284,13 +302,13 @@ class Cadastro(Base):
     empresa = relationship("Empresa", back_populates="cadastros")
     
     # Relacionamentos (One-to-Many) para Pedidos
-    pedidos_como_cliente = relationship("Pedido", back_populates="cliente", foreign_keys="[Pedido.id_cliente]")
-    pedidos_como_vendedor = relationship("Pedido", back_populates="vendedor", foreign_keys="[Pedido.id_vendedor]")
-    pedidos_como_transportadora = relationship("Pedido", back_populates="transportadora", foreign_keys="[Pedido.id_transportadora]")
+    pedidos_como_cliente = relationship("Pedido", back_populates="cliente", foreign_keys="Pedido.id_cliente")
+    pedidos_como_vendedor = relationship("Pedido", back_populates="vendedor", foreign_keys="Pedido.id_vendedor")
+    pedidos_como_transportadora = relationship("Pedido", back_populates="transportadora", foreign_keys="Pedido.id_transportadora")
     
     # Relacionamentos (One-to-Many) para outros modelos
-    produtos_como_fornecedor = relationship("Produto", back_populates="fornecedor", foreign_keys="[Produto.id_fornecedor]")
-    contas_como_fornecedor = relationship("Conta", back_populates="fornecedor", foreign_keys="[Conta.id_fornecedor]")
+    produtos_como_fornecedor = relationship("Produto", back_populates="fornecedor")
+    contas_como_fornecedor = relationship("Conta", back_populates="fornecedor")
 
 
 class Embalagem(Base):
@@ -338,9 +356,9 @@ class Produto(Base):
                   info={'tab': 'Dados Gerais'})
     descricao = Column(String, nullable=False, index=True, 
                        info={'tab': 'Dados Gerais'})
-    unidade = Column(SQLAlchemyEnum(ProdutoUnidadeEnum), default=ProdutoUnidadeEnum.un, 
+    unidade = Column(SQLAlchemyEnum(ProdutoUnidadeEnum, native_enum=False), default=ProdutoUnidadeEnum.un, 
                      info={'tab': 'Dados Gerais'})
-    tipo_produto = Column(SQLAlchemyEnum(ProdutoTipoEnum), default=ProdutoTipoEnum.mercadoria_revenda, 
+    tipo_produto = Column(SQLAlchemyEnum(ProdutoTipoEnum, native_enum=False), default=ProdutoTipoEnum.mercadoria_revenda, 
                           info={'tab': 'Dados Gerais'})
     url_imagem = Column(String, 
                         info={'tab': 'Dados Gerais'})
@@ -368,18 +386,16 @@ class Produto(Base):
     # --- Aba: Fiscal ---
     classificacao_fiscal = Column(String, 
                                   info={'tab': 'Fiscal'})
-    origem = Column(SQLAlchemyEnum(ProdutoOrigemEnum), default=ProdutoOrigemEnum.nacional, 
+    origem = Column(SQLAlchemyEnum(ProdutoOrigemEnum, native_enum=False), default=ProdutoOrigemEnum.nacional, 
                     info={'tab': 'Fiscal'})
-    ncm = Column(String, 
-                 info={'tab': 'Fiscal'})
-    cfop = Column(String, 
-                  info={'tab': 'Fiscal'})
+    ncm = Column(String(8), 
+                 info={'format_mask': 'ncm', 'tab': 'Fiscal'})
     
     # --- Aba: Valores e Dimensões ---
-    preco = Column(Numeric(10, 2), 
-                   info={'format_mask': 'currency', 'tab': 'Valores e Dimensões'}) 
-    custo = Column(Numeric(10, 2), 
-                   info={'format_mask': 'currency', 'tab': 'Valores e Dimensões'})
+    preco = Column(Currency(), 
+                   info={'tab': 'Valores e Dimensões'}) 
+    custo = Column(Currency(), 
+                   info={'tab': 'Valores e Dimensões'})
     estoque_negativo = Column(Boolean, default=False, 
                               info={'tab': 'Valores e Dimensões'})
     
@@ -417,9 +433,9 @@ class Conta(Base):
     id = Column(Integer, primary_key=True, index=True)
     
     # --- Aba: Principal ---
-    tipo_conta = Column(SQLAlchemyEnum(ContaTipoEnum), nullable=False, default=ContaTipoEnum.a_receber, 
+    tipo_conta = Column(SQLAlchemyEnum(ContaTipoEnum, native_enum=False), nullable=False, default=ContaTipoEnum.a_receber, 
                         info={'tab': 'Principal'})
-    situacao = Column(SQLAlchemyEnum(ContaSituacaoEnum), nullable=False, default=ContaSituacaoEnum.em_aberto, 
+    situacao = Column(SQLAlchemyEnum(ContaSituacaoEnum, native_enum=False), nullable=False, default=ContaSituacaoEnum.em_aberto, 
                       info={'tab': 'Principal'})
     descricao = Column(String, 
                        info={'tab': 'Principal'})
@@ -429,14 +445,14 @@ class Conta(Base):
                            info={'tab': 'Principal'}) # Ref. Cadastro (tipo_cadastro=fornecedor)
 
     # --- Aba: Financeiro ---
-    valor = Column(Numeric(10, 2), nullable=False, 
-                   info={'format_mask': 'currency', 'tab': 'Financeiro'})
-    plano_contas = Column(SQLAlchemyEnum(ContaPlanoContasEnum), default=ContaPlanoContasEnum.despesas, 
-                          info={'tab': 'Financeiro'})
-    caixa_destino_origem = Column(SQLAlchemyEnum(ContaCaixaEnum), default=ContaCaixaEnum.sicredi, 
-                                  info={'tab': 'Financeiro'})
+    valor = Column(Currency(), nullable=False, 
+                   info={'tab': 'Financeiro'})
+    plano_contas = Column(String, 
+                 info={'tab': 'Financeiro', 'component': 'creatable_select'})
+    caixa_destino_origem = Column(String, 
+                 info={'tab': 'Financeiro', 'component': 'creatable_select'})
     pagamento = Column(String, 
-                       info={'tab': 'Financeiro'})
+                 info={'tab': 'Financeiro', 'component': 'creatable_select'})
 
     # --- Aba: Datas ---
     data_emissao = Column(Date, 
@@ -477,18 +493,18 @@ class Estoque(Base):
                   info={'tab': 'Principal'})
     quantidade = Column(Integer, nullable=False, 
                         info={'tab': 'Principal'})
-    situacao = Column(SQLAlchemyEnum(EstoqueSituacaoEnum), nullable=False, default=EstoqueSituacaoEnum.disponivel, 
+    situacao = Column(SQLAlchemyEnum(EstoqueSituacaoEnum, native_enum=False), nullable=False, default=EstoqueSituacaoEnum.disponivel, 
                       info={'tab': 'Principal'})
 
     # --- Aba: Localização ---
     deposito = Column(String, 
-                      info={'tab': 'Localização'})
+                      info={'tab': 'Localização', 'component': 'creatable_select'})
     rua = Column(String, 
-                 info={'tab': 'Localização'})
+                 info={'tab': 'Localização', 'component': 'creatable_select'})
     nivel = Column(String, 
-                   info={'tab': 'Localização'})
+                   info={'tab': 'Localização', 'component': 'creatable_select'})
     cor = Column(String, 
-                 info={'tab': 'Localização'}) # Pode ser usado para variante
+                 info={'tab': 'Localização', 'component': 'creatable_select'}) # Pode ser usado para variante
     
     # Campos Internos
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -516,45 +532,42 @@ class Pedido(Base):
     id_vendedor = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
                          info={'tab': 'Principal'}) # Ref. Cadastro (tipo_cadastro=vendedor)
     id_transportadora = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
-                               info={'tab': 'Principal'}) # Ref. Cadastro (tipo_cadastro=transportadora)
+                               info={'tab': 'Frete'}) # Ref. Cadastro (tipo_cadastro=transportadora)
     origem_venda = Column(String, 
-                          info={'tab': 'Principal'})
-    situacao = Column(SQLAlchemyEnum(PedidoSituacaoEnum), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+                          info={'tab': 'Principal', 'component': 'creatable_select'})
+    situacao = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=False), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Principal'})
 
     # --- Aba: Datas e Prazos ---
-    data_emissao = Column(Date, default=func.now(), 
+    data_emissao = Column(Date, default=func.current_date(), 
                           info={'tab': 'Datas e Prazos'})
     data_validade = Column(Date, 
                            info={'tab': 'Datas e Prazos'})
     data_finalizacao = Column(Date, 
                               info={'tab': 'Datas e Prazos'})
-    prazo_entrega = Column(String, 
-                           info={'tab': 'Datas e Prazos'}) # Ex: "10 dias"
+    prazo_entrega = Column(Integer, 
+                           info={'tab': 'Datas e Prazos'}) # Ex: 10
     
-    # --- Aba: Valores ---
-    total = Column(Numeric(10, 2), 
-                   info={'tab': 'Valores'})
-    desconto = Column(Numeric(10, 2), 
-                      info={'tab': 'Valores'})
-    total_desconto = Column(Numeric(10, 2), 
-                            info={'tab': 'Valores'})
-    pagamento = Column(String, 
-                       info={'tab': 'Valores'})
-
-    # --- Aba: Frete ---
-    modalidade_frete = Column(String, 
-                              info={'tab': 'Frete'})
-    valor_frete = Column(Numeric(10, 2), 
-                         info={'tab': 'Frete'})
-    endereco_expedicao = Column(String, 
-                                info={'tab': 'Frete'})
-
     # --- Aba: Itens e Observações ---
     itens = Column(JSON, 
                    info={'tab': 'Itens'}) # Armazena os itens do pedido como JSON
-    observacao = Column(Text, 
-                        info={'tab': 'Observações'})
+    
+    # --- Aba: Valores ---
+    total = Column(Currency(), 
+                   info={'tab': 'Valores'})
+    desconto = Column(Currency(), 
+                      info={'tab': 'Valores'})
+    total_desconto = Column(Currency(), 
+                            info={'tab': 'Valores'})
+    pagamento = Column(String, 
+                       info={'tab': 'Valores', 'component': 'creatable_select'})
+
+    # --- Aba: Frete ---
+    modalidade_frete = Column(SQLAlchemyEnum(PedidoModalidadeFreteEnum, native_enum=False, values_callable=lambda x: [e.value for e in x]), default=PedidoModalidadeFreteEnum.sem_frete, 
+                              info={'tab': 'Frete'})
+    valor_frete = Column(Currency(), 
+                         info={'tab': 'Frete'})
+
     
     # --- Aba: Fiscal ---
     natureza_operacao = Column(String, 
@@ -564,31 +577,35 @@ class Pedido(Base):
     icms_cst = Column(String, 
                       info={'tab': 'Fiscal'})
     icms_aliquota = Column(Numeric(5, 2), 
-                           info={'tab': 'Fiscal'})
+                           info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     icms_reducao_bc_perc = Column(Numeric(5, 2), 
-                                  info={'tab': 'Fiscal'})
+                                  info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     icms_st_cst = Column(String, 
                          info={'tab': 'Fiscal'})
     icms_st_mva_perc = Column(Numeric(5, 2), 
-                              info={'tab': 'Fiscal'})
+                              info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     icms_st_aliquota = Column(Numeric(5, 2), 
-                              info={'tab': 'Fiscal'})
+                              info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     ipi_cst = Column(String, 
                      info={'tab': 'Fiscal'})
     ipi_aliquota = Column(Numeric(5, 2), 
-                          info={'tab': 'Fiscal'})
+                          info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     pis_cst = Column(String, 
                      info={'tab': 'Fiscal'})
     pis_aliquota = Column(Numeric(5, 2), 
-                          info={'tab': 'Fiscal'})
+                          info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
     cofins_cst = Column(String, 
                         info={'tab': 'Fiscal'})
     cofins_aliquota = Column(Numeric(5, 2), 
-                             info={'tab': 'Fiscal'})
+                             info={'tab': 'Fiscal', 'format_mask': 'percent:2'})
 
     # --- Aba: Outros ---
-    ordem_finalizacao = Column(String, 
-                               info={'tab': 'Outros'})
+    ordem_finalizacao = Column(Numeric(5, 1), 
+                               info={'tab': 'Datas e Prazos'})
+    
+    observacao = Column(Text, 
+                        info={'tab': 'Observações'})
+    
     
     # Campos Internos
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -621,13 +638,13 @@ class Tributacao(Base):
                       info={'tab': 'Configuração'})
     
     # --- Aba: Regras (Chaves) ---
-    regime_emitente = Column(SQLAlchemyEnum(RegraRegimeEmitenteEnum), 
+    regime_emitente = Column(SQLAlchemyEnum(RegraRegimeEmitenteEnum, native_enum=False), 
                              info={'tab': 'Regras (Chaves)'})
-    tipo_operacao = Column(SQLAlchemyEnum(RegraTipoOperacaoEnum), 
+    tipo_operacao = Column(SQLAlchemyEnum(RegraTipoOperacaoEnum, native_enum=False), 
                            info={'tab': 'Regras (Chaves)'})
-    tipo_cliente = Column(SQLAlchemyEnum(RegraTipoClienteEnum), 
+    tipo_cliente = Column(SQLAlchemyEnum(RegraTipoClienteEnum, native_enum=False), 
                           info={'tab': 'Regras (Chaves)'})
-    localizacao_destino = Column(SQLAlchemyEnum(RegraLocalizacaoDestinoEnum), 
+    localizacao_destino = Column(SQLAlchemyEnum(RegraLocalizacaoDestinoEnum, native_enum=False), 
                                  info={'tab': 'Regras (Chaves)'})
     origem_produto = Column(String, 
                             info={'tab': 'Regras (Chaves)'}) # Usado como string '0', '1', etc.

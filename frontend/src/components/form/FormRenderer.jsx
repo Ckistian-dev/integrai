@@ -11,19 +11,21 @@ import {
   OrderItemsInput
 } from '../ui/InputFields';
 import { RuleBuilderInput } from '../ui/RuleBuilderInput';
+import { CreatableSelectInput } from '../ui/CreatableSelectInput';
 
 /**
  * Este componente atua como um 'switch' para renderizar
  * o componente de input correto com base no tipo de campo
  * fornecido pelos metadados do backend.
  */
-const FormRenderer = ({ field, value, onChange, error }) => {
+const FormRenderer = ({ field, value, onChange, error, modelName }) => {
   // Passa as props comuns para todos os inputs
   const props = {
     field,
     value: value ?? '',
     onChange,
     error,
+    modelName, // Passa o modelName para componentes que precisam buscar dados (CreatableSelect)
   };
 
   const formatMask = field.format_mask;
@@ -33,14 +35,18 @@ const FormRenderer = ({ field, value, onChange, error }) => {
 
   if (maskProps) {
     // Manipulador customizado para máscaras. O IMask retorna o valor limpo (unmaskedValue).
-    const handleAccept = (unmaskedValue) => {
-      let finalValue = unmaskedValue;
+    // 🎯 CORREÇÃO: O IMask passa (value, maskRef). 'value' é o valor COM máscara.
+    // Precisamos usar maskRef.unmaskedValue para pegar o valor limpo.
+    const handleAccept = (value, maskRef) => {
+      let finalValue = maskRef.unmaskedValue;
 
       // se a propriedade 'mask' da máscara for o tipo Number.
-      if (maskProps.mask === Number && finalValue !== '') { // <--- APLICA A CONDIÇÃO
+      // 🎯 CORREÇÃO: Verifica também se é nossa máscara 'currency' (que agora usa pattern 'R$ num')
+      if ((maskProps.mask === Number || formatMask === 'currency') && finalValue !== '') { 
         // Converte a string limpa (usando '.' como separador decimal interno) para Number
-        finalValue = parseFloat(finalValue);
-        if (isNaN(finalValue)) finalValue = unmaskedValue; // Fallback
+        // Substitui vírgula por ponto caso o unmaskedValue venha com vírgula (devido ao radix)
+        finalValue = parseFloat(finalValue.replace(',', '.'));
+        if (isNaN(finalValue)) finalValue = null;
       } else if (typeof maskProps === 'string' || Array.isArray(maskProps)) {
         // Se for uma máscara de padrão (como CEP, que é string) ou dinâmica (Array de strings),
         // o valor limpo (unmaskedValue) já é uma string e não precisa de conversão.
@@ -59,13 +65,22 @@ const FormRenderer = ({ field, value, onChange, error }) => {
       });
     };
 
+    // Verifica se é uma máscara numérica que usa vírgula como decimal (Number ou Currency)
+    const isNumericMask = maskProps.mask === Number || formatMask === 'currency';
+
+    // Remove 'value' das props para evitar conflito com 'unmaskedValue' no IMask
+    const { value: _val, ...maskedProps } = props;
+
+    // 🎯 CORREÇÃO: Usamos unmaskedValue com tratamento de string para garantir a formatação correta (PT-BR)
+    const unmaskedValue = (value === '' || value == null) 
+      ? '' 
+      : (isNumericMask ? String(value).replace('.', ',') : String(value));
+
     // O MaskedInput usa 'onAccept' para retornar o valor limpo
     return (
       <MaskedInput
-        {...props}
-        // 🎯 CORREÇÃO: IMask espera que o valor seja uma string.
-        // Converte números para string, mantendo null/undefined como estão.
-        value={value == null ? '' : String(value)}
+        {...maskedProps}
+        unmaskedValue={unmaskedValue}
         // IMask espera o 'mask' prop para aplicar a máscara.
         mask={maskProps.mask || maskProps}
         // Handler para quando o valor limpo muda.
@@ -108,6 +123,9 @@ const FormRenderer = ({ field, value, onChange, error }) => {
 
     case 'select':
       return <SelectInput {...props} value={value} options={field.options} />;
+
+    case 'creatable_select':
+      return <CreatableSelectInput {...props} value={value} />;
 
     case 'rule_builder':
       return <RuleBuilderInput {...props} value={value} />;

@@ -45,17 +45,23 @@ def get_format_mask(col_name: str, col_type: TypeEngine) -> Optional[str]:
     if 'telefone' in name or 'celular' in name:
         return 'phone' # O frontend pode usar uma máscara dinâmica
     
-    # Campos Numéricos com 2 casas decimais (Moeda/Dinheiro)
-    # Ex: preco, custo, valor, valor_frete, total, desconto
-    if isinstance(col_type, Numeric) and col_type.scale == 2:
+    # 🎯 CORREÇÃO: Detecta explicitamente a classe Currency criada no models.py
+    # Verifica pelo nome da classe para evitar importação circular
+    if col_type.__class__.__name__ == 'Currency':
         return 'currency'
-    # Campos Numéricos com 3 casas decimais (Peso)
-    if isinstance(col_type, Numeric) and col_type.scale == 3:
-        return 'decimal:3'
-        
+
     # Percentuais (aliquota, reducao_bc_perc, etc.)
     if name.endswith('aliquota') or name.endswith('perc'):
          return 'percent:2'
+
+    # Campos Numéricos (Peso, Dimensões, etc)
+    if isinstance(col_type, Numeric):
+        scale = getattr(col_type, 'scale', None)
+        if scale == 3:
+            return 'decimal:3'
+        # Default para 2 casas decimais (inclui scale=2 e scale=None)
+        if scale == 2 or scale is None:
+            return 'decimal:2'
 
     return None # Nenhuma máscara especial
 
@@ -119,8 +125,11 @@ def get_model_metadata(model_name: str):
             
             # SÓ define os tipos se NÃO for uma FK (pois FK será tratada pelo AsyncSelect)
             if not foreign_key_model:
+                # 0. Verifica se há um componente visual forçado no model (ex: creatable_select)
+                if col.info.get('component'):
+                    field_type = col.info.get('component')
                 # 🎯 Adicionado para detectar o campo de regras e atribuir um tipo customizado
-                if isinstance(col_type, JSON) and col.name == 'regras':
+                elif isinstance(col_type, JSON) and col.name == 'regras':
                     field_type = "rule_builder"
                 elif isinstance(col_type, JSON) and col.name == 'itens':
                     field_type = "order_items"

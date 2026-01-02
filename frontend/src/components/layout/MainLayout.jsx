@@ -34,7 +34,6 @@ const MainLayout = () => {
     { name: 'Embalagens', path: '/embalagens', icon: Archive },
     { name: 'Estoque', path: '/estoque', icon: Package },
     { name: 'Financeiro', path: '/contas', icon: Landmark },
-    { name: 'Fiscal', path: '/tributacoes', icon: Layers },
     // Adicione mais itens conforme necessário
   ];
 

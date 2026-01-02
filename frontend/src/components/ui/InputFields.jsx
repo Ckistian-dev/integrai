@@ -11,6 +11,7 @@ import 'imask/esm/addons/all';
 
 export const MASKS = {
   'cep': '00000-000',
+  'ncm': '0000.00.00', // NCM: 8 dígitos numéricos
   // Máscara dinâmica para CPF/CNPJ 
   'cnpj_cpf': [{ mask: '000.000.000-00' }, { mask: '00.000.000/0000-00' }],
   'phone': [
@@ -19,14 +20,20 @@ export const MASKS = {
   ],
   // Máscara de moeda (Numeric)
   'currency': {
-    mask: Number,
-    thousandsSeparator: '.',
-    radix: ',',
-    mapToRadix: ['.'],
-    scale: 2,
-    padFractionalZeros: true,
-    normalizeZeros: true,
-    lazy: false,
+    mask: 'R$ num',
+    lazy: false, // Exibe a máscara (R$ __,__) imediatamente
+    blocks: {
+      num: {
+        mask: Number,
+        thousandsSeparator: '.',
+        radix: ',',
+        mapToRadix: ['.'],
+        scale: 2,
+        padFractionalZeros: true,
+        normalizeZeros: true,
+        autofix: true,
+      }
+    }
   },
   // Máscara de percentual (Numeric)
   'percent:2': {
@@ -39,6 +46,9 @@ export const MASKS = {
     padFractionalZeros: true,
     normalizeZeros: true,
     lazy: false,
+    autofix: true,
+    min: 0,
+    max: 999.99,
   },
   // Máscara decimal com 3 casas (Numeric)
   'decimal:3': {
@@ -50,6 +60,19 @@ export const MASKS = {
     padFractionalZeros: true,
     normalizeZeros: true,
     lazy: false,
+    autofix: true,
+  },
+  // Máscara decimal com 2 casas (Numeric) - Sem R$
+  'decimal:2': {
+    mask: Number,
+    thousandsSeparator: '.',
+    radix: ',',
+    mapToRadix: ['.'],
+    scale: 2,
+    padFractionalZeros: true,
+    normalizeZeros: true,
+    lazy: false,
+    autofix: true,
   }
 };
 
@@ -99,15 +122,17 @@ export const TextInput = React.forwardRef(({
   // Se tiver máscara (format_mask), usamos 'text', pois o IMask gerencia a entrada.
   const inputType = (type === 'number' && !format_mask) ? 'number' : 'text';
 
-  // ************ CORREÇÃO PARA ATRIBUTOS INVÁLIDOS ************
-  // O IMask, ao usar máscaras dinâmicas (array), injeta props com chaves numéricas (0, 1, 2...)
-  // que o React não reconhece em um elemento input nativo.
+  // ************ CORREÇÃO PARA ATRIBUTOS INVÁLIDOS E WARNINGS ************
+  // Lista de props do IMask e outras customizadas que NÃO devem ir para o DOM <input>
+  const invalidDomProps = [
+    'modelName', 'unmaskedValue', 'mask', 'radix', 'thousandsSeparator', 
+    'mapToRadix', 'scale', 'padFractionalZeros', 'normalizeZeros', 'typedValue',
+    'lazy', 'suffix', 'blocks', 'autofix', 'definitions', 'overwrite'
+  ];
 
-  // Filtra as props para remover as chaves numéricas.
+  // Filtra as props para remover chaves numéricas (do IMask dynamic) e props inválidas
   const filteredInputProps = Object.keys(inputProps).reduce((acc, key) => {
-    // Se a chave for numérica (ex: "0", "1") ou for a prop "options" que o Select usa mas que 
-    // está sendo repassada acidentalmente pelo FormRenderer/IMask, ignore.
-    if (!/^\d+$/.test(key)) {
+    if (!/^\d+$/.test(key) && !invalidDomProps.includes(key)) {
       acc[key] = inputProps[key];
     }
     return acc;
@@ -345,9 +370,11 @@ const AsyncProductSelect = ({ value, onChange }) => {
           onChange(opt ? opt.value : null);
       }}
       placeholder="Buscar produto..."
+      menuPortalTarget={document.body}
       styles={{
         control: (base) => ({ ...base, minHeight: '42px', borderColor: '#d1d5db' }),
-        menu: (base) => ({ ...base, zIndex: 9999 })
+        menu: (base) => ({ ...base, zIndex: 9999 }),
+        menuPortal: (base) => ({ ...base, zIndex: 9999 })
       }}
     />
   );
@@ -463,7 +490,8 @@ export const AsyncSelectInput = ({ field, value, onChange, error }) => {
     menu: (provided) => ({
       ...provided,
       zIndex: 20 // Garante que o dropdown fique sobre outros campos
-    })
+    }),
+    menuPortal: (base) => ({ ...base, zIndex: 9999 })
   };
 
   return (
@@ -483,6 +511,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error }) => {
         noOptionsMessage={({ inputValue }) =>
           inputValue ? "Nenhum resultado encontrado" : "Digite para buscar"
         }
+        menuPortalTarget={document.body}
         loadingMessage={() => "Buscando..."}
         isLoading={isLoading}
         styles={customStyles}

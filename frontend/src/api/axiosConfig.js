@@ -11,7 +11,8 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     // Pega o token do localStorage
-    const token = localStorage.getItem('authToken');
+    // Verifica tanto 'access_token' quanto 'authToken' para garantir compatibilidade
+    const token = localStorage.getItem('access_token') || localStorage.getItem('authToken');
 
     if (token) {
       // Se o token existir, adiciona ao header de Authorization
@@ -36,6 +37,7 @@ api.interceptors.response.use(
     // Se a resposta for um erro 401 (Não Autorizado)
     if (error.response && error.response.status === 401) {
       // Limpa o token e força o logout
+      localStorage.removeItem('access_token');
       localStorage.removeItem('authToken');
       // Redireciona para a página de login
       window.location.href = '/login'; 

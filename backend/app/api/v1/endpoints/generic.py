@@ -3,7 +3,8 @@ from fastapi.responses import StreamingResponse # Importar StreamingResponse
 import io # Importar io
 import csv # Importar csv
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, String, cast, func
+from sqlalchemy import or_, String, cast, func, distinct, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import Text, Enum 
 from typing import List, Any, Dict
 
@@ -25,6 +26,7 @@ def list_items(
     limit: int = 10,
     search_term: str = None,
     situacao: str = None,
+    id_produto: int = None,
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """
@@ -44,6 +46,11 @@ def list_items(
         # Verifica se o modelo realmente tem a coluna "situacao"
         if hasattr(registry["model"], "situacao"):
             base_query = base_query.filter(registry["model"].situacao == situacao)
+    
+    # Filtro por ID do Produto (Útil para verificar estoque)
+    if id_produto is not None:
+        if hasattr(registry["model"], "id_produto"):
+            base_query = base_query.filter(registry["model"].id_produto == id_produto)
     
     # 2. Aplica o filtro de busca (NOVO)
     if search_term:
@@ -91,6 +98,36 @@ def list_items(
     
     # 6. Retornar no formato de página
     return {"items": serialized_items, "total_count": total_count}
+
+@router.get("/generic/{model_name}/distinct/{field_name}", response_model=List[str])
+def get_distinct_values(
+    model_name: str,
+    field_name: str,
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Retorna valores distintos de um campo para preencher dropdowns dinâmicos (CreatableSelect).
+    """
+    registry = get_registry_entry(model_name)
+    if not registry:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    model = registry["model"]
+    
+    if not hasattr(model, field_name):
+         raise HTTPException(status_code=400, detail=f"Field {field_name} not found in model {model_name}")
+         
+    column = getattr(model, field_name)
+    
+    query = db.query(distinct(column)).filter(
+        model.id_empresa == current_user.id_empresa,
+        column.isnot(None),
+        cast(column, String) != ""
+    ).order_by(column)
+    
+    results = query.all()
+    return [r[0] for r in results]
 
 @router.get("/generic/{model_name}/export")
 def export_items_to_csv(
@@ -202,25 +239,40 @@ def create_item(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Validation error: {e}")
 
-    # 🎯 CORREÇÃO PARA HASH DE SENHA NA CRIAÇÃO
-    if model_name == "usuarios":
-        # 1. Adiciona o id_empresa do usuário logado aos dados validados
-        #    (O crud_user.create_user espera isso dentro do obj_in)
-        validated_data.id_empresa = current_user.id_empresa
-
-        # 2. Chama a função específica que SABE fazer o hash da senha
-        item = crud_user.create_user(
-            db=db,
-            obj_in=validated_data
-        )
-    else:
-        # 3. Para todos os outros modelos, usa o CRUD genérico
-        item = registry["crud"].create(
-            db,
-            model=registry["model"], # Passa o modelo
-            obj_in=validated_data,
-            id_empresa=current_user.id_empresa
-        )
+    try:
+        # 🎯 CORREÇÃO PARA HASH DE SENHA NA CRIAÇÃO
+        if model_name == "usuarios":
+            # 1. Chama a função específica que SABE fazer o hash da senha
+            item = crud_user.create_user(
+                db=db,
+                obj_in=validated_data,
+                id_empresa=current_user.id_empresa
+            )
+        else:
+            # 3. Para todos os outros modelos, usa o CRUD genérico
+            item = registry["crud"].create(
+                db,
+                model=registry["model"], # Passa o modelo
+                obj_in=validated_data,
+                id_empresa=current_user.id_empresa
+            )
+    except IntegrityError as e:
+        db.rollback()
+        error_info = str(e.orig) if e.orig else str(e)
+        
+        # Verifica se é erro de chave primária duplicada (sequência desincronizada)
+        if "unique constraint" in error_info and "_pkey" in error_info:
+            try:
+                # Tenta corrigir a sequência automaticamente (PostgreSQL)
+                table_name = registry["model"].__tablename__
+                sql = text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), (SELECT MAX(id) FROM {table_name}));")
+                db.execute(sql)
+                db.commit()
+                raise HTTPException(status_code=409, detail="A sequência de IDs do banco estava desincronizada e foi corrigida automaticamente. Por favor, clique em Salvar novamente.")
+            except Exception:
+                pass # Se falhar a correção automática, cai no erro padrão abaixo
+        
+        raise HTTPException(status_code=400, detail=f"Erro de integridade de dados: {error_info}")
 
     return registry["schema"].from_orm(item)
 
