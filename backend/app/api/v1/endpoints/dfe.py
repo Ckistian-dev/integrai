@@ -6,6 +6,7 @@ from app.api.dependencies import get_current_active_user
 from app.core.service.nfe_service import NFeService
 from lxml import etree
 from typing import List, Dict, Any
+from fastapi.responses import Response
 
 router = APIRouter()
 
@@ -97,4 +98,36 @@ async def importar_dfe(
         id_classificacao_contabil=payload.get("id_classificacao_contabil"),
         caixa_destino_origem=payload.get("caixa_destino_origem"),
         forma_pagamento=payload.get("forma_pagamento")
+    )
+
+@router.get("/download-xml/{nota_id}")
+async def download_xml(
+    nota_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """Busca o XML completo no banco e retorna como download de arquivo."""
+    nota = db.query(models.NotaFiscalRecebida).filter(
+        models.NotaFiscalRecebida.id == nota_id,
+        models.NotaFiscalRecebida.id_empresa == current_user.id_empresa
+    ).first()
+    
+    if not nota:
+        raise HTTPException(status_code=404, detail="Nota não encontrada.")
+    
+    if not nota.xml_completo:
+        raise HTTPException(
+            status_code=400, 
+            detail="XML completo ainda não disponível. Realize a Ciência da Operação e sincronize novamente."
+        )
+
+    # Define o nome do arquivo usando a chave de acesso ou o ID
+    filename = f"NFe_{nota.chave_acesso or nota.id}.xml"
+
+    return Response(
+        content=nota.xml_completo,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
     )

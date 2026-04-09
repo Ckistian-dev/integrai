@@ -42,6 +42,9 @@ from app.core.db.models import (
 
 logger = logging.getLogger(__name__)
 
+# Cache em memória para gerenciar o cooldown da SEFAZ e evitar o erro 656
+_cooldown_sefaz = {}
+
 def debug_xml_erro_schema(xml_input, erro_msg: str):
     """
     Analisa a mensagem de erro do SAX/Schema, extrai a linha e coluna,
@@ -1686,8 +1689,6 @@ class NFeService:
                 except:
                     ind_ie = 9
 
-            uf_cliente = cli_db.estado.value if hasattr(cli_db.estado, 'value') else cli_db.estado
-            uf_cliente = uf_cliente.upper() if uf_cliente else ''
 
             # Em homologação, a Razão Social do destinatário deve ser fixa (Regra SEFAZ)
             razao_social_cli = cli_db.nome_razao
@@ -1701,13 +1702,15 @@ class NFeService:
                 numero_documento=self._limpar_formatacao(cli_db.cpf_cnpj),
                 indicador_ie=ind_ie,
                 inscricao_estadual=self._limpar_formatacao(cli_db.inscricao_estadual),
-                endereco_logradouro=self._limpar_texto(cli_db.logradouro),
-                endereco_numero=self._limpar_texto(cli_db.numero),
-                endereco_complemento=self._limpar_texto(cli_db.complemento or '')[:60],
-                endereco_bairro=self._limpar_texto(cli_db.bairro),
-                endereco_municipio=self._limpar_texto(cli_db.cidade),
+                
+                # --- AQUI ESTÁ A ALTERAÇÃO: Prioridade para o endereço do Pedido ---
+                endereco_logradouro=self._limpar_texto(pedido.endereco_logradouro or cli_db.logradouro),
+                endereco_numero=self._limpar_texto(pedido.endereco_numero or cli_db.numero),
+                endereco_complemento=self._limpar_texto(pedido.endereco_complemento or cli_db.complemento or '')[:60],
+                endereco_bairro=self._limpar_texto(pedido.endereco_bairro or cli_db.bairro),
+                endereco_municipio=self._limpar_texto(pedido.endereco_cidade or cli_db.cidade),
                 endereco_uf=uf_cliente,
-                endereco_cep=self._limpar_formatacao(cli_db.cep),
+                endereco_cep=self._limpar_formatacao(pedido.endereco_cep or cli_db.cep),
                 endereco_pais=CODIGO_BRASIL,
                 endereco_telefone=self._limpar_formatacao(cli_db.telefone or cli_db.celular)
             )
@@ -2957,22 +2960,19 @@ class NFeService:
                         "pdf": pdf_b64
                     }
                 elif cStat == '539':
-                    # CASO 2: DUPLICIDADE (CORREÇÃO AUTOMÁTICA)
+                    # CASO 2: DUPLICIDADE
                     # A numeração já existe na SEFAZ com outra chave.
-                    # Incrementamos o sequencial para destravar a fila.
                     
                     erro_detalhado = (
-                        f"A numeração {numero_nf} já foi utilizada na SEFAZ. "
-                        f"O sistema avançará a numeração da empresa para evitar travamento. "
-                        f"Por favor, tente emitir novamente."
+                        f"Duplicidade de NF-e: A numeração {numero_nf} já foi utilizada na SEFAZ "
+                        f"com outra chave de acesso."
                     )
                     
-                    # Atualiza o sequencial no banco
-                    self.empresa.nfe_numero_sequencial += 1
                     pedido.status_sefaz = f"{cStat} - {xMotivo}"
                     self.db.commit()
                     
                     raise HTTPException(status_code=409, detail=erro_detalhado)
+                
                 else:
                     # Rejeição
                     pedido.status_sefaz = f"{cStat} - {xMotivo}"
@@ -3714,6 +3714,19 @@ class NFeService:
 
     def sincronizar_dfe(self):
         """Busca novos documentos destinados na SEFAZ via NSU."""
+        agora = datetime.now()
+        
+        # --- TRAVA DE COOLDOWN (BLOQUEIO PRÉVIO) ---
+        if self.id_empresa in _cooldown_sefaz:
+            tempo_liberacao = _cooldown_sefaz[self.id_empresa]
+            if agora < tempo_liberacao:
+                raise HTTPException(
+                    status_code=429, 
+                    detail=f"Em repouso obrigatório da SEFAZ. Tente novamente após {tempo_liberacao.strftime('%H:%M:%S')}."
+                )
+            else:
+                del _cooldown_sefaz[self.id_empresa]
+        
         logger.info(f"Iniciando sincronização de DF-e para empresa {self.empresa.razao} (ID: {self.id_empresa})")
         cert_path = self._get_certificado_path()
         try:
@@ -3723,7 +3736,7 @@ class NFeService:
             novas_notas = 0
             continua_busca = True
             lotes_processados = 0
-            limite_lotes = 15 # Reduzido ligeiramente para evitar timeout, limite seguro da SEFAZ
+            limite_lotes = 10 # Reduzido ligeiramente para evitar timeout, limite seguro da SEFAZ
 
             while continua_busca and lotes_processados < limite_lotes:
                 lotes_processados += 1
@@ -3746,16 +3759,19 @@ class NFeService:
                 cStat = c_stat_nodes[0].text
                 logger.debug(f"cStat retornado pela SEFAZ: {cStat}")
                 
-                if cStat == '656': # Consumo Indevido
-                    # O erro 656 gera um bloqueio de 1 hora pela SEFAZ. Tentar novamente só prolonga o bloqueio.
-                    logger.error("SEFAZ retornou cStat 656 (Consumo Indevido). CNPJ bloqueado temporariamente por 1 hora.")
-                    if novas_notas > 0:
-                        return {"success": True, "message": f"Sincronização parcial. {novas_notas} notas baixadas, mas a SEFAZ bloqueou consultas adicionais por rate-limit. Tente novamente em 1 hora.", "novas_notas": novas_notas, "atual_nsu": self.empresa.nfe_ultimo_nsu}
-                    else:
-                        raise HTTPException(status_code=429, detail="A SEFAZ bloqueou temporariamente as consultas para este CNPJ (Consumo Indevido). Por favor, aguarde 1 hora antes de tentar novamente.")
+                # --- TRATAMENTO DOS ERROS CRÍTICOS ---
+                if cStat == '656': 
+                    # Coloca a empresa de castigo no cache por 1 hora
+                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
+                    raise HTTPException(
+                        status_code=429, 
+                        detail="SEFAZ bloqueou por Consumo Indevido. CNPJ em repouso por 1 hora."
+                    )
 
-                if cStat == '137': # Nenhum documento localizado (fim da fila atual)
-                    logger.info("SEFAZ informou que não há mais documentos novos (cStat 137).")
+                if cStat == '137': 
+                    # Fim da fila: Aplicar o cooldown obrigatório de 1 hora
+                    logger.info("SEFAZ informou cStat 137. Aplicando cooldown de 1 hora.")
+                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
                     continua_busca = False
                     break
 
@@ -3867,12 +3883,13 @@ class NFeService:
                 # Se o último NSU recebido for igual ao máximo da SEFAZ, não há mais nada para puxar
                 if ult_nsu_sefaz == max_nsu_sefaz:
                     logger.info("Alcançado o NSU máximo disponível na SEFAZ. Encerrando busca.")
+                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
                     continua_busca = False
 
                 if continua_busca:
                     # Delay OBRIGATÓRIO de 3 segundos entre lotes para evitar o Consumo Indevido (Rejeição 656)
                     logger.debug("Aguardando 3 segundos antes do próximo lote para respeitar limite da SEFAZ...")
-                    time.sleep(3)
+                    time.sleep(5)
 
             logger.info(f"Sincronização DF-e concluída. Novas notas encontradas: {novas_notas}. NSU Final: {self.empresa.nfe_ultimo_nsu}")
             return {"success": True, "novas_notas": novas_notas, "atual_nsu": self.empresa.nfe_ultimo_nsu}

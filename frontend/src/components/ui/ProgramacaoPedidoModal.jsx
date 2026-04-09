@@ -52,7 +52,7 @@ const ProgramacaoPedidoModal = ({
             try {
               // 1. Busca descrição do produto
               const prodRes = await api.get(`/generic/produtos/${item.id_produto}`);
-              descricao = `${prodRes.data.sku} - ${prodRes.data.descricao}`;
+              descricao = prodRes.data.descricao;
 
               // 2. Busca TODOS os lotes disponíveis deste produto
               const stockRes = await api.get(`/generic/estoque`, { 

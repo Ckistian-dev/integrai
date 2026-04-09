@@ -50,7 +50,8 @@ import {
   Play, // Ícone para Gerar Relatório
   GripVertical,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  FileCode
 } from 'lucide-react';
 
 registerLocale('pt-BR', ptBR);
@@ -1684,6 +1685,50 @@ const GenericList = () => {
     }
   };
 
+  const handleDownloadXml = async () => {
+    if (!selectedRowId) return;
+
+    try {
+      setIsFetchingData(true);
+      // Chamada para a nova rota de download
+      const response = await api.get(`/dfe/download-xml/${selectedRowId}`, {
+        responseType: 'blob' // Importante para lidar com download de arquivos
+      });
+
+      // Cria um link temporário para disparar o download no navegador
+      const blob = new Blob([response.data], { type: 'application/xml' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      // Busca dados da linha atual para nomear o arquivo
+      const item = data.find(i => i.id === selectedRowId);
+      const filename = `NFe_${item?.chave_acesso || selectedRowId}.xml`;
+
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      toast.success("XML baixado com sucesso!");
+    } catch (err) {
+      // Tenta ler a mensagem de erro do blob se houver falha
+      if (err.response?.data instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const errorData = JSON.parse(reader.result);
+          toast.error(errorData.detail || "Erro ao baixar XML.");
+        };
+        reader.readAsText(err.response.data);
+      } else {
+        toast.error(err.response?.data?.detail || "Erro ao baixar XML.");
+      }
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
   const handleIntelipostConfigClick = async () => {
     try {
       setIsFetchingData(true);
@@ -2487,6 +2532,13 @@ const GenericList = () => {
               <>
                 <button onClick={handleManifestarCiencia} disabled={!selectedRowId} className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium disabled:cursor-not-allowed">
                   <CheckCircle size={16} className="mr-2" /> Ciência da Operação
+                </button>
+                <button
+                  onClick={handleDownloadXml}
+                  disabled={!selectedRowId || isFetchingData}
+                  className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 font-medium disabled:cursor-not-allowed"
+                >
+                  <FileCode size={16} className="mr-2" /> Baixar XML
                 </button>
                 <button onClick={() => setIsDfeImportModalOpen(true)} disabled={!selectedRowId} className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium disabled:cursor-not-allowed">
                   <FileDown size={16} className="mr-2" /> Importar Nota

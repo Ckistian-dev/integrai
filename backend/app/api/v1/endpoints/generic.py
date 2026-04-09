@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import StreamingResponse # Importar StreamingResponse
 import io # Importar io
+import urllib.request # Importar urllib.request
 import csv # Importar csv
 import json # Importar json
 import enum # Importar enum
@@ -135,6 +136,18 @@ def generate_shipping_label(
     if hasattr(empresa_dados['uf'], 'value'):
          empresa_dados['uf'] = empresa_dados['uf'].value
 
+    # --- NOVO: PRE-FETCH DO LOGO COM TIMEOUT ---
+    logo_reader = None
+    if empresa_dados.get('url_logo'):
+        try:
+            req = urllib.request.Request(empresa_dados['url_logo'], headers={'User-Agent': 'Mozilla/5.0'})
+            # Timeout de 3 segundos para evitar travamento
+            with urllib.request.urlopen(req, timeout=3) as response:
+                logo_reader = ImageReader(io.BytesIO(response.read()))
+        except Exception as e:
+            print(f"Aviso: Erro ao baixar logo: {e}")
+
+
     # 2. Configuração do Canvas (TAMANHO CRÍTICO: 100x75mm)
     # Isso faz o layout ficar compacto igual à referência
     w_page = 100 * mm
@@ -157,13 +170,12 @@ def generate_shipping_label(
         top_y = h_page - margin
         
         # > LOGO (Canto Superior Esquerdo)
-        logo_drawn = False
-        if empresa_dados['url_logo']:
+        logo_drawn_on_page = False # Renomeado para evitar conflito com a flag global
+        if logo_reader:
             try:
-                logo_img = ImageReader(empresa_dados['url_logo'])
                 # Desenha logo contido em 40x20mm
-                c.drawImage(logo_img, margin, top_y - 20*mm, width=40*mm, height=20*mm, mask='auto', preserveAspectRatio=True, anchor='nw')
-                logo_drawn = True
+                c.drawImage(logo_reader, margin, top_y - 20*mm, width=40*mm, height=20*mm, mask='auto', preserveAspectRatio=True, anchor='nw')
+                logo_drawn_on_page = True
             except:
                 pass
 
@@ -376,6 +388,16 @@ def generate_batch_shipping_labels(
         "cnpj": empresa.cnpj if empresa else ""
     }
 
+    # --- NOVO: PRE-FETCH DO LOGO COM TIMEOUT (PARA O LOTE) ---
+    logo_reader = None
+    if empresa_dados.get('url_logo'):
+        try:
+            req = urllib.request.Request(empresa_dados['url_logo'], headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=3) as response:
+                logo_reader = ImageReader(io.BytesIO(response.read()))
+        except Exception as e:
+            print(f"Aviso: Erro ao baixar logo no lote: {e}")
+
     for pid in pedido_ids:
         pedido = db.query(models.Pedido).filter(models.Pedido.id == pid, models.Pedido.id_empresa == current_user.id_empresa).first()
         if not pedido: continue
@@ -384,15 +406,14 @@ def generate_batch_shipping_labels(
         for current_vol in range(1, total_volumes + 1):
             top_y = h_page - margin
             
-            # Logo
-            logo_drawn = False
-            if empresa_dados['url_logo']:
+            # Logo (agora usando logo_reader pré-carregado)
+            logo_drawn_on_page = False
+            if logo_reader:
                 try:
-                    logo_img = ImageReader(empresa_dados['url_logo'])
-                    c.drawImage(logo_img, margin, top_y - 20*mm, width=40*mm, height=20*mm, mask='auto', preserveAspectRatio=True, anchor='nw')
-                    logo_drawn = True
+                    c.drawImage(logo_reader, margin, top_y - 20*mm, width=40*mm, height=20*mm, mask='auto', preserveAspectRatio=True, anchor='nw')
+                    logo_drawn_on_page = True
                 except: pass
-            if not logo_drawn:
+            if not logo_drawn_on_page:
                 c.setFont("Helvetica-Bold", 14)
                 c.drawString(margin, top_y - 10*mm, empresa_dados['razao'][:15])
 
