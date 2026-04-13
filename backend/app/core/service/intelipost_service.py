@@ -32,6 +32,7 @@ class IntelipostService:
         
         self.api_key = config.api_key
         self.origin_zip_code = config.origin_zip_code.replace("-", "") if config.origin_zip_code else ""
+        self.origin_warehouse_code = config.origin_warehouse_code or "CD01"
         
         self.headers = {
             'api-key': self.api_key,
@@ -403,7 +404,7 @@ class IntelipostService:
             "final_shipping_cost": float(dados_frete.get('final_shipping_cost', 0)),
             "provider_shipping_costs": float(dados_frete.get('final_shipping_cost', 0)),
             
-            "origin_warehouse_code": "CD01", # Pode vir de config
+            "origin_warehouse_code": self.origin_warehouse_code, 
             "origin_zip_code": self.origin_zip_code, # Usa o CEP configurado na classe
             
             "shipment_order_type": "NORMAL",

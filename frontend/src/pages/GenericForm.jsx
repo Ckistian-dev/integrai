@@ -80,9 +80,18 @@ const GenericForm = ({ modelName: propModelName }) => {
         } else {
           initialData[field.name] = false;
         }
-      } else if (field.name === 'data_emissao') {
-        // Preenche data_emissao com a data atual (YYYY-MM-DD)
+      } else if (field.name === 'data_emissao' || field.name === 'data_orcamento') {
+        // Preenche com a data atual (YYYY-MM-DD)
         const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        initialData[field.name] = `${year}-${month}-${day}`;
+      } else if (field.name === 'data_validade' && modelName === 'pedidos') {
+        // Preenche data_validade com hoje + validade_orcamento (do usuário/empresa)
+        const validadeDias = user?.empresa?.validade_orcamento || 7;
+        const now = new Date();
+        now.setDate(now.getDate() + validadeDias);
         const year = now.getFullYear();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
@@ -133,8 +142,6 @@ const GenericForm = ({ modelName: propModelName }) => {
 
         meta.fields.forEach((field) => {
           if (field.name === 'id') return;
-          // Se for read_only, pula, A MENOS que seja data_emissao e o usuário seja admin
-          if (field.read_only && !(field.name === 'data_emissao' && isAdmin)) return;
 
           const tabName = field.tab || 'Dados Gerais';
 
@@ -653,7 +660,7 @@ const GenericForm = ({ modelName: propModelName }) => {
     // Para replicar a imagem, adicionamos um fundo cinza à página
     <div className="bg-gray-100 min-h-screen p-16">
       <div className="container mx-auto max-w-7xl"> {/* Limita a largura máxima */}
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} autoComplete="off">
           <div className="">
 
             {/* 1. CABEÇALHO DO CARD: Título e Separador */}

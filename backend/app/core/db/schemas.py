@@ -97,6 +97,7 @@ class EmpresaBase(BaseModel):
     certificado_nome_arquivo: Optional[str] = None
     id_classificacao_contabil_padrao: Optional[int] = None
     id_classificacao_contabil_cancelamento: Optional[int] = None
+    validade_orcamento: Optional[int] = 7
 
 class EmpresaCreate(EmpresaBase):
     certificado_arquivo: Optional[bytes] = None
@@ -135,6 +136,7 @@ class EmpresaUpdate(BaseModel):
     ambiente_sefaz: Optional[EmpresaAmbienteSefazEnum] = None
     id_classificacao_contabil_padrao: Optional[int] = None
     id_classificacao_contabil_cancelamento: Optional[int] = None
+    validade_orcamento: Optional[int] = None
 
     @field_serializer('crt')
     def serialize_crt(self, crt: Optional[EmpresaCRTEnum], _info):
@@ -376,14 +378,14 @@ class Produto(ProdutoBase):  # RENOMEADO de ProdutoRead para Produto
 class NotaFiscalRecebida(BaseModel):
     id: int
     chave_acesso: Optional[str] = None
-    nsu: str
+    nsu: Optional[str] = None
     tipo_documento: Optional[str] = None
     cnpj_emitente: Optional[str] = None
     nome_emitente: Optional[str] = None
     valor_total: Optional[Decimal] = None
     data_emissao: Optional[datetime] = None
-    situacao_manifestacao: str
-    ja_importado: bool
+    situacao_manifestacao: Optional[str] = "Pendente"
+    ja_importado: bool = False
 
     class Config:
         from_attributes = True
@@ -753,6 +755,7 @@ class ClassificacaoContabil(ClassificacaoContabilBase):
 class IntelipostConfiguracaoBase(BaseModel):
     api_key: str
     origin_zip_code: str = Field(..., max_length=9)
+    origin_warehouse_code: Optional[str] = None
 
 class IntelipostConfiguracaoCreate(IntelipostConfiguracaoBase):
     pass
@@ -760,6 +763,7 @@ class IntelipostConfiguracaoCreate(IntelipostConfiguracaoBase):
 class IntelipostConfiguracaoUpdate(BaseModel):
     api_key: Optional[str] = None
     origin_zip_code: Optional[str] = Field(None, max_length=9)
+    origin_warehouse_code: Optional[str] = None
 
 class IntelipostConfiguracao(IntelipostConfiguracaoBase):
     id: int

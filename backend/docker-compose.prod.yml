@@ -38,6 +38,8 @@ services:
     ports:
       # Mapeando 8002 externa -> 8000 interna (Seu Nginx vai apontar para a 8002)
       - "8002:8000"
+    environment:
+      - ENVIRONMENT=production
     env_file:
       - .env
     depends_on:

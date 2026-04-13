@@ -1671,8 +1671,11 @@ class NFeService:
         uf_empresa = self.empresa.estado.value if hasattr(self.empresa.estado, 'value') else self.empresa.estado
         uf_empresa = uf_empresa.upper()
         
+        # Verifica se estamos no ambiente de desenvolvimento
+        is_development = os.getenv("ENVIRONMENT", "development") == "development"
+
         # 1=Produção, 2=Homologação
-        ambiente_homologacao = (self.empresa.ambiente_sefaz.value == 2) 
+        ambiente_homologacao = (self.empresa.ambiente_sefaz.value == 2) or is_development
 
         try:
             # --- CLIENTE ---
@@ -1716,7 +1719,11 @@ class NFeService:
             )
 
             # --- NOTA FISCAL (CABEÇALHO) ---
-            numero_nf = self.empresa.nfe_numero_sequencial
+            if is_development:
+                import random
+                numero_nf = random.randint(900000000, 999999999)
+            else:
+                numero_nf = self.empresa.nfe_numero_sequencial
             serie_nf = self.empresa.nfe_serie
 
             # Modalidade Frete
@@ -2929,8 +2936,10 @@ class NFeService:
                     pedido.pdf_danfe = pdf_b64
                     pedido.numero_nf = numero_nf
                     
-                    # Atualiza Sequencial da Empresa
-                    self.empresa.nfe_numero_sequencial += 1
+                    # Atualiza Sequencial da Empresa (Apenas se não for desenvolvimento)
+                    is_development = os.getenv("ENVIRONMENT", "development") == "development"
+                    if not is_development:
+                        self.empresa.nfe_numero_sequencial += 1
                     
                     # --- EXECUTA INTEGRAÇÕES ---
                     meli_res, intelipost_res, email_res = self._executar_integracoes_faturamento(
@@ -3933,6 +3942,107 @@ class NFeService:
             return {"success": True, "message": "Ciência enviada. Aguarde a próxima sincronização para baixar o XML completo."}
         finally:
             if os.path.exists(cert_path): os.remove(cert_path)
+
+    def importar_xml_manual(self, xml_content: str):
+        """
+        Recebe o conteúdo de um XML, valida e salva na tabela nfe_recebidas.
+        Suporta nfeProc e NFe.
+        """
+        try:
+            # 1. Parse do XML
+            if isinstance(xml_content, str):
+                xml_data = xml_content.encode('utf-8')
+            else:
+                xml_data = xml_content
+            
+            root = etree.fromstring(xml_data)
+            
+            # Namespaces
+            ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+            
+            tag_local = etree.QName(root).localname
+            
+            # 2. Busca Chave de Acesso
+            ch_node = root.xpath('//ns:chNFe', namespaces=ns) or root.xpath('//*[local-name()="chNFe"]')
+            if not ch_node:
+                raise Exception("Chave de acesso não encontrada no XML.")
+            
+            chave = ch_node[0].text
+            
+            # 3. Verifica se já existe
+            nota_existente = self.db.query(models.NotaFiscalRecebida).filter_by(
+                chave_acesso=chave, 
+                id_empresa=self.id_empresa
+            ).first()
+            
+            if nota_existente:
+                # Se já existe, apenas atualiza se for uma versão mais completa (ex: nfeProc)
+                if tag_local == 'nfeProc' and nota_existente.tipo_documento != 'nfeProc':
+                    nota_existente.tipo_documento = 'nfeProc'
+                    nota_existente.xml_completo = etree.tostring(root, encoding='unicode')
+                    nota_existente.situacao_manifestacao = "Completa"
+                    self.db.commit()
+                return nota_existente
+
+            # 4. Cria nova nota
+            nova_nota = models.NotaFiscalRecebida(
+                chave_acesso=chave,
+                tipo_documento=tag_local,
+                xml_completo=etree.tostring(root, encoding='unicode'),
+                id_empresa=self.id_empresa,
+                situacao_manifestacao="Recebido"
+            )
+
+            # 5. Extração de Metadados
+            try:
+                if tag_local == 'resNFe':
+                    node_cnpj = root.xpath('//ns:CNPJ', namespaces=ns)
+                    if node_cnpj: nova_nota.cnpj_emitente = node_cnpj[0].text
+                    
+                    node_nome = root.xpath('//ns:xNome', namespaces=ns)
+                    if node_nome: nova_nota.nome_emitente = node_nome[0].text
+                    
+                    node_vinf = root.xpath('//ns:vNF', namespaces=ns)
+                    if node_vinf: nova_nota.valor_total = Decimal(node_vinf[0].text)
+                    
+                    node_dh = root.xpath('//ns:dhEmi', namespaces=ns)
+                    if node_dh: nova_nota.data_emissao = datetime.fromisoformat(node_dh[0].text.replace('Z', ''))
+                
+                elif tag_local == 'nfeProc' or tag_local == 'NFe':
+                    emit = root.xpath('//ns:emit', namespaces=ns)
+                    if emit:
+                        emit = emit[0]
+                        node_cnpj = emit.xpath('ns:CNPJ', namespaces=ns) or emit.xpath('ns:CPF', namespaces=ns)
+                        if node_cnpj: nova_nota.cnpj_emitente = node_cnpj[0].text
+                        
+                        node_nome = emit.xpath('ns:xNome', namespaces=ns)
+                        if node_nome: nova_nota.nome_emitente = node_nome[0].text
+                    
+                    total = root.xpath('//ns:total/ns:ICMSTot', namespaces=ns)
+                    if total:
+                        vnf_node = total[0].xpath('ns:vNF', namespaces=ns)
+                        if vnf_node: nova_nota.valor_total = Decimal(vnf_node[0].text)
+                    
+                    ide = root.xpath('//ns:ide', namespaces=ns)
+                    if ide:
+                        dh_emi_node = ide[0].xpath('ns:dhEmi', namespaces=ns)
+                        if dh_emi_node:
+                            dh_emi_str = dh_emi_node[0].text
+                            nova_nota.data_emissao = datetime.fromisoformat(dh_emi_str.replace('Z', ''))
+                    
+                    if tag_local == 'nfeProc':
+                        nova_nota.situacao_manifestacao = "Completa"
+            except Exception as e:
+                logger.warning(f"Erro ao extrair metadados do XML manual (Chave: {chave}): {e}")
+
+            self.db.add(nova_nota)
+            self.db.commit()
+            return nova_nota
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Erro ao importar XML manual: {e}")
+            raise HTTPException(status_code=400, detail=f"Erro ao processar XML: {str(e)}")
 
     def importar_nfe_compra(
         self,

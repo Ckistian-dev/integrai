@@ -819,21 +819,77 @@ def list_items(
         base_query = apply_search_filter(base_query, registry["model"], search_term, search_field)
 
     # 4. Ordenação Dinâmica
-    if sort_by and hasattr(registry["model"], sort_by):
-        sort_col = getattr(registry["model"], sort_by)
+    if sort_by:
+        model = registry["model"]
+        sort_col = None
         
+        # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
+        if "." in sort_by:
+            parts = sort_by.split(".")
+            if len(parts) == 2:
+                rel_name, field_name = parts
+                if hasattr(model, rel_name):
+                    rel_attr = getattr(model, rel_name)
+                    try:
+                        related_model = rel_attr.property.mapper.class_
+                        rel_alias = aliased(related_model, name=f"sort_{rel_name}")
+                        base_query = base_query.outerjoin(rel_alias, rel_attr)
+                        sort_col = getattr(rel_alias, field_name, None)
+                    except: pass
+        
+        # Caso 2: Atributo direto do modelo
+        if sort_col is None and hasattr(model, sort_by):
+            sort_col = getattr(model, sort_by)
+            
+            # Se for uma Foreign Key, tenta ordenar pelo campo de display do relacionado automaticamente
+            mapper = inspect(model)
+            column = model.__table__.columns.get(sort_by)
+            if column is not None and column.foreign_keys:
+                rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                if rel:
+                    related_model = rel.mapper.class_
+                    PREFERRED_DISPLAY_FIELDS = [
+                        "nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"
+                    ]
+                    display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
+                    if display_field:
+                        rel_alias = aliased(related_model, name=f"sort_auto_{rel.key}")
+                        base_query = base_query.outerjoin(rel_alias, getattr(model, rel.key))
+                        sort_col = getattr(rel_alias, display_field)
+
+        if sort_col is not None:
+            # Identifica o tipo da coluna para decidir a estratégia de ordenação
+            is_text_field = False
+            try:
+                # Tenta identificar se é String/Text através dos metadados da coluna
+                from sqlalchemy import String, Text
+                if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
+                    is_text_field = True
+            except:
+                pass
+
         needs_numeric_sort = any(kw in sort_by.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
         
-        if sort_order == "desc":
-            if needs_numeric_sort:
-                base_query = base_query.order_by(func.length(cast(sort_col, String)).desc().nulls_last(), sort_col.desc().nulls_last())
-            else:
-                base_query = base_query.order_by(sort_col.desc().nulls_last())
+        # Define a expressão de ordenação conforme o tipo do campo
+        if needs_numeric_sort:
+            # Ordenação Natural/Numérica (ex: 1, 2, 10 em vez de 1, 10, 2)
+            sort_expressions = [func.length(cast(sort_col, String)), sort_col]
+        elif is_text_field:
+            # Ordenação Textual (A-Z ignorando acentos e case)
+            sort_expressions = [func.unaccent(func.lower(sort_col))]
         else:
-            if needs_numeric_sort:
-                base_query = base_query.order_by(func.length(cast(sort_col, String)).asc().nulls_last(), sort_col.asc().nulls_last())
+            # Ordenação Padrão
+            sort_expressions = [sort_col]
+
+        # Aplica a direção (ASC/DESC) e trata nulos
+        order_by_clauses = []
+        for expr in sort_expressions:
+            if sort_order == "desc":
+                order_by_clauses.append(expr.desc().nulls_last())
             else:
-                base_query = base_query.order_by(sort_col.asc().nulls_last())
+                order_by_clauses.append(expr.asc().nulls_last())
+        
+        base_query = base_query.order_by(*order_by_clauses)
     else:
         # Ordenação padrão (ID desc) se não especificado
         base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
@@ -926,7 +982,7 @@ def get_distinct_values(
         model.id_empresa == current_user.id_empresa,
         column.isnot(None),
         cast(column, String) != ""
-    ).order_by(column)
+    ).order_by(func.unaccent(cast(column, String)).asc())
     
     results = query.all()
     return [r[0] for r in results]
@@ -1612,6 +1668,12 @@ def create_item(
             ).first()
             if existing:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Já existe um cadastro com o CPF/CNPJ {cpf_cnpj}.")
+
+    # 🎯 LÓGICA ESPECÍFICA: Preencher data_validade padrão para Pedidos
+    if model_name == "pedidos" and (not item_data.get("data_validade")):
+        empresa = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
+        validade_dias = empresa.validade_orcamento if (empresa and empresa.validade_orcamento) else 7
+        item_data["data_validade"] = (datetime.now() + timedelta(days=validade_dias)).date()
 
     try:
         CreateSchema = registry["create_schema"]

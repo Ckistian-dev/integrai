@@ -34,6 +34,7 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     onChange,
     error,
     modelName,
+    disabled: field.read_only,
     ...rest,
   };
 
@@ -207,7 +208,7 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
       
     case 'date':
     case 'datetime':
-      return <DateInput {...props} value={value} disabled={field.disabled} />;
+      return <DateInput {...props} value={value} />;
 
     case 'boolean':
       return <BooleanInput {...props} value={value} />;

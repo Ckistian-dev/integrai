@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, File, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, String
 from app.core.db import database, models
@@ -131,3 +131,28 @@ async def download_xml(
             "Content-Disposition": f"attachment; filename={filename}"
         }
     )
+
+@router.post("/upload")
+async def upload_xml(
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """Faz o upload manual de um ou mais arquivos XML para a tabela nfe_recebidas."""
+    service = NFeService(db, current_user.id_empresa)
+    success_count = 0
+    errors = []
+    
+    for file in files:
+        try:
+            content = await file.read()
+            service.importar_xml_manual(content)
+            success_count += 1
+        except Exception as e:
+            errors.append(f"Erro no arquivo {file.filename}: {str(e)}")
+            
+    return {
+        "success": True,
+        "message": f"{success_count} arquivos processados com sucesso.",
+        "errors": errors
+    }

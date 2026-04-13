@@ -147,6 +147,7 @@ export const TextInput = React.forwardRef(({
         type={inputType}
         id={name}
         name={name}
+        autoComplete="off"
         ref={finalRef} // <--- AQUI É O PULO DO GATO. Sem isso, o IMask não funciona.
         required={required}
         placeholder={placeholder || `Digite ${label.toLowerCase()}...`}
@@ -172,6 +173,7 @@ export const TextAreaInput = ({ field, value, onChange, error, ...props }) => {
       <textarea
         id={name}
         name={name}
+        autoComplete="off"
         value={value || ''}
         onChange={onChange}
         required={required}
@@ -502,6 +504,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
           setSelectedOption(opt);
           onChange(opt);
       }}
+      autoComplete="off"
       placeholder="Buscar produto..."
       menuPortalTarget={document.body}
       styles={{
@@ -535,6 +538,7 @@ export const SelectInput = ({ field, value, onChange, error, options = [], ...pr
       <select
         id={name}
         name={name}
+        autoComplete="off"
         value={value || ''}
         onChange={handleChange}
         required={required}
@@ -585,6 +589,7 @@ export const MultiSelectInput = ({ field, value, onChange, error, options = [], 
       <Select
         isMulti
         name={name}
+        autoComplete="off"
         closeMenuOnSelect={false}
         options={options}
         value={selectedOptions}
@@ -685,6 +690,7 @@ export const DefaultFiltersInput = ({ field, value: activeFilters = [], onChange
       return (
         <input
           type="date"
+          autoComplete="off"
           value={currentValue}
           onChange={(e) => handleFilterChange(fieldConfig.value, e.target.value)}
           className={commonClasses}
@@ -696,6 +702,7 @@ export const DefaultFiltersInput = ({ field, value: activeFilters = [], onChange
     return (
       <input
         type={fieldConfig.type === 'number' ? 'number' : 'text'}
+        autoComplete="off"
         value={currentValue}
         onChange={(e) => handleFilterChange(fieldConfig.value, e.target.value)}
         placeholder={`Filtrar por ${fieldConfig.label.toLowerCase()}...`}
@@ -893,6 +900,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, ...
       <AsyncSelect
         id={name}
         name={name}
+        autoComplete="off"
         cacheOptions
         defaultOptions // Carrega opções vazias no início
         loadOptions={loadOptions}
@@ -936,6 +944,7 @@ export const PasswordInput = ({ field, value, onChange, error, ...props }) => {
           type={showPassword ? 'text' : 'password'}
           id={name}
           name={name}
+          autoComplete="new-password"
           value={value || ''}
           onChange={onChange}
           required={required}
@@ -1032,6 +1041,7 @@ export const DateInput = ({ field, value, onChange, error, disabled, ...props })
         type={inputType}
         id={name}
         name={name}
+        autoComplete="off"
         value={formattedValue} // <- Usa o valor formatado
         onChange={onChange}    // <- O onChange nativo já envia o formato correto
         required={required}

@@ -265,7 +265,7 @@ const statusChangeActions = {
     },
     {
       currentStatus: "Nota Fiscal",
-      newStatus: "Finalizado", // Status não muda
+      newStatus: "Despachado", // Ajustado de Finalizado para Despachado
       buttonLabel: "Corrigir NFE",
       buttonIcon: FileText,
       buttonClasses: "bg-orange-500 hover:bg-orange-600",
@@ -273,7 +273,7 @@ const statusChangeActions = {
     },
     {
       currentStatus: "Nota Fiscal",
-      newStatus: "Finalizado",
+      newStatus: "Despachado", // Ajustado de Finalizado para Despachado
       buttonLabel: "Devolução",
       buttonIcon: RotateCcw,
       buttonClasses: "bg-red-600 hover:bg-red-700",
@@ -578,6 +578,24 @@ const GenericList = () => {
     return () => clearTimeout(timeoutId);
   }, [userPreferences, modelName, metadata, loadingMetadata, quickFilterValues]);
 
+  // --- RESET DA PAGINAÇÃO EM ATUALIZAÇÕES ---
+  // Garante que a página volte para 1 sempre que filtros, status, ordenação ou dados forem atualizados
+  useEffect(() => {
+    if (!isInitialLoad.current) {
+      setPage(1);
+      setSelectedRowIds([]);
+    }
+  }, [
+    modelName,
+    statusFilter,
+    debouncedQuickFilterValuesJson,
+    filtersJson,
+    sortField,
+    sortDirection,
+    refreshTrigger,
+    limit
+  ]);
+
   const isInitialLoad = React.useRef(true);
   const lastFetchedParamsRef = React.useRef(null);
   const tableContainerRef = React.useRef(null);
@@ -707,7 +725,7 @@ const GenericList = () => {
 
         if (statusFilter && statusFilter !== 'Todos') {
           if (statusFilter === 'Nota Fiscal') {
-            params.situacao = "Expedição,Despachado,Finalizado,Cancelado";
+            params.situacao = "Expedição,Despachado,Cancelado";
           } else {
             params.situacao = statusFilter;
           }
@@ -1199,6 +1217,58 @@ const GenericList = () => {
       toast.error(err.response?.data?.detail || "Erro ao sincronizar com SEFAZ.");
     } finally {
       setIsFetchingData(false);
+    }
+  };
+
+  const handleXmlUpload = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+
+    const toastId = toast.loading("Enviando e processando XMLs...");
+
+    try {
+      const response = await api.post('/dfe/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data.success) {
+        toast.update(toastId, {
+          render: response.data.message,
+          type: "success",
+          isLoading: false,
+          autoClose: 3000
+        });
+        setRefreshTrigger(prev => prev + 1);
+      } else {
+        toast.update(toastId, {
+          render: "Erro ao importar alguns arquivos.",
+          type: "error",
+          isLoading: false,
+          autoClose: 5000
+        });
+      }
+      
+      if (response.data.errors && response.data.errors.length > 0) {
+        response.data.errors.forEach(err => toast.error(err));
+      }
+
+    } catch (err) {
+      console.error("Erro no upload de XML:", err);
+      toast.update(toastId, {
+        render: "Erro ao enviar arquivos para o servidor.",
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -2401,7 +2471,7 @@ const GenericList = () => {
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           {/* Botões Lado Esquerdo */}
           <div className="flex gap-2">
-            {!isIntelipostView && !isMeliView && !isMagentoView && canCreate && (
+            {!isIntelipostView && !isMeliView && !isMagentoView && modelName !== 'nfe_recebidas' && canCreate && (
               <Link
                 to={`/${modelName}/new`}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium"
@@ -2439,6 +2509,21 @@ const GenericList = () => {
             {/* BOTÕES DF-E */}
             {modelName === 'nfe_recebidas' && (
               <>
+                <input
+                  type="file"
+                  id="xml-upload-input"
+                  multiple
+                  accept=".xml"
+                  className="hidden"
+                  onChange={handleXmlUpload}
+                />
+                <button
+                  onClick={() => document.getElementById('xml-upload-input').click()}
+                  className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium"
+                >
+                  <FileCode size={16} className="mr-2" />
+                  Importar XML
+                </button>
                 <button onClick={handleDfeSync} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">
                   <RefreshCw size={16} className={`mr-2 ${isFetchingData ? 'animate-spin' : ''}`} /> Sincronizar SEFAZ
                 </button>

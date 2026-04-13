@@ -204,9 +204,10 @@ def get_model_metadata(model_name: str):
             if col.info.get('available_fields'):
                 options = col.info.get('available_fields')
             
-            read_only = False
+            read_only = col.info.get('read_only', False)
             if col.name in ["criado_em", "atualizado_em"]:
                 read_only = True
+                visible = False
 
             # --- 3. CRIA O FIELDMETADATA (com a aba) ---
             field = FieldMetadata(

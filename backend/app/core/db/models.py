@@ -174,7 +174,6 @@ class PedidoSituacaoEnum(str, enum.Enum):
     embalagem = "Embalagem"
     faturamento = "Faturamento"
     expedicao = "Expedição"
-    finalizado = "Finalizado"
     despachado = "Despachado"
     cancelado = "Cancelado"
 
@@ -488,10 +487,10 @@ class Empresa(Base):
     certificado_arquivo = Column(LargeBinary, info={'tab': 'Fiscal', 'label': 'Certificado Digital (.pfx)', 'placeholder': '', 'filename_field': 'certificado_nome_arquivo'}) # O arquivo .pfx em bytes
     certificado_senha = Column(String, info={'tab': 'Fiscal', 'ui_type': 'password', 'label': 'Senha do Certificado', 'placeholder': 'Senha do arquivo .pfx'})
     nfe_serie = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Série NFe', 'placeholder': '1'})
-    nfe_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFe', 'placeholder': '1'})
+    nfe_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFe', 'placeholder': '1', 'read_only': True})
     nfe_ultimo_nsu = Column(String, default="0", info={'tab': 'Fiscal', 'label': 'Último NSU SEFAZ', 'placeholder': '0'})
     nfce_serie = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Série NFCe', 'placeholder': '1'})
-    nfce_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFCe', 'placeholder': '1'})
+    nfce_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFCe', 'placeholder': '1', 'read_only': True})
     ambiente_sefaz = Column(IntEnum(EmpresaAmbienteSefazEnum), nullable=False, default=EmpresaAmbienteSefazEnum.homologacao, info={
         'tab': 'Fiscal', 
         'label': 'Ambiente SEFAZ', 
@@ -504,6 +503,8 @@ class Empresa(Base):
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas Padrão (Vendas)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
     id_classificacao_contabil_cancelamento = Column(Integer, ForeignKey("classificacao_contabil.id"), nullable=True, 
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas (Cancelamento de Venda)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
+    validade_orcamento = Column(Integer, default=7, 
+                                info={'tab': 'Fiscal', 'label': 'Validade do Orçamento (Dias)', 'placeholder': '7'})
     certificado_nome_arquivo = Column(String, info={'tab': 'Fiscal', 'label': 'Nome do Arquivo', 'type': 'hidden'})
 
     # Campos Internos
@@ -913,7 +914,7 @@ class Pedido(Base):
                          info={'tab': 'Principal', 'label': 'Vendedor', 'placeholder': 'Busque o vendedor...'}) # Ref. Cadastro (tipo_cadastro=vendedor)
     origem_venda = Column(String, 
                           info={'tab': 'Principal', 'component': 'creatable_select', 'label': 'Canal de Venda', 'placeholder': 'Ex: Site, Balcão'})
-    situacao = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=False), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+    situacao = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Principal', 'label': 'Situação do Pedido', 'placeholder': 'Selecione...'})
     
     # --- Aba: Datas e Prazos ---
@@ -1169,8 +1170,9 @@ class IntelipostConfiguracao(Base):
     __tablename__ = "intelipost_configuracoes"
 
     id = Column(Integer, primary_key=True, index=True)
-    api_key = Column(String, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
-    origin_zip_code = Column(String(9), nullable=False, info={'tab': 'Geral', 'format_mask': 'cep', 'label': 'CEP de Origem', 'placeholder': '00000-000'})
+    api_key = Column(String, nullable=False, info={'tab': 'Dados Gerais', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
+    origin_zip_code = Column(String(9), nullable=False, info={'tab': 'Dados Gerais', 'format_mask': 'cep', 'label': 'CEP de Origem', 'placeholder': '00000-000'})
+    origin_warehouse_code = Column(String, nullable=True, info={'tab': 'Dados Gerais', 'label': 'Código do CD (Warehouse)', 'placeholder': 'Ex: CD01'})
     
     # Controle interno
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1199,7 +1201,7 @@ class MeliConfiguracao(Base):
     # Aba: Preferências
     cliente_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Cliente Padrão (Fallback)', 'placeholder': 'Selecione...'})
     vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
-    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=False), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     caixa_padrao = Column(String, nullable=True, 
                  info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
@@ -1246,7 +1248,7 @@ class MagentoConfiguracao(Base):
     
     # Aba: Preferências
     vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
-    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=False), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     
     payment_method_contains = Column(String, nullable=True, info={'tab': 'Preferências', 'label': 'Filtrar Método de Pagamento (Contém)', 'placeholder': 'Ex: credit_card, pix'})
