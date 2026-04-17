@@ -44,6 +44,9 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
     GLOBAL_SKIP = ["id", "criado_em", "atualizado_em"]
 
     filter_conditions = []
+    if isinstance(search_term, str):
+        search_term = search_term.strip()
+    
     search_pattern = f"%{search_term}%"
     
     # 1. Busca nas colunas do próprio modelo
@@ -179,7 +182,7 @@ def generate_shipping_label(
             except:
                 pass
 
-        if not logo_drawn:
+        if not logo_drawn_on_page:
             # Fallback: Texto simples se não tiver logo
             c.setFont("Helvetica-Bold", 14)
             c.drawString(margin, top_y - 10*mm, empresa_dados['razao'][:15])
@@ -860,36 +863,34 @@ def list_items(
         if sort_col is not None:
             # Identifica o tipo da coluna para decidir a estratégia de ordenação
             is_text_field = False
-            try:
-                # Tenta identificar se é String/Text através dos metadados da coluna
-                from sqlalchemy import String, Text
-                if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
-                    is_text_field = True
-            except:
-                pass
+            if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
+                is_text_field = True
 
-        needs_numeric_sort = any(kw in sort_by.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
-        
-        # Define a expressão de ordenação conforme o tipo do campo
-        if needs_numeric_sort:
-            # Ordenação Natural/Numérica (ex: 1, 2, 10 em vez de 1, 10, 2)
-            sort_expressions = [func.length(cast(sort_col, String)), sort_col]
-        elif is_text_field:
-            # Ordenação Textual (A-Z ignorando acentos e case)
-            sort_expressions = [func.unaccent(func.lower(sort_col))]
-        else:
-            # Ordenação Padrão
-            sort_expressions = [sort_col]
-
-        # Aplica a direção (ASC/DESC) e trata nulos
-        order_by_clauses = []
-        for expr in sort_expressions:
-            if sort_order == "desc":
-                order_by_clauses.append(expr.desc().nulls_last())
+            needs_numeric_sort = any(kw in sort_by.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
+            
+            # Define a expressão de ordenação conforme o tipo do campo
+            if needs_numeric_sort:
+                # Ordenação Natural/Numérica (ex: 1, 2, 10 em vez de 1, 10, 2)
+                sort_expressions = [func.length(cast(sort_col, String)), sort_col]
+            elif is_text_field:
+                # Ordenação Textual (A-Z ignorando acentos e case)
+                sort_expressions = [func.unaccent(func.lower(sort_col))]
             else:
-                order_by_clauses.append(expr.asc().nulls_last())
-        
-        base_query = base_query.order_by(*order_by_clauses)
+                # Ordenação Padrão
+                sort_expressions = [sort_col]
+
+            # Aplica a direção (ASC/DESC) e trata nulos
+            order_by_clauses = []
+            for expr in sort_expressions:
+                if sort_order == "desc":
+                    order_by_clauses.append(expr.desc().nulls_last())
+                else:
+                    order_by_clauses.append(expr.asc().nulls_last())
+            
+            base_query = base_query.order_by(*order_by_clauses)
+        else:
+            # Caso o campo de ordenação seja inválido, usa o padrão
+            base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
     else:
         # Ordenação padrão (ID desc) se não especificado
         base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
@@ -1652,6 +1653,11 @@ def create_item(
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
 
+    # --- Validação: Trim em todos os campos de string ---
+    for key, value in item_data.items():
+        if isinstance(value, str):
+            item_data[key] = value.strip()
+
     # Normalização para Caixa Alta (Cadastro e Empresa)
     if model_name in ["cadastros", "empresas"]:
         for field in ["nome_razao", "fantasia", "razao"]:
@@ -1731,6 +1737,11 @@ def batch_update_items(
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    # --- Validação: Trim em todos os campos de string ---
+    for key, value in item_data.items():
+        if isinstance(value, str):
+            item_data[key] = value.strip()
         
     # Busca os itens garantindo que pertencem à empresa
     items = db.query(registry["model"]).filter(
@@ -1787,6 +1798,11 @@ def update_item(
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    # --- Validação: Trim em todos os campos de string ---
+    for key, value in item_data.items():
+        if isinstance(value, str):
+            item_data[key] = value.strip()
 
     # Busca o objeto existente
     db_obj = registry["crud"].get(

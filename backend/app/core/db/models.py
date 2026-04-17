@@ -2,9 +2,9 @@ import enum
 from sqlalchemy import (
     Boolean, Column, ForeignKey, Integer, String, Enum as SQLAlchemyEnum,
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
-    UniqueConstraint
+    UniqueConstraint, event
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapper
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from .database import Base
@@ -419,6 +419,17 @@ class Currency(Numeric):
     """Tipo customizado para valores monetários (BRL)."""
     def __init__(self, precision=15, scale=2, asdecimal=True, **kwargs):
         super().__init__(precision=precision, scale=scale, asdecimal=asdecimal, **kwargs)
+
+# --- Validação Global: Trim em Strings ---
+@event.listens_for(Mapper, "before_insert")
+@event.listens_for(Mapper, "before_update")
+def trim_strings(mapper, connection, target):
+    """Remove espaços em branco no início e fim de todos os campos de texto."""
+    for column in mapper.columns:
+        if isinstance(column.type, (String, Text)):
+            value = getattr(target, column.key)
+            if isinstance(value, str):
+                setattr(target, column.key, value.strip())
 
 # --- Modelos (Tabelas) ---
 

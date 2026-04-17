@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
     POSTGRES_SERVER: str = "db" # Nome do serviço do DB no docker-compose.yml
+    ENVIRONMENT: str = "development"
 
     backend_cors_origins: str | list[str] = []
 

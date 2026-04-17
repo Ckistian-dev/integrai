@@ -1680,6 +1680,11 @@ class NFeService:
         try:
             # --- CLIENTE ---
             cli_db = pedido.cliente
+            
+            # Define UF do Cliente (prioridade para o endereço do pedido)
+            uf_cliente_obj = pedido.endereco_estado or cli_db.estado
+            uf_cliente = (uf_cliente_obj.value if hasattr(uf_cliente_obj, 'value') else uf_cliente_obj).upper()
+            
             tipo_doc = 'CPF' if len(self._limpar_formatacao(cli_db.cpf_cnpj)) == 11 else 'CNPJ'
             
             # Lógica simples para indicador IE
@@ -3542,23 +3547,27 @@ class NFeService:
 
         # 1. Integração Mercado Livre
         if pedido.origem_venda == "Mercado Livre":
-            try:
-                match = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
-                if match:
-                    order_id_ml = match.group(1)
-                    meli_service = MeliService(self.db, self.id_empresa)
-                    res = asyncio.run(meli_service.upload_xml(order_id_ml, xml_str))
-                    
-                    if res and not (isinstance(res, dict) and res.get('status') == 'error'):
-                        meli_res = {"success": True, "message": "XML enviado com sucesso para o Mercado Livre!"}
-                        pedido.meli_xml_enviado = True
+            if settings.ENVIRONMENT != "production":
+                meli_res = {"success": True, "message": "Simulado: XML enviado para o Mercado Livre (Ambiente de Testes)"}
+                pedido.meli_xml_enviado = True
+            else:
+                try:
+                    match = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
+                    if match:
+                        order_id_ml = match.group(1)
+                        meli_service = MeliService(self.db, self.id_empresa)
+                        res = asyncio.run(meli_service.upload_xml(order_id_ml, xml_str))
+                        
+                        if res and not (isinstance(res, dict) and res.get('status') == 'error'):
+                            meli_res = {"success": True, "message": "XML enviado com sucesso para o Mercado Livre!"}
+                            pedido.meli_xml_enviado = True
+                        else:
+                            error_msg = res.get('message') if isinstance(res, dict) and res.get('message') else "Erro desconhecido no upload."
+                            meli_res = {"success": False, "message": f"Falha no Mercado Livre: {error_msg}"}
                     else:
-                        error_msg = res.get('message') if isinstance(res, dict) and res.get('message') else "Erro desconhecido no upload."
-                        meli_res = {"success": False, "message": f"Falha no Mercado Livre: {error_msg}"}
-                else:
-                    meli_res = {"success": False, "message": "ID do pedido ML não encontrado para envio do XML."}
-            except Exception as e:
-                meli_res = {"success": False, "message": f"Erro ao enviar para ML: {str(e)}"}
+                        meli_res = {"success": False, "message": "ID do pedido ML não encontrado para envio do XML."}
+                except Exception as e:
+                    meli_res = {"success": False, "message": f"Erro ao enviar para ML: {str(e)}"}
 
         # 2. Integração Intelipost (Shipment Order)
         # O pedido na intelipost deve ser sempre criado se houver configuração da integração
@@ -3574,31 +3583,35 @@ class NFeService:
                 is_mercado_envios = True
 
         if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
-            try:
-                intelipost_service = IntelipostService(self.db, self.id_empresa)
-                dados_frete = {
-                    "delivery_method_id": pedido.delivery_method_id,
-                    "quote_id": pedido.quote_id,
-                    "final_shipping_cost": float(pedido.valor_frete or 0),
-                    "data_entrega": pedido.data_entrega.isoformat() if pedido.data_entrega else None
-                }
-                res = asyncio.run(intelipost_service.criar_pedido_envio(pedido.id, dados_frete))
-                
-                if isinstance(res, dict) and res.get("status") == "warning":
-                    intelipost_res = {"success": True, "message": res.get("message"), "warning": True}
-                    pedido.intelipost_criado = True
-                else:
-                    intelipost_res = {"success": True, "message": "Ordem de envio criada na Intelipost!"}
-                    pedido.intelipost_criado = True
-            except Exception as e:
-                logger.error(f"Erro ao criar envio na Intelipost: {e}")
-                # Reforço: se a exceção contiver "já existe", trata como aviso e não bloqueia a alteração de situação
-                err_str = str(e).lower()
-                if "já existe" in err_str or "already.existing.order.number" in err_str:
-                    intelipost_res = {"success": True, "message": f"Aviso Intelipost: {str(e)}", "warning": True}
-                    pedido.intelipost_criado = True
-                else:
-                    intelipost_res = {"success": False, "message": f"Erro Intelipost: {str(e)}"}
+            if settings.ENVIRONMENT != "production":
+                intelipost_res = {"success": True, "message": "Simulado: Ordem de envio criada na Intelipost (Ambiente de Testes)"}
+                pedido.intelipost_criado = True
+            else:
+                try:
+                    intelipost_service = IntelipostService(self.db, self.id_empresa)
+                    dados_frete = {
+                        "delivery_method_id": pedido.delivery_method_id,
+                        "quote_id": pedido.quote_id,
+                        "final_shipping_cost": float(pedido.valor_frete or 0),
+                        "data_entrega": pedido.data_entrega.isoformat() if pedido.data_entrega else None
+                    }
+                    res = asyncio.run(intelipost_service.criar_pedido_envio(pedido.id, dados_frete))
+                    
+                    if isinstance(res, dict) and res.get("status") == "warning":
+                        intelipost_res = {"success": True, "message": res.get("message"), "warning": True}
+                        pedido.intelipost_criado = True
+                    else:
+                        intelipost_res = {"success": True, "message": "Ordem de envio criada na Intelipost!"}
+                        pedido.intelipost_criado = True
+                except Exception as e:
+                    logger.error(f"Erro ao criar envio na Intelipost: {e}")
+                    # Reforço: se a exceção contiver "já existe", trata como aviso e não bloqueia a alteração de situação
+                    err_str = str(e).lower()
+                    if "já existe" in err_str or "already.existing.order.number" in err_str:
+                        intelipost_res = {"success": True, "message": f"Aviso Intelipost: {str(e)}", "warning": True}
+                        pedido.intelipost_criado = True
+                    else:
+                        intelipost_res = {"success": False, "message": f"Erro Intelipost: {str(e)}"}
 
         # 3. Integração E-mail
         try:

@@ -10,6 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.core.db import models
+from app.core.config import settings
 
 class IntelipostService:
     def __init__(self, db: Session, id_empresa: int):
@@ -247,6 +248,9 @@ class IntelipostService:
         """
         Cria a ordem de envio (Shipment Order) na Intelipost.
         """
+        if settings.ENVIRONMENT != "production":
+            return {"status": "success", "message": "Simulado: Ordem de envio criada na Intelipost (Ambiente de Testes)"}
+
         # 1. Busca Pedido e Relacionamentos
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id == pedido_id,

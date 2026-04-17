@@ -1,5 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field, field_serializer
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_serializer, ConfigDict
 from typing import Optional, List, Any, Dict, Type
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, from_attributes=True)
 from datetime import datetime, date
 from decimal import Decimal
 
@@ -617,6 +620,15 @@ class PedidoUpdate(BaseModel):
     id_cliente: Optional[int] = None
     id_vendedor: Optional[int] = None
     id_transportadora: Optional[int] = None
+
+    # Campos de Endereço de Entrega
+    endereco_cep: Optional[str] = Field(None, max_length=9)
+    endereco_estado: Optional[EstadoEnum] = None
+    endereco_cidade: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_logradouro: Optional[str] = None
+    endereco_numero: Optional[str] = None
+    endereco_complemento: Optional[str] = None
     
     meli_xml_enviado: Optional[bool] = None
     intelipost_criado: Optional[bool] = None

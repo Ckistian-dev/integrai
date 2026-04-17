@@ -298,6 +298,12 @@ const GenericForm = ({ modelName: propModelName }) => {
         try {
           const itemRes = await api.get(`/generic/${modelName}/${id}`);
           setFormData(itemRes.data);
+          
+          // 🎯 CORREÇÃO: Evita que o preenchimento automático de endereço 
+          // sobreponha o endereço já salvo no pedido ao carregar o formulário.
+          if (modelName === 'pedidos' && itemRes.data.id_cliente) {
+            previousClientIdRef.current = itemRes.data.id_cliente;
+          }
         } catch (err) {
           toast.error("Erro ao carregar dados do item.");
         } finally {
@@ -315,7 +321,7 @@ const GenericForm = ({ modelName: propModelName }) => {
   }, [tabs, id, isEditMode, modelName, initializeFormData]);
 
   // --- INTEGRAÇÃO BRASIL API ---
-  const fetchAddressFromCep = useCallback(async (cepValue) => {
+  const fetchAddressFromCep = useCallback(async (cepValue, isDeliveryAddress = false) => {
     const cep = String(cepValue).replace(/\D/g, '');
     if (cep.length !== 8) return;
 
@@ -328,10 +334,10 @@ const GenericForm = ({ modelName: propModelName }) => {
 
       setFormData(prev => ({
         ...prev,
-        logradouro: prev.logradouro || data.street || '',
-        bairro: prev.bairro || data.neighborhood || '',
-        cidade: prev.cidade || data.city || '',
-        estado: prev.estado || data.state || '',
+        [isDeliveryAddress ? 'endereco_logradouro' : 'logradouro']: prev[isDeliveryAddress ? 'endereco_logradouro' : 'logradouro'] || data.street || '',
+        [isDeliveryAddress ? 'endereco_bairro' : 'bairro']: prev[isDeliveryAddress ? 'endereco_bairro' : 'bairro'] || data.neighborhood || '',
+        [isDeliveryAddress ? 'endereco_cidade' : 'cidade']: prev[isDeliveryAddress ? 'endereco_cidade' : 'cidade'] || data.city || '',
+        [isDeliveryAddress ? 'endereco_estado' : 'estado']: prev[isDeliveryAddress ? 'endereco_estado' : 'estado'] || data.state || '',
       }));
 
       // 2. Busca Código IBGE (Requer Estado e Cidade)
@@ -349,7 +355,7 @@ const GenericForm = ({ modelName: propModelName }) => {
             if (found) {
               setFormData(prev => ({
                 ...prev,
-                cidade_ibge: prev.cidade_ibge || String(found.codigo_ibge)
+                [isDeliveryAddress ? 'endereco_cidade_ibge' : 'cidade_ibge']: prev[isDeliveryAddress ? 'endereco_cidade_ibge' : 'cidade_ibge'] || String(found.codigo_ibge)
               }));
             }
           }
@@ -449,11 +455,11 @@ const GenericForm = ({ modelName: propModelName }) => {
       return newData;
     });
 
-    // Dispara busca de CEP se for o campo 'cep' e tiver 8 dígitos
-    if (name === 'cep') {
+    // Dispara busca de CEP se for o campo 'cep' ou 'endereco_cep' e tiver 8 dígitos
+    if (name === 'cep' || name === 'endereco_cep') {
       const cleanCep = String(val).replace(/\D/g, '');
       if (cleanCep.length === 8) {
-        fetchAddressFromCep(val);
+        fetchAddressFromCep(val, name === 'endereco_cep');
       }
     }
 

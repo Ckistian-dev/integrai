@@ -14,6 +14,7 @@ from app.core.db.models import (
     CadastroTipoPessoaEnum, CadastroTipoCadastroEnum, CadastroIndicadorIEEnum,
     PedidoSituacaoEnum, PedidoModalidadeFreteEnum, FiscalPagamentoEnum
 )
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -839,6 +840,10 @@ class MeliService:
         Envia o XML da NFe para o Mercado Livre.
         CORREÇÃO DEFINITIVA: Força MIME application/xml e adiciona cabeçalho XML.
         """
+        if settings.ENVIRONMENT != "production":
+            logger.info(f"Simulando upload de XML para pedido ML {order_id_ml} (Ambiente: {settings.ENVIRONMENT})")
+            return {"status": "success", "message": "Simulado: XML enviado (Ambient de Testes)"}
+
         logger.info(f"Iniciando upload de XML para pedido ML {order_id_ml}")
         client = await self.get_client()
 
