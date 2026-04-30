@@ -162,7 +162,7 @@ export const TextInput = React.forwardRef(({
 });
 
 /** * Componente de TextArea * Para campos de texto longo. */
-export const TextAreaInput = ({ field, value, onChange, error, ...props }) => {
+export const TextAreaInput = ({ field, value, onChange, error, modelName, ...props }) => {
   const { label, name, required, placeholder } = field;
 
   return (
@@ -195,7 +195,7 @@ export const MaskedInput = IMaskMixin(TextInput);
 
 
 /** * Componente de Input Booleano (Dropdown Sim/Não) * Renderiza como um <select> com opções "Sim" e "Não". */
-export const BooleanInput = ({ field, value, onChange, error, ...props }) => {
+export const BooleanInput = ({ field, value, onChange, error, modelName, ...props }) => {
   // ... (restante do código)
   const { label, name, required } = field;
 
@@ -517,7 +517,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
 };
 
 /** * Componente de Select (Dropdown) */
-export const SelectInput = ({ field, value, onChange, error, options = [], ...props }) => {
+export const SelectInput = ({ field, value, onChange, error, options = [], modelName, ...props }) => {
   const { label, name, required } = field;
 
   const handleChange = (e) => {
@@ -560,7 +560,7 @@ export const SelectInput = ({ field, value, onChange, error, options = [], ...pr
 };
 
 /** * Componente de MultiSelect (Dropdown com múltipla seleção) */
-export const MultiSelectInput = ({ field, value, onChange, error, options = [], ...props }) => {
+export const MultiSelectInput = ({ field, value, onChange, error, options = [], modelName, ...props }) => {
   const { label, name, required } = field;
 
   // Garante que value seja um array
@@ -923,7 +923,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, ...
 };
 
 /** * Componente de Input de Senha * Renderiza um campo type="password" com botão de "Mostrar/Ocultar" */
-export const PasswordInput = ({ field, value, onChange, error, ...props }) => {
+export const PasswordInput = ({ field, value, onChange, error, modelName, ...props }) => {
   const { label, name, required, placeholder } = field;
   const [showPassword, setShowPassword] = useState(false);
 
@@ -973,7 +973,7 @@ export const PasswordInput = ({ field, value, onChange, error, ...props }) => {
 };
 
 /** * Componente para Data (calendário) e Data/Hora * Usa o input nativo do HTML5 (<input type="date" />) * que abre um pop-up de calendário. */
-export const DateInput = ({ field, value, onChange, error, disabled, ...props }) => {
+export const DateInput = ({ field, value, onChange, error, disabled, modelName, ...props }) => {
   const { label, name, required } = field;
   
   // O tipo vindo do backend é 'date' or 'datetime'.

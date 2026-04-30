@@ -463,7 +463,8 @@ class EstoqueBase(BaseModel):
     nivel: Optional[str] = None
     cor: Optional[str] = None
     quantidade: int
-    situacao: EstoqueSituacaoEnum = EstoqueSituacaoEnum.disponivel
+    situacao: EstoqueSituacaoEnum = EstoqueSituacaoEnum.entrada
+    observacoes: Optional[str] = None
 
 class EstoqueCreate(EstoqueBase):
     pass
@@ -477,6 +478,7 @@ class EstoqueUpdate(BaseModel):
     cor: Optional[str] = None
     quantidade: Optional[int] = None
     situacao: Optional[EstoqueSituacaoEnum] = None
+    observacoes: Optional[str] = None
 
 class Estoque(EstoqueBase):  # RENOMEADO de EstoqueRead para Estoque
     id: int
@@ -540,6 +542,7 @@ class PedidoBase(BaseModel):
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = RegraTipoOperacaoEnum.venda_mercadoria
+    retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
     numero_nf: Optional[int] = None
     data_nf: Optional[date] = None
@@ -604,6 +607,7 @@ class PedidoUpdate(BaseModel):
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = None
+    retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
     numero_nf: Optional[int] = None
     data_nf: Optional[date] = None

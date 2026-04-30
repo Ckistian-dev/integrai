@@ -81,7 +81,11 @@ const SYSTEM_MODULES = [
     key: 'estoque', 
     label: 'Estoque', 
     model: 'estoque', 
-    actions: [{key: 'create', label: 'Criar'}, {key: 'edit', label: 'Editar'}, {key: 'delete', label: 'Deletar'}] 
+    actions: [{key: 'create', label: 'Criar'}, {key: 'edit', label: 'Editar'}, {key: 'delete', label: 'Deletar'}],
+    subpages: [
+      {key: 'Saldo', label: 'Saldo'},
+      {key: 'Movimentações', label: 'Movimentações'}
+    ]
   },
   { 
     key: 'contas', 

@@ -16,6 +16,7 @@ import ConferenciaPedidoModal from '../components/ui/ConferenciaPedidoModal'; //
 import FaturamentoModal from '../components/ui/FaturamentoModal';
 import ModalCotacaoIntelipost from '../components/ui/ModalCotacaoIntelipost'; // Ajuste o caminho
 import ModalImportacaoDfe from '../components/ui/ModalImportacaoDfe'; // NOVO COMPONENTE
+import ModalInventario from '../components/ui/ModalInventario'; // Modal de Inventário
 import Modal from '../components/ui/Modal';
 import { DefaultFiltersInput } from '../components/ui/InputFields';
 import {
@@ -51,7 +52,9 @@ import {
   GripVertical,
   ArrowUp,
   ArrowDown,
-  FileCode
+  FileCode,
+  ClipboardList,
+  Download
 } from 'lucide-react';
 
 registerLocale('pt-BR', ptBR);
@@ -381,15 +384,48 @@ const GenericList = () => {
   // --- ESTADO PARA DEVOLUÇÃO ---
   const [isDevolucaoModalOpen, setIsDevolucaoModalOpen] = useState(false);
 
+  // --- ESTADO PARA INVENTÁRIO ---
+  const [isInventarioModalOpen, setIsInventarioModalOpen] = useState(false);
+
+  // Lógica de agrupamento para a aba de Inventário do Estoque (Movido para o topo para respeitar as regras de hooks)
+  const groupedData = useMemo(() => {
+    if (modelName === 'estoque' && statusFilter === 'Inventário' && data) {
+      const groups = {};
+      data.forEach(item => {
+        const date = new Date(item.criado_em);
+        const windowMs = 1 * 60 * 1000; // Janela de 1 minuto
+        const windowKey = Math.floor(date.getTime() / windowMs) * windowMs;
+        const key = `${windowKey}`;
+        if (!groups[key]) {
+          groups[key] = {
+            key,
+            data_hora: item.criado_em,
+            itens: []
+          };
+        }
+        groups[key].itens.push(item);
+      });
+      return Object.values(groups).sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora));
+    }
+    return null;
+  }, [modelName, statusFilter, data]);
+
   const [selectedRowIds, setSelectedRowIds] = useState([]);
+  const [selectedGroupKey, setSelectedGroupKey] = useState(null);
+
   const selectedRowId = selectedRowIds.length > 0 ? selectedRowIds[0] : null;
+  const selectedItem = useMemo(() => data.find(i => i.id === selectedRowId), [selectedRowId, data]);
+  
+  // A seleção agora é baseada no GRUPO (cabeçalho) para o módulo de estoque/inventário
+  const isInventorySelected = modelName === 'estoque' && selectedGroupKey !== null;
+
   const selectedItemName = useMemo(() => {
     if (selectedRowIds.length === 1) {
-      const item = data.find(i => i.id === selectedRowId);
+      const item = selectedItem;
       return item?.descricao || item?.id;
     }
     return null;
-  }, [selectedRowId, data, selectedRowIds.length]);
+  }, [selectedItem, selectedRowIds.length]);
   const [anchorIndex, setAnchorIndex] = useState(-1);
   const [focusIndex, setFocusIndex] = useState(-1);
   const [caixaOptions, setCaixaOptions] = useState([]);
@@ -426,6 +462,15 @@ const GenericList = () => {
   const [addColumnSearch, setAddColumnSearch] = useState("");
   const [userPreferences, setUserPreferences] = useState({ visibleColumns: [], filters: [], sort: { field: 'id', direction: 'desc' } });
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
+
+  // --- LÓGICA DE TOTAIS E LIMITE EFETIVO ---
+  // Se o modelo tem totais, reservamos a última linha da tabela para eles.
+  // Para isso, reduzimos o limite de dados por página em 1 e "passamos o dado para a próxima".
+  const hasTotalsField = useMemo(() => {
+    return (modelName === 'pedidos' || modelName === 'contas') && Object.keys(totals || {}).length > 0;
+  }, [modelName, totals]);
+
+  const effectiveLimit = hasTotalsField ? limit - 1 : limit;
 
   // Estabiliza as dependências do useEffect para evitar loops infinitos
   const filtersJson = JSON.stringify(userPreferences.filters);
@@ -593,8 +638,14 @@ const GenericList = () => {
     sortField,
     sortDirection,
     refreshTrigger,
-    limit
+    limit,
+    setSelectedGroupKey // Adicionado para permitir o reset
   ]);
+
+  // Reset do grupo selecionado ao mudar de aba ou modelo
+  useEffect(() => {
+    setSelectedGroupKey(null);
+  }, [modelName, statusFilter]);
 
   const isInitialLoad = React.useRef(true);
   const lastFetchedParamsRef = React.useRef(null);
@@ -684,7 +735,7 @@ const GenericList = () => {
     const fetchData = async () => {
       // Monta uma chave única para identificar se os parâmetros de busca mudaram de fato
       const paramsKey = JSON.stringify({
-        modelName, page, limit, statusFilter,
+        modelName, page, effectiveLimit, statusFilter,
         filtersJson, sortField, sortDirection,
         refreshTrigger, isMeliView, isMagentoView,
         debouncedQuickFilterValuesJson
@@ -700,14 +751,14 @@ const GenericList = () => {
       setSelectedRowIds([]);
 
       try {
-        const skip = (page - 1) * limit;
+        const skip = (page - 1) * effectiveLimit;
 
         // CORREÇÃO 1: Declarar a variável url
         let url = '';
 
         const params = {
           skip,
-          limit,
+          limit: effectiveLimit,
           sort_by: userPreferences.sort?.field || 'id',
           sort_order: userPreferences.sort?.direction || 'desc'
         };
@@ -841,7 +892,7 @@ const GenericList = () => {
       }
     };
 
-    fetchData(); // Adicionado refreshTrigger às dependências para forçar recarregamento
+    fetchData();
   }, [
     metadata,
     loadingPreferences,
@@ -851,10 +902,11 @@ const GenericList = () => {
     isMeliView,
     modelName,
     refreshTrigger,
-    filtersJson, // Alterado: Só busca se os filtros mudarem
-    sortField,   // Alterado: Só busca se o campo de ordenação mudar
-    sortDirection, // Alterado: Só busca se a direção mudar
-    debouncedQuickFilterValuesJson
+    filtersJson,
+    sortField,
+    sortDirection,
+    debouncedQuickFilterValuesJson,
+    effectiveLimit
   ]);
 
   const fieldMetaMap = useMemo(() => {
@@ -1254,7 +1306,7 @@ const GenericList = () => {
           autoClose: 5000
         });
       }
-      
+
       if (response.data.errors && response.data.errors.length > 0) {
         response.data.errors.forEach(err => toast.error(err));
       }
@@ -1823,7 +1875,11 @@ const GenericList = () => {
   const handleGenerateReport = async (reportId, format = 'csv') => {
     setExportingFormat(format);
     try {
-      const endpoint = format === 'pdf' ? `/reports/generate-pdf/${reportId}` : `/reports/generate/${reportId}`;
+      let endpoint = '';
+      if (format === 'pdf') endpoint = `/reports/generate-pdf/${reportId}`;
+      else if (format === 'xml') endpoint = `/reports/generate-xml/${reportId}`;
+      else endpoint = `/reports/generate/${reportId}`;
+
       const response = await api.get(endpoint, {
         responseType: 'blob',
       });
@@ -1831,8 +1887,18 @@ const GenericList = () => {
       const report = data.find(r => r.id === reportId);
       const reportName = report?.nome?.replace(/\s+/g, '_') || 'Relatorio';
       const timestamp = new Date().toLocaleString('pt-BR').replace(/[/:, ]/g, '_');
-      const extension = format === 'pdf' ? 'pdf' : 'csv';
-      const mimeType = format === 'pdf' ? 'application/pdf' : 'text/csv';
+      
+      let extension = 'csv';
+      let mimeType = 'text/csv';
+      
+      if (format === 'pdf') {
+        extension = 'pdf';
+        mimeType = 'application/pdf';
+      } else if (format === 'xml') {
+        extension = 'zip';
+        mimeType = 'application/zip';
+      }
+
       let filename = `${reportName}_${timestamp}.${extension}`;
 
       const disposition = response.headers['content-disposition'];
@@ -1853,6 +1919,106 @@ const GenericList = () => {
       toast.error(`Erro ao gerar relatório em ${format.toUpperCase()}.`);
     } finally {
       setExportingFormat(null);
+    }
+  };
+
+  const handleExportInventory = async (windowKey, format = 'csv') => {
+    try {
+      const dateStart = new Date(Number(windowKey));
+      const dateEnd = new Date(Number(windowKey) + 60000);
+
+      const inventoryFilters = [
+        { field: 'criado_em', operator: 'gte', value: dateStart.toISOString() },
+        { field: 'criado_em', operator: 'lt', value: dateEnd.toISOString() },
+        { field: 'situacao', operator: 'equals', value: 'Inventário' }
+      ];
+
+      // Mapeia colunas visíveis na tabela para a exportação
+      const configColumns = columnsToDisplay.map(colName => {
+        const field = fieldMetaMap.get(colName);
+        let label = field?.label || colName;
+        let fieldPath = colName;
+
+        // Ajustes para campos de relacionamento e virtuais no Estoque
+        if (colName === 'id_produto') {
+          fieldPath = 'produto.descricao';
+          label = 'Produto';
+        } else if (colName === 'custo') {
+          fieldPath = 'custo'; // Resolvido no backend (injetado)
+          label = 'Custo Unit.';
+        } else if (colName === 'valor_total') {
+          fieldPath = 'valor_total'; // Resolvido no backend (injetado)
+          label = 'Valor Total';
+        }
+        
+        if (label === 'id') label = 'ID';
+        if (label === 'criado_em') label = 'Data/Hora';
+
+        return { field: fieldPath, label };
+      });
+
+      const config = {
+        report_name: `Contagem de Inventário`,
+        report_description: `Período: ${dateStart.toLocaleString('pt-BR')} - ID Grupo: ${windowKey}`,
+        columns: configColumns,
+        filters: inventoryFilters
+      };
+
+      // Usa o sistema de relatórios (ID 0) para ambos os formatos
+      // Isso garante colunas de relacionamento (dots) e labels corretos
+      const endpoint = format === 'pdf' ? `/reports/generate-pdf/0` : `/reports/generate/0`;
+
+      const response = await api.get(endpoint, {
+        params: {
+          model_name: 'estoque',
+          config_json: JSON.stringify(config)
+        },
+        responseType: 'blob'
+      });
+
+      const mimeType = format === 'pdf' ? 'application/pdf' : 'text/csv';
+      const extension = format === 'pdf' ? 'pdf' : 'csv';
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: mimeType }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Inventario_${windowKey}.${extension}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      toast.success('Exportação concluída!');
+    } catch (err) {
+      console.error("Erro ao exportar inventário:", err);
+      toast.error('Erro ao exportar inventário.');
+    }
+  };
+
+  const handleExportSelectedInventory = (format) => {
+    if (!selectedGroupKey) return;
+    handleExportInventory(selectedGroupKey, format);
+  };
+
+  const handleInventoryBatchAction = async (windowKey, action) => {
+    if (action === 'finalizar' && !window.confirm("Deseja finalizar este grupo de inventário? Ele deixará de ser editável nesta aba.")) return;
+
+    setIsFetchingData(true);
+    try {
+      await api.post(`/generic/estoque/batch-update`, {
+        ids: [],
+        data: { situacao: 'Finalizado' },
+        filters: JSON.stringify([
+          { field: 'criado_em', operator: 'gte', value: new Date(Number(windowKey)).toISOString() },
+          { field: 'criado_em', operator: 'lt', value: new Date(Number(windowKey) + 60000).toISOString() },
+          { field: 'situacao', operator: 'equals', value: 'Inventário' }
+        ])
+      });
+      toast.success("Ação realizada com sucesso!");
+      fetchData();
+    } catch (err) {
+      toast.error("Erro ao realizar ação no grupo de inventário.");
+    } finally {
+      setIsFetchingData(false);
     }
   };
 
@@ -2019,7 +2185,7 @@ const GenericList = () => {
     setQuickFilterValues(prev => ({ ...prev, [fieldName]: value }));
   };
 
-  const totalPages = Math.ceil(totalCount / limit) || 1; // || 1 para evitar 0
+  const totalPages = Math.ceil(totalCount / effectiveLimit) || 1; // || 1 para evitar 0
 
   // Loading inicial (enquanto busca metadados)
   if (loadingMetadata) {
@@ -2040,7 +2206,6 @@ const GenericList = () => {
   const pageTitlePlural = metadata.display_name_plural || metadata.display_name;
 
   const pageTitle = statusFilter ? `${pageTitlePlural} (${statusFilter})` : pageTitlePlural;
-
 
   return (
     // Fundo cinza claro para a página, como na imagem
@@ -2587,8 +2752,44 @@ const GenericList = () => {
           {/* Ações de Seleção (Lado Direito) */}
           <div className="flex flex-wrap items-center gap-2">
 
+            {/* BOTÃO INVENTÁRIO (Apenas para módulo estoque, em todas as abas) */}
+            {modelName === 'estoque' && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsInventarioModalOpen(true)}
+                  className="flex items-center px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-md shadow-sm hover:from-indigo-700 hover:to-purple-700 text-sm font-semibold"
+                >
+                  <ClipboardList size={16} className="mr-2" />
+                  Realizar Inventário
+                </button>
+
+                {/* Novos botões de exportação vinculados à seleção */}
+                {/* Novos botões de exportação vinculados à seleção */}
+                <button
+                  onClick={() => isInventorySelected && handleExportSelectedInventory('csv')}
+                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${
+                    isInventorySelected ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer' : 'bg-emerald-600 cursor-not-allowed'
+                  }`}
+                  title={isInventorySelected ? "Exportar CSV do grupo selecionado" : "Selecione uma linha de inventário"}
+                >
+                  <Download size={16} className="mr-2" />
+                  CSV
+                </button>
+                <button
+                  onClick={() => isInventorySelected && handleExportSelectedInventory('pdf')}
+                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${
+                    isInventorySelected ? 'bg-rose-600 hover:bg-rose-700 cursor-pointer' : 'bg-rose-600 cursor-not-allowed'
+                  }`}
+                  title={isInventorySelected ? "Exportar PDF do grupo selecionado" : "Selecione uma linha de inventário"}
+                >
+                  <FileText size={16} className="mr-2" />
+                  PDF
+                </button>
+              </div>
+            )}
+
             {/* Botão Editar Atualizado */}
-            {!isMeliView && !isMagentoView && canEdit && (
+            {!isMeliView && !isMagentoView && canEdit && modelName !== 'estoque' && (
               <button
                 onClick={handleEditClick}
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -2600,7 +2801,7 @@ const GenericList = () => {
             )}
 
             {/* Novo Botão Deletar / Cancelar */}
-            {!isMeliView && !isMagentoView && canDelete && (
+            {!isMeliView && !isMagentoView && canDelete && modelName !== 'estoque' && (
               <button
                 onClick={handleDeleteClick} // Chama a função que abre o modal
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -2675,6 +2876,19 @@ const GenericList = () => {
                 >
                   {exportingFormat === 'pdf' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <FileText size={16} className="mr-2" />}
                   PDF
+                </button>
+                <button
+                  onClick={() => handleGenerateReport(selectedRowId, 'xml')}
+                  disabled={!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'}
+                  className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${
+                    !selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'
+                      ? 'cursor-not-allowed'
+                      : 'hover:bg-green-700'
+                  }`}
+                  title="Exportar XMLs (apenas Pedidos)"
+                >
+                  {exportingFormat === 'xml' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <FileCode size={16} className="mr-2" />}
+                  XML
                 </button>
               </div>
             )}
@@ -2899,10 +3113,9 @@ const GenericList = () => {
                           const fromIdx = e.dataTransfer.getData('colIndex');
                           moveColumn(parseInt(fromIdx), idx);
                         }}
-                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative ${isCurrency ? 'text-right' : 'text-left'
-                          } ${isEditMode ? 'cursor-move hover:bg-gray-100 group' : ''}`}
+                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left ${isEditMode ? 'cursor-move hover:bg-gray-100 group' : ''}`}
                       >
-                        <div className={`flex items-center gap-2 ${isCurrency ? 'justify-end' : 'justify-between'}`}>
+                        <div className="flex items-center gap-2 justify-between">
                           <div className="flex items-center gap-1 truncate">
                             {isEditMode && <GripVertical size={12} className="text-gray-300 group-hover:text-gray-400" />}
                             <span>{colName === 'id' ? 'ID' : colName === 'ja_importado' ? 'Importado' : formatLabel(field?.label || colName)}</span>
@@ -2996,227 +3209,221 @@ const GenericList = () => {
                   <>
                     {/* 8. Feedback de 'Nenhum resultado' ou 'Erro de dados' */}
                     {!isFetchingData && error && data.length === 0 && (
-                      <tr className="h-px">
-                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center text-red-500">
+                      <tr style={{ height: `${limit * 53}px` }}>
+                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
                           {error}
                         </td>
                       </tr>
                     )}
                     {!isFetchingData && !error && data.length === 0 && (
-                      <tr className="h-px">
-                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center text-gray-500">
+                      <tr style={{ height: `${limit * 53}px` }}>
+                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
                           Nenhum registro encontrado.
                         </td>
                       </tr>
                     )}
-                    {data.map((item, index) => (
-                      <tr
-                        key={item.id}
-                        onClick={(e) => handleRowClick(e, item.id, index)}
-                        onDoubleClick={() => {
-                          if (!isMeliView && !isMagentoView) {
-                            navigate(`/${modelName}/edit/${item.id}`);
+                    {(() => {
+                      const renderCellContent = (item, colName) => {
+                        let value = item[colName];
+                        const field = fieldMetaMap.get(colName);
+
+                        // 1. Tenta resolver relacionamento (FK) primeiro para garantir o nome amigável
+                        let relationProp = colName;
+                        if (relationProp.startsWith('id_')) relationProp = relationProp.substring(3);
+                        else if (relationProp.endsWith('_id')) relationProp = relationProp.slice(0, -3);
+
+                        if (item[relationProp] && typeof item[relationProp] === 'object') {
+                          const possibleLabels = [field?.foreign_key_label_field, 'nome_razao', 'nome', 'descricao', 'razao_social', 'titulo'];
+                          for (const label of possibleLabels) {
+                            if (label && item[relationProp][label] !== undefined) {
+                              value = item[relationProp][label];
+                              break;
+                            }
                           }
-                        }}
-                        className={`border-b border-gray-200 cursor-pointer ${selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
+                        }
+
+                        if (modelName === 'estoque' && (colName === 'custo' || colName === 'valor_total')) {
+                          return <span className="font-medium text-gray-900">{formatCurrency(value || 0)}</span>;
+                        }
+
+                        if (colName === 'ja_importado') {
+                          return <BooleanDisplay value={value} trueLabel="Importado" falseLabel="Não Importado" trueColor="blue" falseColor="gray" />;
+                        }
+
+                        if (colName === 'tipo_documento' && modelName === 'nfe_recebidas') {
+                          let docLabel = value; let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                          if (String(value) === 'nfeProc') { docLabel = 'NFe Completa'; bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
+                          else if (String(value) === 'resNFe') { docLabel = 'Resumo NFe'; bgColor = 'bg-blue-100'; textColor = 'text-blue-800'; borderColor = 'border-blue-300'; }
+                          else if (String(value).includes('210210')) { docLabel = 'Ciência da Operação'; bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
+                          else if (String(value).includes('110111')) { docLabel = 'Cancelamento'; bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                          else if (String(value).includes('Evento')) { const evCode = String(value).split('_').pop(); docLabel = `Evento (${evCode})`; bgColor = 'bg-orange-100'; textColor = 'text-orange-800'; borderColor = 'border-orange-300'; }
+                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{docLabel}</span>;
+                        }
+
+                        if (colName === 'tipo_conta') {
+                          const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                          const isReceber = String(value) === 'A Receber'; const isPagar = String(value) === 'A Pagar';
+                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${isReceber ? 'bg-green-100 text-green-800 border-green-300' : isPagar ? 'bg-red-100 text-red-800 border-red-300' : 'bg-gray-100 text-gray-800 border-gray-200'}`}>{label}</span>;
+                        }
+
+                        if (colName === 'situacao') {
+                          if (modelName === 'contas') {
+                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                            let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                            if (String(value) === 'Pago') { bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
+                            else if (String(value) === 'Vencido') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                            else if (String(value) === 'Cancelado') { bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
+                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
+                          }
+                          if (modelName === 'pedidos') {
+                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                            let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                            if (String(value) === 'Cancelado') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
+                          }
+                          if (modelName === 'estoque') {
+                            const colors = { 'Inventário': 'bg-indigo-100 text-indigo-800 border-indigo-200', 'Entrada': 'bg-green-100 text-green-800 border-green-200', 'Saída': 'bg-red-100 text-red-800 border-red-200' };
+                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colors[value] || 'bg-gray-100 text-gray-800 border-gray-200'}`}>{value}</span>;
+                          }
+                        }
+
+                        // 3. Formatações por tipo de campo
+                        if (field?.type === 'boolean') return <BooleanDisplay value={value} />;
+                        if (field?.format_mask === 'currency') return <span className="font-medium text-gray-900">{formatCurrency(value)}</span>;
+                        if (field?.type === 'datetime') return <span className="text-gray-500">{formatDate(value)}</span>;
+
+                        if (field?.type === 'select' || field?.component === 'creatable_select') {
+                          const label = (field.options || []).find(opt => String(opt.value) === String(value))?.label;
+                          if (label) value = label;
+                        }
+
+                        // Proteção final para objetos
+                        if (typeof value === 'object' && value !== null && !React.isValidElement(value)) {
+                          return <span className="text-gray-400 text-xs italic">{`[Dados: ${Object.keys(value).join(', ')}]`}</span>;
+                        }
+
+                        return field?.ui_type === 'password' ? '*********' : formatDisplayValue(value);
+                      };
+
+                      const renderRow = (item, index) => (
+                        <tr
+                          key={item.id}
+                          onClick={(e) => handleRowClick(e, item.id, index)}
+                          onDoubleClick={() => {
+                            if (!isMeliView && !isMagentoView && modelName !== 'estoque') {
+                              navigate(`/${modelName}/edit/${item.id}`);
+                            }
+                          }}
+                          className={`border-b border-gray-200 cursor-pointer ${
+                            (modelName === 'estoque' && statusFilter === 'Inventário')
+                              ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
+                              : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
                           }`}
-                      >
-                        {/* Renderiza as células de cada linha */}
-                        {columnsToDisplay.map((colName) => {
-
-                          // --- LÓGICA DE RENDERIZAÇÃO DA CÉLULA ---
-                          let value = item[colName];
-                          // Busca o 'field' (ex: {name: "is_active", type: "boolean"})
-                          const field = fieldMetaMap.get(colName);
-                          const isCurrency = field?.format_mask === 'currency';
-                          const isDateTime = field?.type === 'datetime';
-
-                          // Renderização específica para Status de Importação
-                          if (colName === 'ja_importado') {
-                            return (
-                              <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                                <BooleanDisplay
-                                  value={value}
-                                  trueLabel="Importado"
-                                  falseLabel="Não Importado"
-                                  trueColor="blue"
-                                  falseColor="gray"
-                                />
-                              </td>
-                            );
-                          }
-
-                          // Renderização específica para Tipo de Documento (DF-e)
-                          if (colName === 'tipo_documento' && modelName === 'nfe_recebidas') {
-                            let docLabel = value;
-                            let bgColor = 'bg-gray-100';
-                            let textColor = 'text-gray-800';
-                            let borderColor = 'border-gray-200';
-
-                            if (String(value) === 'nfeProc') {
-                              docLabel = 'NFe Completa';
-                              bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300';
-                            } else if (String(value) === 'resNFe') {
-                              docLabel = 'Resumo NFe';
-                              bgColor = 'bg-blue-100'; textColor = 'text-blue-800'; borderColor = 'border-blue-300';
-                            } else if (String(value).includes('210210')) {
-                              docLabel = 'Ciência da Operação';
-                              bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300';
-                            } else if (String(value).includes('110111')) {
-                              docLabel = 'Cancelamento';
-                              bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300';
-                            } else if (String(value).includes('Evento')) {
-                              const evCode = String(value).split('_').pop();
-                              docLabel = `Evento (${evCode})`;
-                              bgColor = 'bg-orange-100'; textColor = 'text-orange-800'; borderColor = 'border-orange-300';
-                            }
-                            return (
-                              <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm">
-                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>
-                                  {docLabel}
-                                </span>
-                              </td>
-                            );
-                          }
-
-                          // Renderização específica para Tipo de Lançamento (Contas)
-                          if (colName === 'tipo_conta') {
-                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                            const isReceber = String(value) === 'A Receber';
-                            const isPagar = String(value) === 'A Pagar';
-                            return (
-                              <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm">
-                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${isReceber ? 'bg-green-100 text-green-800 border-green-300' :
-                                  isPagar ? 'bg-red-100 text-red-800 border-red-300' :
-                                    'bg-gray-100 text-gray-800 border-gray-200'
-                                  }`}>
-                                  {label}
-                                </span>
-                              </td>
-                            );
-                          }
-
-                          // Renderização específica para Situação (Contas)
-                          if (colName === 'situacao' && modelName === 'contas') {
-                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                            let bgColor = 'bg-gray-100';
-                            let textColor = 'text-gray-800';
-                            let borderColor = 'border-gray-200';
-
-                            if (String(value) === 'Pago') {
-                              bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300';
-                            } else if (String(value) === 'Vencido') {
-                              bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300';
-                            } else if (String(value) === 'Cancelado') {
-                              bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300';
-                            }
-                            return (
-                              <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm">
-                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>
-                                  {label}
-                                </span>
-                              </td>
-                            );
-                          }
-
-                          // Renderização específica para Situação (Pedidos)
-                          if (colName === 'situacao' && modelName === 'pedidos') {
-                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                            let bgColor = 'bg-gray-100';
-                            let textColor = 'text-gray-800';
-                            let borderColor = 'border-gray-200';
-
-                            if (String(value) === 'Cancelado') {
-                              bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300';
-                            }
-                            return (
-                              <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm">
-                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>
-                                  {label}
-                                </span>
-                              </td>
-                            );
-                          }
-                          // --- LÓGICA PARA EXIBIR LABEL DE RELACIONAMENTO (FK) ---
-                          if (field && field.foreign_key_model) {
-                            // Tenta inferir o nome da propriedade de relacionamento no objeto (ex: id_cliente -> cliente)
-                            let relationProp = colName;
-                            if (relationProp.startsWith('id_')) {
-                              relationProp = relationProp.substring(3);
-                            } else if (relationProp.endsWith('_id')) {
-                              relationProp = relationProp.slice(0, -3);
-                            }
-
-                            // Se o objeto relacionado existir no item e tiver o campo de label configurado
-                            if (item[relationProp] && typeof item[relationProp] === 'object') {
-                              const labelField = field.foreign_key_label_field || 'id';
-                              // Atualiza o valor para ser exibido
-                              if (item[relationProp][labelField] !== undefined) {
-                                value = item[relationProp][labelField];
-                              }
-                            }
-                          }
-
-                          return (
-                            <td
-                              key={colName}
-                              className={`px-6 py-4 whitespace-nowrap text-sm text-gray-700 ${isCurrency ? 'text-right' : ''}`}
-                            >
-                              {/* Lógica de exibição: 1. Se for booleano, mostra o Badge. 2. Se for senha (verificando metadados ou nome da coluna), mostra asteriscos. 3. Senão, mostra o valor. */}
-                              {(field && field.type === 'boolean')
-                                ? <BooleanDisplay value={value} />
-                                : isCurrency
-                                  ? formatCurrency(value)
-                                  : isDateTime
-                                    ? formatDate(value)
-                                    : (field && field.type === 'select' && field.options)
-                                      // Se for um enum (select com options), busca o label correspondente e formata, senão formata o valor
-                                      ? formatDisplayValue((field.options || []).find(opt => String(opt.value) === String(value))?.label || String(value))
-                                      : (field && field.ui_type === 'password') || colName.toLowerCase().includes('password') || colName.toLowerCase().includes('senha')
-                                        ? '*********'
-                                        : (typeof value === 'object' && value !== null)
-                                          ? <span className="text-gray-400 text-xs">[Detalhes]</span>
-                                          : formatDisplayValue(value)
-                              }
+                        >
+                          {columnsToDisplay.map((colName) => (
+                            <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                              {renderCellContent(item, colName)}
                             </td>
-                          );
-                          // --- FIM DA LÓGICA DE RENDERIZAÇÃO ---
-                        })}
-                        {isEditMode && <td className="bg-gray-50/30"></td>}
-                      </tr>
-                    ))}
+                          ))}
+                          {isEditMode && <td className="bg-gray-50/30"></td>}
+                        </tr>
+                      );
+
+                      const totalRowsRendered = (groupedData
+                        ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
+                        : data.length) + (hasTotalsField && data.length > 0 ? 1 : 0);
+                      const emptyRowsCount = Math.max(0, limit - totalRowsRendered);
+
+                      return (
+                        <>
+                          {groupedData ? (
+                            groupedData.map(group => (
+                              <Fragment key={group.key}>
+                                <tr 
+                                  className={`cursor-pointer transition-colors group/header ${
+                                    selectedGroupKey === group.key ? 'bg-indigo-100 border-indigo-300' : 'bg-indigo-50/50 hover:bg-indigo-100/70 border-indigo-100'
+                                  }`}
+                                  onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
+                                  title="Clique para selecionar este inventário"
+                                >
+                                  <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
+                                          <Calendar size={14} />
+                                        </div>
+                                        <span className={`font-bold text-sm ${selectedGroupKey === group.key ? 'text-indigo-900' : 'text-indigo-800'}`}>
+                                          Inventário em {formatDate(group.data_hora)}
+                                        </span>
+                                        <span className="text-[10px] bg-white/50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200 font-bold uppercase">
+                                          {group.itens.length} Movimentações
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {selectedGroupKey === group.key ? (
+                                          <span className="text-[10px] font-bold text-indigo-600 uppercase flex items-center gap-1">
+                                            <Check size={12} /> Selecionado
+                                          </span>
+                                        ) : (
+                                          <span className="text-[10px] font-medium text-indigo-400 uppercase opacity-0 group-hover/header:opacity-100 transition-opacity">
+                                            Clique para selecionar
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                                {group.itens.map((item, idx) => renderRow(item, idx))}
+                              </Fragment>
+                            ))
+                          ) : (
+                            data.map((item, idx) => renderRow(item, idx))
+                          )}
+
+                          {/* Linhas vazias para preencher o card (sem bordas internas) */}
+                          {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
+                            <tr key={`empty-${i}`} className="h-[53px]">
+                              {columnsToDisplay.map((colName) => (
+                                <td key={`empty-${i}-${colName}`} className="px-6 py-4 whitespace-nowrap text-sm">
+                                  &nbsp;
+                                </td>
+                              ))}
+                              {isEditMode && <td className="bg-gray-50/30"></td>}
+                            </tr>
+                          ))}
+
+                          {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
+                          {hasTotalsField && data.length > 0 && (
+                            <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
+                              {columnsToDisplay.map((colName, idx) => {
+                                const field = fieldMetaMap.get(colName);
+                                const isCurrency = field?.format_mask === 'currency';
+
+                                let content = '';
+                                if (totals && totals[colName] !== undefined && totals[colName] !== null) {
+                                  content = isCurrency ? formatCurrency(totals[colName]) : totals[colName];
+                                } else if (idx === 0) {
+                                  content = 'TOTAIS';
+                                }
+
+                                return (
+                                  <td
+                                    key={`total-${colName}`}
+                                    className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-left"
+                                  >
+                                    {content}
+                                  </td>
+                                );
+                              })}
+                              {isEditMode && <td className="bg-gray-50/30"></td>}
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </tbody>
-
-              {/* Rodapé de Totais */}
-              {(modelName === 'pedidos' || modelName === 'contas') && data.length > 0 && Object.keys(totals).length > 0 && (
-                <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold">
-                  <tr>
-                    {columnsToDisplay.map((colName, idx) => {
-                      const field = fieldMetaMap.get(colName);
-                      const isCurrency = field?.format_mask === 'currency';
-
-                      let content = '';
-                      if (totals && totals[colName] !== undefined && totals[colName] !== null) {
-                        content = isCurrency ? formatCurrency(totals[colName]) : totals[colName];
-                      } else if (idx === 0) {
-                        content = 'TOTAIS';
-                      }
-
-                      return (
-                        <td
-                          key={`total-${colName}`}
-                          className={`px-6 py-3 whitespace-nowrap text-sm text-gray-900 ${isCurrency ? 'text-right' : 'text-left'}`}
-                        >
-                          {content}
-                        </td>
-                      );
-                    })}
-                    {isEditMode && <td className="bg-gray-50/30"></td>}
-                  </tr>
-                </tfoot>
-              )}
             </table>
           </div>
         </div>
@@ -3509,6 +3716,14 @@ const GenericList = () => {
         </Transition.Root>
 
       </div>
+
+      {/* Modal de Inventário */}
+      <ModalInventario
+        isOpen={isInventarioModalOpen}
+        onClose={() => setIsInventarioModalOpen(false)}
+        onSuccess={() => setRefreshTrigger(prev => prev + 1)}
+      />
+
     </div >
   );
 };

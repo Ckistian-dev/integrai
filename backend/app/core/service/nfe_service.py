@@ -8,8 +8,12 @@ import tempfile
 import hashlib
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 import logging
+from decimal import Decimal
+
+
+# Constante global para o fuso horário de Brasília
+TZ_BR = timezone(timedelta(hours=-3))
 from typing import Tuple
 import time # Importar para usar time.sleep()
 from lxml import etree
@@ -1565,7 +1569,7 @@ class NFeService:
             id_transportadora=pedido_origem.id_transportadora,
             origem_venda=pedido_origem.origem_venda,
             situacao=PedidoSituacaoEnum.faturamento, # Vai para Faturamento para conferência antes de emitir
-            data_orcamento=datetime.now().date(),
+            data_orcamento=datetime.now(TZ_BR).date(),
             
             # Copia exata dos dados financeiros e itens
             itens=itens_copia,
@@ -1961,11 +1965,28 @@ class NFeService:
                 nota_fiscal.transporte_modalidade_frete = mod_frete
             
             # --- NOTA REFERENCIADA (Para Devolução) ---
+            icms_referenciado_zero = False
             if fin_nfe == 4 and pedido.chave_nfe_referencia:
                 nota_fiscal.adicionar_nota_fiscal_referenciada(
                     chave_acesso=pedido.chave_nfe_referencia,
                     tipo='Nota Fiscal eletronica'  # Importante definir o tipo para cair no serializador correto
                 )
+                
+                # Tenta localizar a nota no banco para evitar a Rejeição 546 (ICMS superior à referenciada)
+                ref_db = self.db.query(models.Pedido).filter(models.Pedido.chave_acesso == pedido.chave_nfe_referencia).first()
+                if ref_db and ref_db.xml_autorizado:
+                    xml_ref = ref_db.xml_autorizado
+                    # Busca rápida: se o total de ICMS na original era 0.00
+                    # Removemos espaços para busca mais robusta em XMLs minificados ou formatados
+                    xml_clean = xml_ref.replace(' ', '').replace('\n', '').replace('\r', '')
+                    if '<vICMS>0.00</vICMS>' in xml_clean or '<vICMS>0</vICMS>' in xml_clean:
+                        icms_referenciado_zero = True
+                        print(f"DEBUG: Detectado vICMS=0 na nota referenciada {pedido.chave_nfe_referencia}. Ativando proteção Rejeição 546.")
+
+            # Override manual via observações (caso seja nota externa não presente no banco)
+            if pedido.observacoes_nf and 'ZERAR_ICMS' in pedido.observacoes_nf.upper():
+                icms_referenciado_zero = True
+                print("DEBUG: Ativando proteção Rejeição 546 via palavra-chave ZERAR_ICMS nas observações.")
 
             # --- VOLUMES ---
             if pedido.volumes_quantidade and pedido.volumes_quantidade > 0:
@@ -2200,7 +2221,11 @@ class NFeService:
                 val_fcp = Decimal('0.00')
 
                 # Dicionário de tributos para o PyNFE
-                kwargs_tributos = {}
+                # Inicializamos com os atributos que costumam dar erro de "missing attribute" na lib
+                kwargs_tributos = {
+                    'icms_credito': Decimal('0.00'),
+                    'icms_aliquota_credito': Decimal('0.00')
+                }
                 inf_adicional_item = ""
 
                 if regra:
@@ -2268,6 +2293,10 @@ class NFeService:
                     val_icms = val_icms_operacao - val_icms_diferido
                     val_fcp = self._calc_valor(base_icms, regra.fcp_aliquota) # FCP usa mesma base do ICMS geralmente
 
+                    if fin_nfe == 4 and icms_referenciado_zero:
+                        val_icms = Decimal('0.00')
+                        val_fcp = Decimal('0.00')
+
                     # Mapeamento CST/CSOSN
                     if crt_val == '1': # Simples Nacional
                         
@@ -2281,7 +2310,7 @@ class NFeService:
 
                         # Lista de CSOSNs que NÃO devem jogar valor para o Total da Nota
                         # (O 900 é exceção pois pode tributar)
-                        if icms_cst_val in ['101', '102', '103', '300', '400', '500']:
+                        if icms_cst_val in ['101', '102', '103', '300', '400', '500'] or (fin_nfe == 4 and icms_referenciado_zero):
                             v_bc_sn = Decimal('0.00')
                             v_icms_sn = Decimal('0.00')
                             p_icms_sn = Decimal('0.00')
@@ -2309,7 +2338,7 @@ class NFeService:
                         # REMOVIDO 51 desta lista para permitir destaque de diferimento
                         csts_sem_vbc = ['30', '40', '41', '50', '60']
                         
-                        if icms_cst_val in csts_sem_vbc:
+                        if icms_cst_val in csts_sem_vbc or (fin_nfe == 4 and icms_referenciado_zero):
                             v_bc_normal = Decimal('0.00')
                             v_icms_normal = Decimal('0.00')
                             p_icms_normal = Decimal('0.00')
@@ -2369,17 +2398,17 @@ class NFeService:
                     # --- FALLBACK (QUANDO NÃO ACHA REGRA) ---
                     # Se for Simples Nacional (CRT 1)
                     if crt_val == '1':
-                        kwargs_tributos = {
+                        kwargs_tributos.update({
                             'icms_modalidade': '102', # CSOSN
                             'icms_csosn': '102',
                             'icms_origem': icms_origem_val,
                             'pis_modalidade': '07',   # Isento
                             'cofins_modalidade': '07' # Isento
-                        }
+                        })
                     else:
                         # Se for Regime Normal (CRT 3 - Lucro Real/Presumido)
                         # Fallback seguro: CST 00 (Tributada Integralmente) mas com valores zerados
-                        kwargs_tributos = {
+                        kwargs_tributos.update({
                             'icms_modalidade': '00', # CST 00
                             'icms_origem': icms_origem_val,
                             'icms_valor': Decimal('0.00'),
@@ -2389,7 +2418,7 @@ class NFeService:
                             'cofins_modalidade': '07',
                             'pis_valor': Decimal('0.00'),
                             'cofins_valor': Decimal('0.00')
-                        }
+                        })
 
                 # ==============================================================================
                 # TRATAMENTO CBENEF (REJEIÇÃO 930 - PARANÁ, RS, RJ, SC)
@@ -2907,7 +2936,7 @@ class NFeService:
                     nProt = nProt_list[0].text if nProt_list else ''
                     
                     dhRecbto_list = xml_resp.xpath('//ns:dhRecbto', namespaces=ns)
-                    dhRecbto = dhRecbto_list[0].text if dhRecbto_list else datetime.now().isoformat()
+                    dhRecbto = dhRecbto_list[0].text if dhRecbto_list else datetime.now(TZ_BR).isoformat()
 
                     # Gera o PDF da DANFE
                     pdf_b64 = self._gerar_danfe(xml_assinado, nProt, dhRecbto, chNFe)
@@ -2937,7 +2966,7 @@ class NFeService:
                     pedido.protocolo_autorizacao = nProt
                     pedido.status_sefaz = f"{cStat} - {xMotivo}"
                     pedido.xml_autorizado = xml_str
-                    pedido.data_nf = datetime.now().date() # Preenche a data da NF
+                    pedido.data_nf = datetime.now(TZ_BR).date() # Preenche a data da NF
                     pedido.pdf_danfe = pdf_b64
                     pedido.numero_nf = numero_nf
                     
@@ -3299,7 +3328,7 @@ class NFeService:
                                 dhReg_nodes = xml_resp.xpath('//*[local-name()="dhRegEvento"]')
 
                             nProt_cce = nProt_nodes[0].text if nProt_nodes else 'N/A'
-                            dhReg_cce = dhReg_nodes[0].text if dhReg_nodes else datetime.now().isoformat()
+                            dhReg_cce = dhReg_nodes[0].text if dhReg_nodes else datetime.now(TZ_BR).isoformat()
                             
                             cnpj_cpf = self._limpar_formatacao(self.empresa.cnpj)
 
@@ -3646,7 +3675,7 @@ class NFeService:
             root = etree.fromstring(pedido.xml_autorizado.encode('utf-8'))
             ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
             
-            dhRecbto = datetime.now().isoformat()
+            dhRecbto = datetime.now(TZ_BR).isoformat()
             # Tenta extrair do protocolo
             prot_nodes = root.xpath('//ns:protNFe/ns:infProt/ns:dhRecbto', namespaces=ns)
             if prot_nodes:
@@ -3736,7 +3765,7 @@ class NFeService:
 
     def sincronizar_dfe(self):
         """Busca novos documentos destinados na SEFAZ via NSU."""
-        agora = datetime.now()
+        agora = datetime.now(TZ_BR)
         
         # --- TRAVA DE COOLDOWN (BLOQUEIO PRÉVIO) ---
         if self.id_empresa in _cooldown_sefaz:
@@ -3784,7 +3813,7 @@ class NFeService:
                 # --- TRATAMENTO DOS ERROS CRÍTICOS ---
                 if cStat == '656': 
                     # Coloca a empresa de castigo no cache por 1 hora
-                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
+                    _cooldown_sefaz[self.id_empresa] = datetime.now(TZ_BR) + timedelta(hours=1)
                     raise HTTPException(
                         status_code=429, 
                         detail="SEFAZ bloqueou por Consumo Indevido. CNPJ em repouso por 1 hora."
@@ -3793,7 +3822,7 @@ class NFeService:
                 if cStat == '137': 
                     # Fim da fila: Aplicar o cooldown obrigatório de 1 hora
                     logger.info("SEFAZ informou cStat 137. Aplicando cooldown de 1 hora.")
-                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
+                    _cooldown_sefaz[self.id_empresa] = datetime.now(TZ_BR) + timedelta(hours=1)
                     continua_busca = False
                     break
 
@@ -3905,7 +3934,7 @@ class NFeService:
                 # Se o último NSU recebido for igual ao máximo da SEFAZ, não há mais nada para puxar
                 if ult_nsu_sefaz == max_nsu_sefaz:
                     logger.info("Alcançado o NSU máximo disponível na SEFAZ. Encerrando busca.")
-                    _cooldown_sefaz[self.id_empresa] = datetime.now() + timedelta(hours=1)
+                    _cooldown_sefaz[self.id_empresa] = datetime.now(TZ_BR) + timedelta(hours=1)
                     continua_busca = False
 
                 if continua_busca:
@@ -4225,7 +4254,7 @@ class NFeService:
                     pagamento_enum = models.FiscalPagamentoEnum.outros if hasattr(models.FiscalPagamentoEnum, 'outros') else models.FiscalPagamentoEnum.cst_90 if hasattr(models.FiscalPagamentoEnum, 'cst_90') else None
 
                 dup_nodes = root.xpath('//ns:cobr/ns:dup/ns:dVenc', namespaces=ns)
-                data_vencimento = datetime.fromisoformat(dup_nodes[0].text).date() if dup_nodes else datetime.now().date() + timedelta(days=30)
+                data_vencimento = datetime.fromisoformat(dup_nodes[0].text).date() if dup_nodes else datetime.now(TZ_BR).date() + timedelta(days=30)
 
                 descricao_nota = f"Compra NFe {nNF or nota.chave_acesso[:10]} - {nome_fornecedor}"
 
@@ -4239,7 +4268,7 @@ class NFeService:
                     id_fornecedor=fornecedor.id,
                     id_classificacao_contabil=id_classificacao_contabil,
                     caixa_destino_origem=caixa_destino_origem,
-                    data_emissao=nota.data_emissao.date() if getattr(nota, 'data_emissao', None) else datetime.now().date(),
+                    data_emissao=nota.data_emissao.date() if getattr(nota, 'data_emissao', None) else datetime.now(TZ_BR).date(),
                     data_vencimento=data_vencimento,
                     id_empresa=self.id_empresa
                 )

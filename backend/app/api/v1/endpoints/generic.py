@@ -4,13 +4,14 @@ import io # Importar io
 import urllib.request # Importar urllib.request
 import csv # Importar csv
 import json # Importar json
+import zipfile # Importar zipfile
 import enum # Importar enum
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import or_, and_, String, cast, func, distinct, text, asc, desc, inspect
+from sqlalchemy import or_, and_, String, cast, func, distinct, text, asc, desc, inspect, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import Text, Enum, Date, DateTime, Integer, Numeric, Boolean, Float
 from typing import List, Any, Dict
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A6, A4, landscape
@@ -27,6 +28,9 @@ from app.api.dependencies import get_current_active_user
 from app.core.db import models, database, schemas
 from app.api.v1.model_dispatch import get_registry_entry
 from app.core.service.nfe_service import NFeService
+
+# Constante global para o fuso horário de Brasília
+TZ_BR = timezone(timedelta(hours=-3))
 
 from app.crud import crud_user
 
@@ -204,7 +208,7 @@ def generate_shipping_label(
         
         # Novos campos solicitados
         cnpj_remetente = empresa.cnpj if empresa else ""
-        transportadora_nome = pedido.transportadora.nome_razao if pedido.transportadora else "Próprio / Retira"
+        transportadora_nome = pedido.transportadora.nome_razao if pedido.transportadora else "Próprio"
 
         dados_topo = [
             ("Pedido:", str(pedido.id)),
@@ -666,6 +670,185 @@ def generate_volume_label(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+# --- Endpoints de Inventário ---
+@router.get("/estoque/inventario", response_model=Any)
+def get_inventario_saldo(
+    search_term: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Retorna o saldo atual de todos os produtos para o modal de inventário.
+    Entrada soma, Saída subtrai, Inventário soma.
+    """
+    quantidade_expr = func.coalesce(func.sum(
+        case(
+            (models.Estoque.situacao == 'Saída', -models.Estoque.quantidade),
+            else_=models.Estoque.quantidade
+        )
+    ), 0)
+
+    query = db.query(
+        models.Produto.id.label("id_produto"),
+        models.Produto.descricao.label("produto_descricao"),
+        models.Produto.sku.label("produto_sku"),
+        models.Produto.unidade.label("produto_unidade"),
+        models.Produto.custo.label("custo"),
+        quantidade_expr.label("saldo_atual")
+    ).outerjoin(
+        models.Estoque,
+        and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+    ).filter(
+        models.Produto.id_empresa == current_user.id_empresa,
+        models.Produto.situacao == True
+    ).group_by(
+        models.Produto.id, models.Produto.descricao, models.Produto.sku,
+        models.Produto.unidade, models.Produto.custo
+    )
+
+    if search_term:
+        query = query.filter(
+            or_(
+                models.Produto.descricao.ilike(f"%{search_term}%"),
+                models.Produto.sku.ilike(f"%{search_term}%")
+            )
+        )
+
+    total_count = query.count()
+    items_raw = query.order_by(models.Produto.descricao.asc()).offset(skip).limit(limit).all()
+
+    result = []
+    for row in items_raw:
+        result.append({
+            "id_produto": row.id_produto,
+            "produto_descricao": row.produto_descricao,
+            "produto_sku": row.produto_sku,
+            "produto_unidade": row.produto_unidade.value if hasattr(row.produto_unidade, 'value') else (row.produto_unidade or 'un'),
+            "custo": float(row.custo or 0),
+            "saldo_atual": float(row.saldo_atual),
+            "quantidade_inventario": None
+        })
+
+    return {"items": result, "total_count": total_count}
+
+
+@router.post("/estoque/inventario", response_model=Any)
+def processar_inventario(
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Processa um inventário. Para cada produto informado:
+    1. Registra uma linha de 'Inventário' com a quantidade contada.
+    2. Se houver diferença (contado != saldo atual), registra uma linha de ajuste
+       (Entrada ou Saída) para igualar o saldo.
+    """
+    itens = payload.get("itens", [])
+    observacao_geral = payload.get("observacao", "")
+    
+    # Validação e captura de data do inventário
+    data_inventario_str = payload.get("data_inventario")
+
+    if data_inventario_str:
+        try:
+            # Tenta converter ISO format (do JS toISOString) que vem em UTC
+            dt_utc = datetime.fromisoformat(data_inventario_str.replace("Z", "+00:00"))
+            # Converte para o fuso local (BR -3)
+            data_inventario_dt = dt_utc.astimezone(TZ_BR)
+        except:
+            data_inventario_dt = datetime.now(TZ_BR)
+    else:
+        data_inventario_dt = datetime.now(TZ_BR)
+        
+    data_formatada = data_inventario_dt.strftime("%d/%m/%Y %H:%M")
+
+    if not itens:
+        raise HTTPException(status_code=400, detail="Nenhum item informado para o inventário.")
+
+    criados = []
+
+    for item in itens:
+        id_produto = item.get("id_produto")
+        quantidade_inventario = item.get("quantidade_inventario")
+
+        if id_produto is None or quantidade_inventario is None:
+            continue
+
+        # Verifica se o produto pertence à empresa
+        produto = db.query(models.Produto).filter(
+            models.Produto.id == id_produto,
+            models.Produto.id_empresa == current_user.id_empresa
+        ).first()
+        if not produto:
+            continue
+
+        # Calcula saldo atual na data/hora do inventário (ou atual se for agora)
+        # IMPORTANTE: Para inventário retroativo, o saldo deveria ser o saldo NAQUELA DATA.
+        # Por simplicidade e seguindo o padrão atual, vamos usar o saldo atual, 
+        # mas permitindo que a movimentação tenha a data escolhida.
+        saldo_row = db.query(
+            func.coalesce(func.sum(
+                case(
+                    (models.Estoque.situacao == 'Saída', -func.abs(models.Estoque.quantidade)),
+                    else_=func.abs(models.Estoque.quantidade)
+                )
+            ), 0).label("saldo")
+        ).filter(
+            models.Estoque.id_produto == id_produto,
+            models.Estoque.id_empresa == current_user.id_empresa,
+            models.Estoque.situacao != 'Inventário'
+        ).first()
+
+        saldo_atual = int(saldo_row.saldo or 0)
+        quantidade_inventario = int(quantidade_inventario)
+
+        obs_inventario = f"Inventário realizado em {data_formatada}"
+        if observacao_geral:
+            obs_inventario = f"{obs_inventario} - {observacao_geral}"
+
+        # 1. Linha de inventário (registro do que foi contado fisicamente)
+        mov_inventario = models.Estoque(
+            id_produto=id_produto,
+            id_empresa=current_user.id_empresa,
+            quantidade=quantidade_inventario,
+            situacao=models.EstoqueSituacaoEnum.inventario,
+            observacoes=obs_inventario,
+            criado_em=data_inventario_dt # Aplica a data retroativa
+        )
+        db.add(mov_inventario)
+        criados.append(mov_inventario)
+
+        # 2. Linha de ajuste se houver diferença
+        diferenca = quantidade_inventario - saldo_atual
+        if diferenca != 0:
+            if diferenca > 0:
+                tipo_ajuste = models.EstoqueSituacaoEnum.entrada
+                obs_ajuste = f"Ajuste de inventário ({data_formatada}): acréscimo de {diferenca} unidades para equalizar saldo"
+            else:
+                tipo_ajuste = models.EstoqueSituacaoEnum.saida
+                obs_ajuste = f"Ajuste de inventário ({data_formatada}): redução de {abs(diferenca)} unidades para equalizar saldo"
+
+            mov_ajuste = models.Estoque(
+                id_produto=id_produto,
+                id_empresa=current_user.id_empresa,
+                quantidade=diferenca, # Agora armazena o valor com sinal (negativo para saídas)
+                situacao=tipo_ajuste,
+                observacoes=obs_ajuste,
+                criado_em=data_inventario_dt # Aplica a data retroativa
+            )
+            db.add(mov_ajuste)
+            criados.append(mov_ajuste)
+
+    db.commit()
+    for c in criados:
+        db.refresh(c)
+
+    return {"success": True, "registros_criados": len(criados)}
+
+
 # --- Endpoint de Listagem (GET) ---
 @router.get("/generic/{model_name}", response_model=Any)
 def list_items(
@@ -695,6 +878,168 @@ def list_items(
         registry["model"].id_empresa == current_user.id_empresa
     )
     
+    # Lógica especial para Estoque (Saldo / Movimentações)
+    is_estoque_saldo = (model_name == "estoque" and situacao == "Saldo")
+    is_estoque_mov = (model_name == "estoque" and situacao == "Movimentações")
+
+    if is_estoque_saldo or is_estoque_mov:
+        situacao = None
+
+    if is_estoque_saldo:
+        # Retorna a soma de tudo agrupado por produto
+        # Entrada soma, Saída subtrai, Inventário soma
+        quantidade_expr = func.coalesce(func.sum(
+            case(
+                (models.Estoque.situacao == 'Saída', -func.abs(models.Estoque.quantidade)),
+                (models.Estoque.situacao == 'Inventário', 0),
+                else_=func.abs(models.Estoque.quantidade)
+            )
+        ), 0)
+
+        query = db.query(
+            models.Produto.id.label("id_produto"),
+            models.Produto.descricao.label("produto_descricao"),
+            models.Produto.sku.label("produto_sku"),
+            models.Produto.custo.label("custo"),
+            quantidade_expr.label("quantidade")
+        ).outerjoin(
+            models.Estoque, 
+            and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+        ).filter(
+            models.Produto.id_empresa == current_user.id_empresa
+        ).group_by(models.Produto.id, models.Produto.descricao, models.Produto.sku, models.Produto.custo)
+
+        if search_term:
+            query = query.filter(models.Produto.descricao.ilike(f"%{search_term}%"))
+
+        total_count = query.count()
+        
+        totals_row_q = db.query(
+            func.coalesce(func.sum(
+                case(
+                    (models.Estoque.situacao == 'Saída', -func.abs(models.Estoque.quantidade)),
+                    (models.Estoque.situacao == 'Inventário', 0),
+                    else_=func.abs(models.Estoque.quantidade)
+                ) * models.Produto.custo
+            ), 0).label("total_valor")
+        ).select_from(models.Produto).outerjoin(
+            models.Estoque, 
+            and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+        ).filter(
+            models.Produto.id_empresa == current_user.id_empresa
+        )
+        if search_term:
+            totals_row_q = totals_row_q.filter(models.Produto.descricao.ilike(f"%{search_term}%"))
+        totals_row = totals_row_q.first()
+        totals = {
+            "quantidade": 0,
+            "valor_total": float(totals_row.total_valor or 0)
+        }
+
+        items_raw = query.order_by(models.Produto.descricao.asc()).offset(skip).limit(limit).all()
+
+        serialized_items = []
+        for row in items_raw:
+            custo = float(row.custo or 0)
+            quantidade = float(row.quantidade)
+            serialized_items.append({
+                "id": row.id_produto,
+                "id_empresa": current_user.id_empresa,
+                "id_produto": row.id_produto,
+                "quantidade": quantidade,
+                "custo": custo,
+                "valor_total": custo * quantidade,
+                "situacao": "Entrada",
+                "produto": {"id": row.id_produto, "descricao": row.produto_descricao, "sku": row.produto_sku},
+                "produto_sku": row.produto_sku,
+                "criado_em": datetime.now(TZ_BR).isoformat(),
+                "lote": "-",
+                "deposito": "-",
+                "rua": "-",
+                "nivel": "-",
+                "cor": "-"
+            })
+
+        return {"items": serialized_items, "total_count": total_count, "totals": totals}
+
+    if is_estoque_mov:
+        # Query para movimentações incluindo o custo atual do produto
+        query = db.query(
+            models.Estoque,
+            models.Produto.custo.label("produto_custo")
+        ).join(
+            models.Produto, models.Estoque.id_produto == models.Produto.id
+        ).filter(
+            models.Estoque.id_empresa == current_user.id_empresa,
+            models.Estoque.situacao != 'Inventário'
+        )
+
+        if search_term:
+            query = query.filter(or_(
+                models.Produto.descricao.ilike(f"%{search_term}%"),
+                models.Estoque.lote.ilike(f"%{search_term}%"),
+                models.Estoque.observacoes.ilike(f"%{search_term}%")
+            ))
+        
+        # Aplica filtros avancados de situação se passados via filters param
+        if filters:
+            try:
+                filter_list = json.loads(filters)
+                for f in filter_list:
+                    if f.get("field") == "situacao" and f.get("value"):
+                        query = query.filter(models.Estoque.situacao == f["value"])
+            except: pass
+
+        total_count = query.count()
+        items_raw = query.order_by(models.Estoque.criado_em.desc()).offset(skip).limit(limit).all()
+        
+        totals_q = db.query(
+            func.coalesce(func.sum(
+                case(
+                    (models.Estoque.situacao == 'Saída', -func.abs(models.Estoque.quantidade)),
+                    (models.Estoque.situacao == 'Inventário', 0),
+                    else_=func.abs(models.Estoque.quantidade)
+                ) * models.Produto.custo
+            ), 0).label("total_valor")
+        ).select_from(models.Estoque).join(
+            models.Produto, models.Estoque.id_produto == models.Produto.id
+        ).filter(
+            models.Estoque.id_empresa == current_user.id_empresa,
+            models.Estoque.situacao != 'Inventário'
+        )
+
+        if search_term:
+            totals_q = totals_q.filter(or_(
+                models.Produto.descricao.ilike(f"%{search_term}%"),
+                models.Estoque.lote.ilike(f"%{search_term}%"),
+                models.Estoque.observacoes.ilike(f"%{search_term}%")
+            ))
+        
+        if filters:
+            try:
+                filter_list = json.loads(filters)
+                for f in filter_list:
+                    if f.get("field") == "situacao" and f.get("value"):
+                        totals_q = totals_q.filter(models.Estoque.situacao == f["value"])
+            except: pass
+
+        t_row = totals_q.first()
+        totals = {
+            "quantidade": 0,
+            "valor_total": float(t_row.total_valor or 0)
+        }
+
+        serialized_items = []
+        for estoque_obj, prod_custo in items_raw:
+            item_dict = registry["schema"].from_orm(estoque_obj).dict()
+            custo = float(prod_custo or 0)
+            item_dict["custo"] = custo
+            item_dict["valor_total"] = custo * item_dict["quantidade"]
+            serialized_items.append(item_dict)
+
+        return {"items": serialized_items, "total_count": total_count, "totals": totals}
+
+
     if situacao:
         # Verifica se o modelo realmente tem a coluna "situacao"
         if hasattr(registry["model"], "situacao"):
@@ -1283,7 +1628,7 @@ def export_items_to_csv(
         writer.writerow(row)
 
     # Prepara o nome do arquivo
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(TZ_BR).strftime("%Y%m%d_%H%M%S")
     filename = f"{model_name}_{timestamp}.csv"
     
     # Retorna uma StreamingResponse
@@ -1296,6 +1641,8 @@ def export_items_to_csv(
 @router.get("/reports/generate-pdf/{report_id}")
 def generate_custom_report_pdf(
     report_id: int,
+    model_name: str = None,
+    config_json: str = None,
     db: Session = Depends(database.get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
@@ -1303,25 +1650,42 @@ def generate_custom_report_pdf(
     Gera um relatório PDF com layout dinâmico (Retrato ou Paisagem), 
     sem margens, estilo clean (sem grades e fundo branco) e totais automáticos.
     """
-    # 1. Busca a configuração do relatório
-    relatorio = db.query(models.Relatorio).filter(
-        models.Relatorio.id == report_id,
-        models.Relatorio.id_empresa == current_user.id_empresa
-    ).first()
+    # 1. Busca ou monta a configuração do relatório
+    if report_id > 0:
+        relatorio = db.query(models.Relatorio).filter(
+            models.Relatorio.id == report_id,
+            models.Relatorio.id_empresa == current_user.id_empresa
+        ).first()
 
-    if not relatorio:
-        raise HTTPException(status_code=404, detail="Relatório não encontrado.")
+        if not relatorio:
+            raise HTTPException(status_code=404, detail="Relatório não encontrado.")
+        
+        modelo_base = relatorio.modelo
+        config = relatorio.config or {}
+        report_name = relatorio.nome
+        report_desc = relatorio.descricao
+    else:
+        if not model_name or not config_json:
+            raise HTTPException(status_code=400, detail="Para report_id=0, model_name e config_json são obrigatórios.")
+        
+        modelo_base = model_name
+        try:
+            config = json.loads(config_json)
+        except:
+            raise HTTPException(status_code=400, detail="config_json inválido.")
+        
+        report_name = config.get('report_name', f"Exportação {model_name}")
+        report_desc = config.get('report_description', "")
 
     # 2. Busca dados da empresa para o cabeçalho
     empresa = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
 
     # 3. Identifica o modelo base e monta a query
-    registry = get_registry_entry(relatorio.modelo)
+    registry = get_registry_entry(modelo_base)
     if not registry:
-        raise HTTPException(status_code=400, detail=f"Modelo base '{relatorio.modelo}' inválido.")
+        raise HTTPException(status_code=400, detail=f"Modelo base '{modelo_base}' inválido.")
     
     Model = registry["model"]
-    config = relatorio.config or {}
     query = db.query(Model).filter(Model.id_empresa == current_user.id_empresa)
     
     # --- JOINS, FILTROS E ORDENAÇÃO ---
@@ -1340,6 +1704,15 @@ def generate_custom_report_pdf(
                 rel_alias = aliased(related_model, name=relation_name)
                 query = query.outerjoin(rel_alias, rel_attr)
                 relation_aliases[relation_name] = rel_alias
+
+    # --- LÓGICA ESPECIAL PARA ESTOQUE (INJEÇÃO DE CUSTO/TOTAL) ---
+    if modelo_base == "estoque":
+        p_alias = relation_aliases.get("produto")
+        if p_alias is not None:
+            query = query.add_columns(p_alias.custo.label("_custo_v"))
+        else:
+            query = query.outerjoin(models.Produto, Model.id_produto == models.Produto.id)
+            query = query.add_columns(models.Produto.custo.label("_custo_v"))
 
     # --- FILTROS ---
     filter_list = config.get('filters', [])
@@ -1435,7 +1808,18 @@ def generate_custom_report_pdf(
                 else:
                     query = query.order_by(attr.asc().nulls_last())
 
-    results = query.all()
+    # Executa a query
+    raw_results = query.all()
+    results = []
+    if modelo_base == "estoque":
+        for row in raw_results:
+            obj = row[0]
+            custo = float(row[1] or 0)
+            setattr(obj, "custo", custo)
+            setattr(obj, "valor_total", custo * obj.quantidade)
+            results.append(obj)
+    else:
+        results = raw_results
 
     # --- MONTAGEM DOS DADOS E CÁLCULO DE LARGURA ---
     def format_val(v):
@@ -1529,14 +1913,14 @@ def generate_custom_report_pdf(
         leftMargin=0, 
         topMargin=0, 
         bottomMargin=0,
-        title=f"{relatorio.nome}",       # Define o título na aba do navegador
+        title=report_name,       # Define o título na aba do navegador
         author=empresa.fantasia or empresa.razao    # Define o autor nos metadados do PDF
     )
     elements = []
     styles = getSampleStyleSheet()
 
     # --- CABEÇALHO ---
-    data_atual = datetime.now().strftime("%d/%m/%Y")
+    data_atual = datetime.now(TZ_BR).strftime("%d/%m/%Y")
     nome_empresa = empresa.fantasia or empresa.razao or "Empresa"
 
     if empresa.url_logo:
@@ -1548,9 +1932,9 @@ def generate_custom_report_pdf(
     else:
         elemento_esq = Paragraph(f"<b>{nome_empresa}</b>", styles['Normal'])
 
-    titulo_formatado = f"<para align=center><b><font size=12>{relatorio.nome}</font></b>"
-    if relatorio.descricao:
-        titulo_formatado += f"<br/><font size=8>{relatorio.descricao}</font>"
+    titulo_formatado = f"<para align=center><b><font size=12>{report_name}</font></b>"
+    if report_desc:
+        titulo_formatado += f"<br/><font size=8>{report_desc}</font>"
     titulo_formatado += "</para>"
     elemento_centro = Paragraph(titulo_formatado, styles['Normal'])
 
@@ -1632,7 +2016,7 @@ def generate_custom_report_pdf(
     doc.build(elements, onLaterPages=footer, onFirstPage=footer)
     
     buffer.seek(0)
-    filename = f"{relatorio.nome.replace(' ', '_')}_{datetime.now().strftime('%d_%m_%Y')}.pdf"
+    filename = f"{report_name.replace(' ', '_')}_{datetime.now(TZ_BR).strftime('%d_%m_%Y')}.pdf"
     
     return StreamingResponse(
         buffer,
@@ -1679,7 +2063,7 @@ def create_item(
     if model_name == "pedidos" and (not item_data.get("data_validade")):
         empresa = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
         validade_dias = empresa.validade_orcamento if (empresa and empresa.validade_orcamento) else 7
-        item_data["data_validade"] = (datetime.now() + timedelta(days=validade_dias)).date()
+        item_data["data_validade"] = (datetime.now(TZ_BR) + timedelta(days=validade_dias)).date()
 
     try:
         CreateSchema = registry["create_schema"]
@@ -1842,11 +2226,11 @@ def update_item(
         new_situacao_from_payload = item_data.get("situacao")
         if new_situacao_from_payload and (new_situacao_from_payload == models.PedidoSituacaoEnum.aprovacao or new_situacao_from_payload == models.PedidoSituacaoEnum.programacao):
             if db_obj.data_pedido is None:
-                item_data["data_pedido"] = datetime.now().date()
+                item_data["data_pedido"] = datetime.now(TZ_BR).date()
         
         # Lógica específica: Preencher data_despacho ao despachar
         if new_situacao_from_payload == models.PedidoSituacaoEnum.despachado and db_obj.data_despacho is None:
-            item_data["data_despacho"] = datetime.now().date()
+            item_data["data_despacho"] = datetime.now(TZ_BR).date()
 
     try:
         UpdateSchema = registry["update_schema"]
@@ -1869,6 +2253,21 @@ def update_item(
             db_obj=db_obj,
             obj_in=validated_data
         )
+        
+        # 🎯 LÓGICA ESPECÍFICA: Processar retiradas do estoque
+        if model_name == "pedidos" and hasattr(validated_data, "retiradas_detalhadas") and validated_data.retiradas_detalhadas:
+            for retirada in validated_data.retiradas_detalhadas:
+                quantidade = retirada.get("quantidade", 0)
+                if quantidade > 0:
+                    novo_movimento = models.Estoque(
+                        id_produto=retirada.get("id_produto"),
+                        quantidade=-quantidade,  # Movimentação negativa!
+                        lote=retirada.get("lote"),
+                        deposito=retirada.get("deposito"),
+                        id_empresa=current_user.id_empresa
+                    )
+                    db.add(novo_movimento)
+            db.commit()
         
         # 🎯 LÓGICA ESPECÍFICA: Propagação de regras_uf em Tributacao
         # Se o usuário alterou o JSON de regras por UF (alíquotas estaduais),
@@ -1959,8 +2358,8 @@ def update_item(
                                 numero_conta=str(item.id),
                                 id_fornecedor=cliente_id,
                                 valor=valor_final,
-                                data_emissao=datetime.now().date(),
-                                data_vencimento=datetime.now().date(), # Vencimento padrão hoje
+                                data_emissao=datetime.now(TZ_BR).date(),
+                                data_vencimento=datetime.now(TZ_BR).date(), # Vencimento padrão hoje
                                 pagamento=item.pagamento,
                                 caixa_destino_origem=item.caixa_destino_origem,
                                 id_classificacao_contabil=classificacao_id,
@@ -2020,8 +2419,8 @@ def update_item(
                                 numero_conta=str(item.id),
                                 id_fornecedor=cliente_id,
                                 valor=valor_final,
-                                data_emissao=datetime.now().date(),
-                                data_vencimento=datetime.now().date(),
+                                data_emissao=datetime.now(TZ_BR).date(),
+                                data_vencimento=datetime.now(TZ_BR).date(),
                                 pagamento=item.pagamento,
                                 caixa_destino_origem=item.caixa_destino_origem,
                                 id_classificacao_contabil=classificacao_id,
@@ -2211,28 +2610,45 @@ def save_user_preferences(
 @router.get("/reports/generate/{report_id}")
 def generate_custom_report(
     report_id: int,
+    model_name: str = None,
+    config_json: str = None,
     db: Session = Depends(database.get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """
     Gera um relatório personalizado baseado na configuração salva e retorna um CSV.
     """
-    # 1. Busca a configuração do relatório
-    relatorio = db.query(models.Relatorio).filter(
-        models.Relatorio.id == report_id,
-        models.Relatorio.id_empresa == current_user.id_empresa
-    ).first()
+    # 1. Busca ou monta a configuração do relatório
+    if report_id > 0:
+        relatorio = db.query(models.Relatorio).filter(
+            models.Relatorio.id == report_id,
+            models.Relatorio.id_empresa == current_user.id_empresa
+        ).first()
 
-    if not relatorio:
-        raise HTTPException(status_code=404, detail="Relatório não encontrado.")
+        if not relatorio:
+            raise HTTPException(status_code=404, detail="Relatório não encontrado.")
+        
+        modelo_base = relatorio.modelo
+        config = relatorio.config or {}
+        report_name = relatorio.nome
+    else:
+        if not model_name or not config_json:
+            raise HTTPException(status_code=400, detail="Para report_id=0, model_name e config_json são obrigatórios.")
+        
+        modelo_base = model_name
+        try:
+            config = json.loads(config_json)
+        except:
+            raise HTTPException(status_code=400, detail="config_json inválido.")
+        
+        report_name = config.get('report_name', f"Exportação {model_name}")
 
     # 2. Identifica o modelo base
-    registry = get_registry_entry(relatorio.modelo)
+    registry = get_registry_entry(modelo_base)
     if not registry:
-        raise HTTPException(status_code=400, detail=f"Modelo base '{relatorio.modelo}' inválido.")
+        raise HTTPException(status_code=400, detail=f"Modelo base '{modelo_base}' inválido.")
     
     Model = registry["model"]
-    config = relatorio.config or {}
     
     # 3. Inicia a Query
     query = db.query(Model).filter(Model.id_empresa == current_user.id_empresa)
@@ -2246,6 +2662,283 @@ def generate_custom_report(
         field_path = col.get('field', '').split('.')
         if len(field_path) > 1:
             joins_needed.add(field_path[0]) # Ex: 'cliente' de 'cliente.nome_razao'
+
+    filters_config = config.get('filters', [])
+    for f in filters_config:
+        field_path = f.get('field', '').split('.')
+        if len(field_path) > 1:
+            joins_needed.add(field_path[0])
+
+    # Aplica Joins
+    relation_aliases = {}
+    for relation_name in joins_needed:
+        if hasattr(Model, relation_name):
+            rel_attr = getattr(Model, relation_name)
+            if hasattr(rel_attr, 'property') and hasattr(rel_attr.property, 'mapper'):
+                related_model = rel_attr.property.mapper.class_
+                rel_alias = aliased(related_model, name=relation_name)
+                query = query.outerjoin(rel_alias, rel_attr)
+                relation_aliases[relation_name] = rel_alias
+
+    # --- LÓGICA ESPECIAL PARA ESTOQUE (INJEÇÃO DE CUSTO/TOTAL) ---
+    if modelo_base == "estoque":
+        p_alias = relation_aliases.get("produto")
+        if p_alias is not None:
+            query = query.add_columns(p_alias.custo.label("_custo_v"))
+        else:
+            query = query.outerjoin(models.Produto, Model.id_produto == models.Produto.id)
+            query = query.add_columns(models.Produto.custo.label("_custo_v"))
+
+    # --- FILTROS ---
+    filter_list = config.get('filters', [])
+    filters_by_field = {}
+    for f in filter_list:
+        fname = f.get("field")
+        if fname:
+            if fname not in filters_by_field: filters_by_field[fname] = []
+            filters_by_field[fname].append(f)
+
+    for field_raw, field_filters in filters_by_field.items():
+        field_conditions = []
+        
+        # Resolve o atributo (Model.campo ou RelatedModel.campo)
+        parts = field_raw.split('.')
+        if len(parts) == 1:
+            attr = getattr(Model, parts[0], None)
+        else:
+            rel_name = parts[0]
+            field_name = parts[1]
+            if rel_name in relation_aliases:
+                attr = getattr(relation_aliases[rel_name], field_name, None)
+            else:
+                attr = None
+        
+        if not attr: continue
+
+        for f in field_filters:
+            operator = f.get('operator')
+            value = f.get('value')
+            
+            if operator == 'equals':
+                if isinstance(value, str) and "," in value:
+                    vals = [v.strip() for v in value.split(",")]
+                    field_conditions.append(attr.in_(vals))
+                else:
+                    field_conditions.append(attr == value)
+            elif operator == 'in':
+                vals = [v.strip() for v in str(value).split(",")] if isinstance(value, str) else value
+                field_conditions.append(attr.in_(vals))
+            elif operator == 'contains': field_conditions.append(cast(attr, String).ilike(f"%{value}%"))
+            elif operator == 'gt': field_conditions.append(attr > value)
+            elif operator == 'gte': field_conditions.append(attr >= value)
+            elif operator == 'lt': field_conditions.append(attr < value)
+            elif operator == 'lte': field_conditions.append(attr <= value)
+            elif operator == 'is_true': field_conditions.append(attr == True)
+            elif operator == 'is_false': field_conditions.append(attr == False)
+            elif operator == 'neq': field_conditions.append(attr != value)
+            elif operator == 'today':
+                today = date.today()
+                field_conditions.append(cast(attr, Date) == today)
+            elif operator == 'last_days':
+                try:
+                    days = int(value)
+                except:
+                    days = 0
+                today = date.today()
+                field_conditions.append(and_(cast(attr, Date) >= today - timedelta(days=days), cast(attr, Date) <= today))
+        
+        if field_conditions:
+            if all(f.get("operator") in ["equals", "in"] for f in field_filters):
+                query = query.filter(or_(*field_conditions))
+            else:
+                query = query.filter(and_(*field_conditions))
+
+    # --- ORDENAÇÃO ---
+    sorts = config.get('sort', [])
+    for s in sorts:
+        field_raw = s.get('field')
+        direction = s.get('direction', 'asc')
+        if not field_raw: continue
+        
+        parts = field_raw.split('.')
+        if len(parts) == 1:
+            attr = getattr(Model, parts[0], None)
+        else:
+            rel_name = parts[0]
+            field_name = parts[1]
+            if rel_name in relation_aliases:
+                attr = getattr(relation_aliases[rel_name], field_name, None)
+            else:
+                attr = None
+                
+        if attr is not None:
+            needs_numeric_sort = any(kw in field_raw.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
+            if direction == 'desc':
+                if needs_numeric_sort:
+                    query = query.order_by(func.length(cast(attr, String)).desc().nulls_last(), attr.desc().nulls_last())
+                else:
+                    query = query.order_by(attr.desc().nulls_last())
+            else:
+                if needs_numeric_sort:
+                    query = query.order_by(func.length(cast(attr, String)).asc().nulls_last(), attr.asc().nulls_last())
+                else:
+                    query = query.order_by(attr.asc().nulls_last())
+
+    # Executa a query
+    raw_results = query.all()
+    results = []
+    if modelo_base == "estoque":
+        for row in raw_results:
+            obj = row[0]
+            custo = float(row[1] or 0)
+            # Injeta campos virtuais para o extrator de colunas
+            setattr(obj, "custo", custo)
+            setattr(obj, "valor_total", custo * obj.quantidade)
+            results.append(obj)
+    else:
+        results = raw_results
+
+    # --- GERAÇÃO DO CSV ---
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';') # Ponto e vírgula para Excel PT-BR
+
+    # Cabeçalho
+    headers = [c.get('label', c.get('field')) for c in columns_config]
+    writer.writerow(headers)
+
+    def format_val(v):
+        if isinstance(v, enum.Enum):
+            if hasattr(v, "description"): return v.description
+            if isinstance(v.value, str): return v.value
+            return v.name.replace('_', ' ').title()
+        if isinstance(v, (Decimal, float)):
+            return f"{v:.2f}".replace('.', ',')
+        return v
+
+    # Linhas
+    for row in results:
+        processed_values = [] # Lista de tuplas (valor, is_expanded)
+        num_rows_for_this_record = 1
+
+        for col in columns_config:
+            field_path = col.get('field', '').split('.')
+            val = row
+            
+            # Navega no objeto (ex: pedido.cliente.nome)
+            for part in field_path:
+                val = getattr(val, part, None)
+                if val is None: break
+            
+            # Extração de JSON (se configurado)
+            is_expanded = False
+            if col.get('json_key') and isinstance(val, (dict, list)):
+                if isinstance(val, dict):
+                    val = val.get(col['json_key'])
+                elif isinstance(val, list):
+                    # Extrai a chave de cada item e mantém como lista para expansão de linhas
+                    extracted = []
+                    for item in val:
+                        if isinstance(item, dict):
+                            extracted.append(item.get(col['json_key']))
+                        else:
+                            extracted.append(item)
+                    val = extracted
+                    is_expanded = True
+                    num_rows_for_this_record = max(num_rows_for_this_record, len(val))
+            
+            # Formatação de Enums e Valores Numéricos (suporta listas expandidas)
+            if is_expanded:
+                val = [format_val(v) for v in val]
+            else:
+                val = format_val(val)
+
+            processed_values.append((val, is_expanded))
+
+        # Gera as linhas expandidas (uma para cada item na lista JSON, ou uma se não houver lista)
+        for i in range(num_rows_for_this_record):
+            csv_row = []
+            for val, is_expanded in processed_values:
+                if is_expanded:
+                    # Pega o item correspondente ao índice atual da lista JSON
+                    cell_val = val[i] if i < len(val) else ""
+                else:
+                    # Repete a informação para as outras colunas (ex: ID do Pedido)
+                    cell_val = val
+                
+                csv_row.append(str(cell_val) if cell_val is not None else "")
+            writer.writerow(csv_row)
+
+    output.seek(0)
+    # Nome do arquivo baseado no nome do relatório + data e hora (DD_MM_AAAA_HHMMSS)
+    timestamp = datetime.now(TZ_BR).strftime("%d_%m_%Y_%H%M%S")
+    report_name_clean = report_name.replace(' ', '_')
+    filename = f"{report_name_clean}_{timestamp}.csv"
+    
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode('utf-8-sig')), # BOM para Excel
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@router.get("/reports/generate-xml/{report_id}")
+def generate_xml_report(
+    report_id: int,
+    model_name: str = None,
+    config_json: str = None,
+    db: Session = Depends(database.get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Gera um relatório personalizado de XMLs e retorna um arquivo ZIP.
+    Apenas válido para pedidos.
+    """
+    # 1. Busca ou monta a configuração do relatório
+    if report_id > 0:
+        relatorio = db.query(models.Relatorio).filter(
+            models.Relatorio.id == report_id,
+            models.Relatorio.id_empresa == current_user.id_empresa
+        ).first()
+
+        if not relatorio:
+            raise HTTPException(status_code=404, detail="Relatório não encontrado.")
+        
+        modelo_base = relatorio.modelo
+        config = relatorio.config or {}
+        report_name = relatorio.nome
+    else:
+        if not model_name or not config_json:
+            raise HTTPException(status_code=400, detail="Para report_id=0, model_name e config_json são obrigatórios.")
+        
+        modelo_base = model_name
+        try:
+            config = json.loads(config_json)
+        except:
+            raise HTTPException(status_code=400, detail="config_json inválido.")
+        
+        report_name = config.get('report_name', f"Exportação {model_name}")
+
+    if modelo_base != "pedidos":
+        raise HTTPException(status_code=400, detail="Apenas relatórios de Pedidos podem exportar XML.")
+
+    # 2. Identifica o modelo base
+    registry = get_registry_entry(modelo_base)
+    if not registry:
+        raise HTTPException(status_code=400, detail=f"Modelo base '{modelo_base}' inválido.")
+    
+    Model = registry["model"]
+    
+    # 3. Inicia a Query
+    query = db.query(Model).filter(Model.id_empresa == current_user.id_empresa)
+    
+    # --- JOINS (Tabelas Referenciadas) ---
+    joins_needed = set()
+    
+    # Analisa colunas e filtros para descobrir joins implícitos
+    columns_config = config.get('columns', [])
+    for col in columns_config:
+        field_path = col.get('field', '').split('.')
+        if len(field_path) > 1:
+            joins_needed.add(field_path[0])
 
     filters_config = config.get('filters', [])
     for f in filters_config:
@@ -2362,84 +3055,41 @@ def generate_custom_report(
     # Executa a query
     results = query.all()
 
-    # --- GERAÇÃO DO CSV ---
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=';') # Ponto e vírgula para Excel PT-BR
-
-    # Cabeçalho
-    headers = [c.get('label', c.get('field')) for c in columns_config]
-    writer.writerow(headers)
-
-    def format_val(v):
-        if isinstance(v, enum.Enum):
-            if hasattr(v, "description"): return v.description
-            if isinstance(v.value, str): return v.value
-            return v.name.replace('_', ' ').title()
-        if isinstance(v, (Decimal, float)):
-            return f"{v:.2f}".replace('.', ',')
-        return v
-
-    # Linhas
-    for row in results:
-        processed_values = [] # Lista de tuplas (valor, is_expanded)
-        num_rows_for_this_record = 1
-
-        for col in columns_config:
-            field_path = col.get('field', '').split('.')
-            val = row
-            
-            # Navega no objeto (ex: pedido.cliente.nome)
-            for part in field_path:
-                val = getattr(val, part, None)
-                if val is None: break
-            
-            # Extração de JSON (se configurado)
-            is_expanded = False
-            if col.get('json_key') and isinstance(val, (dict, list)):
-                if isinstance(val, dict):
-                    val = val.get(col['json_key'])
-                elif isinstance(val, list):
-                    # Extrai a chave de cada item e mantém como lista para expansão de linhas
-                    extracted = []
-                    for item in val:
-                        if isinstance(item, dict):
-                            extracted.append(item.get(col['json_key']))
-                        else:
-                            extracted.append(item)
-                    val = extracted
-                    is_expanded = True
-                    num_rows_for_this_record = max(num_rows_for_this_record, len(val))
-            
-            # Formatação de Enums e Valores Numéricos (suporta listas expandidas)
-            if is_expanded:
-                val = [format_val(v) for v in val]
+    # --- GERAÇÃO DO ZIP ---
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for row in results:
+            if isinstance(row, models.Pedido):
+                pedido = row
+            elif hasattr(row, '__getitem__'): # se for row[0]
+                pedido = row[0]
             else:
-                val = format_val(val)
+                pedido = row
 
-            processed_values.append((val, is_expanded))
+            xml_content = getattr(pedido, 'xml_autorizado', None)
+            if not xml_content:
+                xml_content = '<?xml version="1.0" encoding="UTF-8"?><nfe><info>XML nao gerado para este pedido</info></nfe>'
 
-        # Gera as linhas expandidas (uma para cada item na lista JSON, ou uma se não houver lista)
-        for i in range(num_rows_for_this_record):
-            csv_row = []
-            for val, is_expanded in processed_values:
-                if is_expanded:
-                    # Pega o item correspondente ao índice atual da lista JSON
-                    cell_val = val[i] if i < len(val) else ""
+            chave = getattr(pedido, 'chave_acesso', None)
+            if chave:
+                xml_filename = f"nfe-{chave}.xml"
+            else:
+                numero_nf = getattr(pedido, 'numero_nf', None)
+                if numero_nf:
+                    xml_filename = f"nfe-sem_chave-nf_{numero_nf}.xml"
                 else:
-                    # Repete a informação para as outras colunas (ex: ID do Pedido)
-                    cell_val = val
-                
-                csv_row.append(str(cell_val) if cell_val is not None else "")
-            writer.writerow(csv_row)
+                    xml_filename = f"nfe-pedido_{pedido.id}_sem_nf.xml"
+            
+            zip_file.writestr(xml_filename, xml_content)
 
     output.seek(0)
-    # Nome do arquivo baseado no nome do relatório + data e hora (DD_MM_AAAA_HHMMSS)
-    timestamp = datetime.now().strftime("%d_%m_%Y_%H%M%S")
-    report_name_clean = relatorio.nome.replace(' ', '_')
-    filename = f"{report_name_clean}_{timestamp}.csv"
+    
+    timestamp = datetime.now(TZ_BR).strftime("%d_%m_%Y_%H%M%S")
+    report_name_clean = report_name.replace(' ', '_')
+    filename = f"{report_name_clean}_{timestamp}_xmls.zip"
     
     return StreamingResponse(
-        io.BytesIO(output.getvalue().encode('utf-8-sig')), # BOM para Excel
-        media_type="text/csv",
+        output,
+        media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )

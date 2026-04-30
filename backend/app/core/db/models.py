@@ -161,9 +161,9 @@ class ContaSituacaoEnum(str, enum.Enum):
 
 # Para Estoque 
 class EstoqueSituacaoEnum(str, enum.Enum):
-    disponivel = "Disponivel"
-    reservado = "Reservado"
-    indisponivel = "Indisponível"
+    entrada = "Entrada"
+    saida = "Saída"
+    inventario = "Inventário"
 
 # Para Pedido 
 class PedidoSituacaoEnum(str, enum.Enum):
@@ -880,13 +880,25 @@ class Estoque(Base):
     
     # --- Aba: Principal ---
     id_produto = Column(Integer, ForeignKey("produtos.id"), nullable=False, 
-                        info={'tab': 'Principal', 'label': 'Produto', 'placeholder': 'Selecione...'}) # TODO: Isso deveria ser um Select/Busca
+                        info={'tab': 'Principal', 'label': 'Produto', 'placeholder': 'Selecione...'})
     lote = Column(String, 
                   info={'tab': 'Principal', 'label': 'Lote / Série', 'placeholder': ''})
     quantidade = Column(Integer, nullable=False, 
                         info={'tab': 'Principal', 'label': 'Quantidade', 'placeholder': '0'})
-    situacao = Column(SQLAlchemyEnum(EstoqueSituacaoEnum), nullable=False, default=EstoqueSituacaoEnum.disponivel, 
-                      info={'tab': 'Principal', 'label': 'Status do Lote', 'placeholder': 'Selecione...'})
+    situacao = Column(String, nullable=False, default="Entrada", 
+                      info={
+                          'tab': 'Principal', 
+                          'label': 'Tipo de Movimentação', 
+                          'placeholder': 'Selecione...',
+                          'component': 'select',
+                          'options': [
+                              {'label': 'Entrada', 'value': 'Entrada'},
+                              {'label': 'Saída', 'value': 'Saída'},
+                              {'label': 'Inventário', 'value': 'Inventário'},
+                          ]
+                      })
+    observacoes = Column(Text, 
+                         info={'tab': 'Principal', 'label': 'Observações', 'placeholder': 'Ex: Retirada para pedido 123, Adição de estoque referente a nota 456...'})
 
     # --- Aba: Localização ---
     deposito = Column(String, 

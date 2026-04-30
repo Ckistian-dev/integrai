@@ -31,6 +31,7 @@ const MainLayout = () => {
   const [isIntegraOpen, setIsIntegraOpen] = useState(false);
   const [isFinanceiroOpen, setIsFinanceiroOpen] = useState(false);
   const [isUsuariosOpen, setIsUsuariosOpen] = useState(false);
+  const [isEstoqueOpen, setIsEstoqueOpen] = useState(false);
 
   // Array de itens do menu (do seu ERP)
   const menuItems = [
@@ -68,6 +69,7 @@ const MainLayout = () => {
     
     // Histórico é exceção, sempre visível se tiver acesso ao módulo
     if (module === 'pedidos' && subpageName === 'Histórico') return true;
+    if (module === 'estoque' && (subpageName === 'Saldo' || subpageName === 'Movimentações' || subpageName === 'Inventário')) return true;
 
     const permissions = user?.permissoes || {};
     const modulePerms = permissions[module];
@@ -114,6 +116,12 @@ const MainLayout = () => {
     { name: 'Perfis', path: '/perfis' },
   ], []);
 
+  const estoqueItems = useMemo(() => [
+    { name: 'Saldo', path: '/estoque/Saldo' },
+    { name: 'Movimentações', path: '/estoque/Movimentações' },
+    { name: 'Inventário', path: '/estoque/Inventário' },
+  ], []);
+
   // [NOVO] Cria a lista de paths
   const pipelinePaths = useMemo(() =>
     pipelineStatus.map(status => status.path),
@@ -135,11 +143,16 @@ const MainLayout = () => {
     [usuariosItems]
   );
 
-  // Esta variável (isPedidosActive) continua correta para o "highlight" do ícone
+  const estoquePaths = useMemo(() =>
+    estoqueItems.map(item => item.path),
+    [estoqueItems]
+  );
+
   const isPedidosActive = location.pathname.startsWith('/pedidos');
   const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes');
   const isFinanceiroActive = location.pathname.startsWith('/contas') || location.pathname.startsWith('/classificacao_contabil');
   const isUsuariosActive = location.pathname.startsWith('/usuarios') || location.pathname.startsWith('/perfis');
+  const isEstoqueActive = location.pathname.startsWith('/estoque');
 
   const isPipelineListActive = useMemo(
     () => {
@@ -194,6 +207,18 @@ const MainLayout = () => {
     [location.pathname, usuariosPaths]
   );
 
+  const isEstoqueListActive = useMemo(
+    () => {
+      try {
+        const decodedPathname = decodeURIComponent(location.pathname);
+        return estoquePaths.includes(decodedPathname);
+      } catch (e) {
+        return estoquePaths.includes(location.pathname);
+      }
+    },
+    [location.pathname, estoquePaths]
+  );
+
   useEffect(() => {
     // SÓ ABRE se a rota for EXATA.
     // NUNCA FECHE (sem 'else'), para não conflitar com o clique manual.
@@ -209,7 +234,10 @@ const MainLayout = () => {
     if (isUsuariosListActive) {
       setIsUsuariosOpen(true);
     }
-  }, [isPipelineListActive, isIntegraListActive, isFinanceiroListActive, isUsuariosListActive]); // Depende da booleana específica
+    if (isEstoqueListActive) {
+      setIsEstoqueOpen(true);
+    }
+  }, [isPipelineListActive, isIntegraListActive, isFinanceiroListActive, isUsuariosListActive, isEstoqueListActive]); // Depende da booleana específica
 
   const handleMouseEnter = () => {
     setIsExpanded(true);
@@ -226,6 +254,9 @@ const MainLayout = () => {
     if (isUsuariosListActive) {
       setIsUsuariosOpen(true);
     }
+    if (isEstoqueListActive) {
+      setIsEstoqueOpen(true);
+    }
   };
 
   // Ele deve fechar o acordeão ao sair.
@@ -235,6 +266,7 @@ const MainLayout = () => {
     setIsIntegraOpen(false);
     setIsFinanceiroOpen(false);
     setIsUsuariosOpen(false);
+    setIsEstoqueOpen(false);
   };
 
   const handleSingletonClick = async (e, model) => {
@@ -623,6 +655,84 @@ const MainLayout = () => {
                           to={subItem.path}
                           className={({ isActive }) =>
                             `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                              ? 'bg-teal-600 text-white font-medium'
+                              : 'text-gray-300 hover:bg-gray-700'
+                            } ${!isExpanded ? 'justify-center' : ''}`
+                          }
+                        >
+                          <span className="whitespace-nowrap overflow-hidden">
+                            {subItem.name}
+                          </span>
+                        </NavLink>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Caso especial para "Estoque"
+            if (item.name === 'Estoque') {
+              if (!allowed) {
+                return (
+                  <div key={item.name} className={`flex items-center justify-between w-full p-3 rounded-lg ${disabledClass}`}>
+                    <div className="flex items-center">
+                      <item.icon size={24} className="flex-shrink-0" />
+                      <span className={`ml-4 font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ${isExpanded ? 'opacity-100 w-full' : 'opacity-0 w-0'}`}>{item.name}</span>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={item.name}>
+                  <button
+                    onClick={() => setIsEstoqueOpen(!isEstoqueOpen)}
+                    className={`flex items-center justify-between w-full p-3 rounded-lg transition-colors duration-200 ${isEstoqueActive
+                      ? 'bg-teal-700 text-white' // Ativo
+                      : 'hover:bg-teal-600' // Normal
+                      }`}
+                  >
+                    <div className="flex items-center">
+                      <item.icon size={24} className="flex-shrink-0" />
+                      <span className={`ml-4 font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ${isExpanded ? 'opacity-100 w-full' : 'opacity-0 w-0'}`}>
+                        {item.name}
+                      </span>
+                    </div>
+                    {/* Seta do Acordeão */}
+                    <ChevronDown
+                      size={20}
+                      className={`flex-shrink-0 transition-transform duration-300 ${isEstoqueOpen ? 'rotate-180' : 'rotate-0'
+                        } ${isExpanded ? 'opacity-100' : 'opacity-0'}`}
+                    />
+                  </button>
+
+                  {/* Submenu de Estoque */}
+                  <div
+                    className={`transition-all duration-300 ease-in-out overflow-hidden ${(isEstoqueOpen && isExpanded) ? 'max-h-[256px]' : 'max-h-0'
+                      } ${isExpanded ? 'pl-10' : 'pl-0'}`}
+                  >
+                    <div className="flex flex-col space-y-1 pt-2">
+                      {estoqueItems.map(subItem => {
+                        const isAllowed = hasSubpagePermission('estoque', subItem.name);
+
+                        if (!isAllowed) {
+                          return (
+                            <div key={subItem.name} className={`flex items-center py-2 px-3 rounded-lg text-sm cursor-not-allowed opacity-40 grayscale bg-transparent text-gray-500 hover:bg-transparent ${!isExpanded ? 'justify-center' : ''}`}>
+                              <span className="whitespace-nowrap overflow-hidden">
+                                {subItem.name}
+                              </span>
+                            </div>
+                          );
+                        }
+
+                        return (
+                        <NavLink
+                          key={subItem.name}
+                          to={subItem.path}
+                          className={({ isActive }) =>
+                            `flex items-center py-2 px-3 rounded-lg text-sm ${
+                              isActive
                               ? 'bg-teal-600 text-white font-medium'
                               : 'text-gray-300 hover:bg-gray-700'
                             } ${!isExpanded ? 'justify-center' : ''}`

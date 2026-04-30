@@ -229,6 +229,30 @@ def get_model_metadata(model_name: str):
             )
             fields.append(field)
             
+        # 🎯 Adiciona campos virtuais para a visão de estoque
+        if model_name == "estoque":
+            fields.append(FieldMetadata(
+                name="custo",
+                label="Custo Unit.",
+                type="number",
+                required=False,
+                format_mask="currency",
+                visible=True,
+                read_only=True,
+                tab="Principal"
+            ))
+            fields.append(FieldMetadata(
+                name="valor_total",
+                label="Valor Total",
+                type="number",
+                required=False,
+                format_mask="currency",
+                visible=True,
+                read_only=True,
+                tab="Principal"
+            ))
+
+            
         return ModelMetadata(
             model_name=model_name,
             display_name=display_name,
