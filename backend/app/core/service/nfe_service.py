@@ -1731,8 +1731,40 @@ class NFeService:
             if is_development:
                 import random
                 numero_nf = random.randint(900000000, 999999999)
+                logger.info(f"[NFe] Ambiente de desenvolvimento detectado. Usando número aleatório: {numero_nf}")
             else:
+                # BLOQUEIO DE CONCORRÊNCIA: Busca a empresa novamente com 'FOR UPDATE' 
+                # para garantir que nenhuma outra thread use o mesmo número simultaneamente.
+                # populate_existing() forca o SQLAlchemy a ignorar o cache local e trazer o valor atual do banco.
+                empresa_lock = self.db.query(models.Empresa).with_for_update().populate_existing().filter(
+                    models.Empresa.id == self.id_empresa
+                ).first()
+                
+                if not empresa_lock:
+                    raise HTTPException(status_code=400, detail="Erro ao bloquear registro da empresa para numeração.")
+                
+                # Atualiza a referência local para o objeto bloqueado
+                self.empresa = empresa_lock
                 numero_nf = self.empresa.nfe_numero_sequencial
+                
+                # --- LÓGICA DE INTEGRIDADE "PERFEITA" ---
+                # Verifica se este número já foi usado por outro pedido autorizado (Evita pulos por erro humano/DB)
+                while True:
+                    conflito = self.db.query(models.Pedido).filter(
+                        models.Pedido.id_empresa == self.id_empresa,
+                        models.Pedido.numero_nf == str(numero_nf),
+                        models.Pedido.status_sefaz.like('100%')
+                    ).first()
+                    
+                    if conflito:
+                        logger.warning(f"[NFe] Conflito de Sequencial: O número {numero_nf} já foi usado no Pedido #{conflito.id}. Saltando para o próximo...")
+                        self.empresa.nfe_numero_sequencial += 1
+                        numero_nf = self.empresa.nfe_numero_sequencial
+                    else:
+                        break
+
+                logger.info(f"[NFe] Iniciando emissão para Pedido #{pedido_id}. Usando número sequencial: {numero_nf}")
+            
             serie_nf = self.empresa.nfe_serie
 
             # Modalidade Frete
@@ -2968,12 +3000,14 @@ class NFeService:
                     pedido.xml_autorizado = xml_str
                     pedido.data_nf = datetime.now(TZ_BR).date() # Preenche a data da NF
                     pedido.pdf_danfe = pdf_b64
-                    pedido.numero_nf = numero_nf
+                    pedido.numero_nf = str(numero_nf)
                     
                     # Atualiza Sequencial da Empresa (Apenas se não for desenvolvimento)
                     is_development = os.getenv("ENVIRONMENT", "development") == "development"
                     if not is_development:
-                        self.empresa.nfe_numero_sequencial += 1
+                        proximo_numero = self.empresa.nfe_numero_sequencial + 1
+                        logger.info(f"[NFe] Sucesso SEFAZ. Incrementando sequencial da empresa {self.empresa.razao}: {self.empresa.nfe_numero_sequencial} -> {proximo_numero}")
+                        self.empresa.nfe_numero_sequencial = proximo_numero
                     
                     # --- EXECUTA INTEGRAÇÕES ---
                     meli_res, intelipost_res, email_res = self._executar_integracoes_faturamento(

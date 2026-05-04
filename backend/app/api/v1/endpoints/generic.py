@@ -878,12 +878,64 @@ def list_items(
         registry["model"].id_empresa == current_user.id_empresa
     )
     
-    # Lógica especial para Estoque (Saldo / Movimentações)
+    # Lógica especial para Estoque (Saldo / Movimentações / Disponível por Lote)
     is_estoque_saldo = (model_name == "estoque" and situacao == "Saldo")
     is_estoque_mov = (model_name == "estoque" and situacao == "Movimentações")
+    is_estoque_disponivel = (model_name == "estoque" and situacao == "disponivel")
 
-    if is_estoque_saldo or is_estoque_mov:
+    if is_estoque_saldo or is_estoque_mov or is_estoque_disponivel:
         situacao = None
+
+    if is_estoque_disponivel:
+        # Retorna o saldo agrupado por lote e depósito para um produto específico
+        if not id_produto:
+            return {"items": [], "total_count": 0}
+            
+        quantidade_expr = func.coalesce(func.sum(
+            case(
+                (models.Estoque.situacao == 'Saída', -func.abs(models.Estoque.quantidade)),
+                (models.Estoque.situacao == 'Inventário', 0),
+                else_=func.abs(models.Estoque.quantidade)
+            )
+        ), 0)
+
+        query = db.query(
+            func.max(models.Estoque.id).label("id"), # Retorna um ID real para o frontend
+            models.Estoque.lote,
+            models.Estoque.deposito,
+            models.Estoque.rua,
+            models.Estoque.nivel,
+            models.Estoque.cor,
+            quantidade_expr.label("quantidade")
+        ).filter(
+            models.Estoque.id_empresa == current_user.id_empresa,
+            models.Estoque.id_produto == id_produto,
+            models.Estoque.situacao != 'Inventário'
+        ).group_by(
+            models.Estoque.lote,
+            models.Estoque.deposito,
+            models.Estoque.rua,
+            models.Estoque.nivel,
+            models.Estoque.cor
+        ).having(quantidade_expr > 0) # Apenas o que tem saldo positivo
+
+        items_raw = query.order_by(models.Estoque.lote.asc()).all()
+        total_count = len(items_raw)
+
+        serialized_items = []
+        for row in items_raw:
+            serialized_items.append({
+                "id": row.id,
+                "id_produto": id_produto,
+                "lote": row.lote,
+                "deposito": row.deposito,
+                "rua": row.rua,
+                "nivel": row.nivel,
+                "cor": row.cor,
+                "quantidade": float(row.quantidade)
+            })
+
+        return {"items": serialized_items, "total_count": total_count}
 
     if is_estoque_saldo:
         # Retorna a soma de tudo agrupado por produto
@@ -2088,6 +2140,88 @@ def create_item(
                 obj_in=validated_data,
                 id_empresa=current_user.id_empresa
             )
+
+            # 🎯 LÓGICA ESPECÍFICA: Gerar Financeiro ao Criar Pedido já Aprovado (Programação)
+            if model_name == "pedidos":
+                if item.situacao == models.PedidoSituacaoEnum.programacao:
+                    try:
+                        # Verifica duplicidade
+                        desc_conta = f"Pedido de Venda #{item.id}"
+                        existing_conta = db.query(models.Conta).filter(
+                            models.Conta.id_empresa == current_user.id_empresa,
+                            models.Conta.descricao.contains(desc_conta),
+                            models.Conta.tipo_conta == models.ContaTipoEnum.a_receber
+                        ).first()
+
+                        if not existing_conta:
+                            # Define o valor
+                            valor_final = item.total_desconto if (item.total_desconto and item.total_desconto > 0) else item.total
+                            
+                            if valor_final and valor_final > 0:
+                                # 1. Fallback Cliente Seguro
+                                cliente_nome = item.cliente.nome_razao if item.cliente else "Consumidor Final"
+                                cliente_id = item.id_cliente
+                                
+                                if not cliente_id:
+                                    fallback_cli = db.query(models.Cadastro).filter(models.Cadastro.id_empresa == current_user.id_empresa).first()
+                                    if fallback_cli:
+                                        cliente_id = fallback_cli.id
+                                    else:
+                                        novo_cli = models.Cadastro(
+                                            id_empresa=current_user.id_empresa,
+                                            cpf_cnpj="00000000000",
+                                            nome_razao="CONSUMIDOR FINAL",
+                                            tipo_cadastro=models.CadastroTipoCadastroEnum.cliente,
+                                            cep="00000000"
+                                        )
+                                        db.add(novo_cli)
+                                        db.flush()
+                                        cliente_id = novo_cli.id
+                                
+                                # 2. Resgata e Garante o Plano de Contas
+                                empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
+                                classificacao_id = empresa_obj.id_classificacao_contabil_padrao if empresa_obj else None
+                                
+                                if not classificacao_id:
+                                    fallback_class = db.query(models.ClassificacaoContabil).filter(
+                                        models.ClassificacaoContabil.id_empresa == current_user.id_empresa,
+                                        models.ClassificacaoContabil.tipo.ilike('%receita%')
+                                    ).first() or db.query(models.ClassificacaoContabil).filter(
+                                        models.ClassificacaoContabil.id_empresa == current_user.id_empresa
+                                    ).first()
+                                    if fallback_class:
+                                        classificacao_id = fallback_class.id
+                                    else:
+                                        nova_class = models.ClassificacaoContabil(
+                                            id_empresa=current_user.id_empresa,
+                                            grupo="Receitas",
+                                            descricao="Vendas de Mercadorias",
+                                            tipo="Receita",
+                                            considerar=True
+                                        )
+                                        db.add(nova_class)
+                                        db.flush()
+                                        classificacao_id = nova_class.id
+
+                                nova_conta = models.Conta(
+                                    id_empresa=current_user.id_empresa,
+                                    tipo_conta=models.ContaTipoEnum.a_receber,
+                                    situacao=models.ContaSituacaoEnum.em_aberto,
+                                    descricao=f"{desc_conta} - {cliente_nome}",
+                                    numero_conta=str(item.id),
+                                    id_fornecedor=cliente_id,
+                                    valor=valor_final,
+                                    data_emissao=datetime.now(TZ_BR).date(),
+                                    data_vencimento=datetime.now(TZ_BR).date(),
+                                    pagamento=item.pagamento,
+                                    caixa_destino_origem=item.caixa_destino_origem,
+                                    id_classificacao_contabil=classificacao_id,
+                                    observacoes="Gerado automaticamente na criação do pedido aprovado."
+                                )
+                                db.add(nova_conta)
+                                db.commit()
+                    except Exception as e:
+                        print(f"Erro ao gerar financeiro automático na criação: {e}")
     except IntegrityError as e:
         db.rollback()
         error_info = str(e.orig) if e.orig else str(e)
@@ -2254,20 +2388,24 @@ def update_item(
             obj_in=validated_data
         )
         
-        # 🎯 LÓGICA ESPECÍFICA: Processar retiradas do estoque
+        # 🎯 LÓGICA ESPECÍFICA: Processar retiradas do estoque (Apenas vindo do Modal de Programação)
         if model_name == "pedidos" and hasattr(validated_data, "retiradas_detalhadas") and validated_data.retiradas_detalhadas:
-            for retirada in validated_data.retiradas_detalhadas:
-                quantidade = retirada.get("quantidade", 0)
-                if quantidade > 0:
-                    novo_movimento = models.Estoque(
-                        id_produto=retirada.get("id_produto"),
-                        quantidade=-quantidade,  # Movimentação negativa!
-                        lote=retirada.get("lote"),
-                        deposito=retirada.get("deposito"),
-                        id_empresa=current_user.id_empresa
-                    )
-                    db.add(novo_movimento)
-            db.commit()
+            # Garantimos que só processa se estiver MUDANDO para 'Produção' (para evitar duplicidade)
+            if old_situacao != models.PedidoSituacaoEnum.producao and item.situacao == models.PedidoSituacaoEnum.producao:
+                for retirada in validated_data.retiradas_detalhadas:
+                    quantidade = retirada.get("quantidade", 0)
+                    if quantidade > 0:
+                        novo_movimento = models.Estoque(
+                            id_produto=retirada.get("id_produto"),
+                            quantidade=-abs(quantidade),  # Movimentação negativa!
+                            situacao="Saída",            # Tipo Saída
+                            lote=retirada.get("lote"),
+                            deposito=retirada.get("deposito"),
+                            observacoes=f"Retirada automática para Pedido #{item.id} (Modal Programação)",
+                            id_empresa=current_user.id_empresa
+                        )
+                        db.add(novo_movimento)
+                db.commit()
         
         # 🎯 LÓGICA ESPECÍFICA: Propagação de regras_uf em Tributacao
         # Se o usuário alterou o JSON de regras por UF (alíquotas estaduais),

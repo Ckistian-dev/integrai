@@ -415,7 +415,7 @@ const GenericList = () => {
 
   const selectedRowId = selectedRowIds.length > 0 ? selectedRowIds[0] : null;
   const selectedItem = useMemo(() => data.find(i => i.id === selectedRowId), [selectedRowId, data]);
-  
+
   // A seleção agora é baseada no GRUPO (cabeçalho) para o módulo de estoque/inventário
   const isInventorySelected = modelName === 'estoque' && selectedGroupKey !== null;
 
@@ -943,8 +943,9 @@ const GenericList = () => {
     }
     // --------------------------------------
 
-    // Filtra colunas complexas que quebram a tabela (JSONs grandes)
+    // Filtra colunas complexas que quebram a tabela (JSONs grandes) e valores nulos
     const finalCols = cols.filter((col) =>
+      col && // Garante que a coluna não seja nula ou vazia
       col !== 'itens' &&
       col !== 'retiradas_detalhadas' &&
       col !== 'retiradas_detalhadas_json'
@@ -1887,10 +1888,10 @@ const GenericList = () => {
       const report = data.find(r => r.id === reportId);
       const reportName = report?.nome?.replace(/\s+/g, '_') || 'Relatorio';
       const timestamp = new Date().toLocaleString('pt-BR').replace(/[/:, ]/g, '_');
-      
+
       let extension = 'csv';
       let mimeType = 'text/csv';
-      
+
       if (format === 'pdf') {
         extension = 'pdf';
         mimeType = 'application/pdf';
@@ -1950,7 +1951,7 @@ const GenericList = () => {
           fieldPath = 'valor_total'; // Resolvido no backend (injetado)
           label = 'Valor Total';
         }
-        
+
         if (label === 'id') label = 'ID';
         if (label === 'criado_em') label = 'Data/Hora';
 
@@ -2767,9 +2768,8 @@ const GenericList = () => {
                 {/* Novos botões de exportação vinculados à seleção */}
                 <button
                   onClick={() => isInventorySelected && handleExportSelectedInventory('csv')}
-                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${
-                    isInventorySelected ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer' : 'bg-emerald-600 cursor-not-allowed'
-                  }`}
+                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${isInventorySelected ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer' : 'bg-emerald-600 cursor-not-allowed'
+                    }`}
                   title={isInventorySelected ? "Exportar CSV do grupo selecionado" : "Selecione uma linha de inventário"}
                 >
                   <Download size={16} className="mr-2" />
@@ -2777,9 +2777,8 @@ const GenericList = () => {
                 </button>
                 <button
                   onClick={() => isInventorySelected && handleExportSelectedInventory('pdf')}
-                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${
-                    isInventorySelected ? 'bg-rose-600 hover:bg-rose-700 cursor-pointer' : 'bg-rose-600 cursor-not-allowed'
-                  }`}
+                  className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium transition-all ${isInventorySelected ? 'bg-rose-600 hover:bg-rose-700 cursor-pointer' : 'bg-rose-600 cursor-not-allowed'
+                    }`}
                   title={isInventorySelected ? "Exportar PDF do grupo selecionado" : "Selecione uma linha de inventário"}
                 >
                   <FileText size={16} className="mr-2" />
@@ -2880,11 +2879,10 @@ const GenericList = () => {
                 <button
                   onClick={() => handleGenerateReport(selectedRowId, 'xml')}
                   disabled={!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'}
-                  className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${
-                    !selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'
+                  className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'
                       ? 'cursor-not-allowed'
                       : 'hover:bg-green-700'
-                  }`}
+                    }`}
                   title="Exportar XMLs (apenas Pedidos)"
                 >
                   {exportingFormat === 'xml' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <FileCode size={16} className="mr-2" />}
@@ -3224,6 +3222,8 @@ const GenericList = () => {
                     )}
                     {(() => {
                       const renderCellContent = (item, colName) => {
+                        if (!colName) return null; // Proteção contra colName nulo
+
                         let value = item[colName];
                         const field = fieldMetaMap.get(colName);
 
@@ -3314,11 +3314,10 @@ const GenericList = () => {
                               navigate(`/${modelName}/edit/${item.id}`);
                             }
                           }}
-                          className={`border-b border-gray-200 cursor-pointer ${
-                            (modelName === 'estoque' && statusFilter === 'Inventário')
+                          className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
                               ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
                               : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
-                          }`}
+                            }`}
                         >
                           {columnsToDisplay.map((colName) => (
                             <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
@@ -3339,10 +3338,9 @@ const GenericList = () => {
                           {groupedData ? (
                             groupedData.map(group => (
                               <Fragment key={group.key}>
-                                <tr 
-                                  className={`cursor-pointer transition-colors group/header ${
-                                    selectedGroupKey === group.key ? 'bg-indigo-100 border-indigo-300' : 'bg-indigo-50/50 hover:bg-indigo-100/70 border-indigo-100'
-                                  }`}
+                                <tr
+                                  className={`cursor-pointer transition-colors group/header ${selectedGroupKey === group.key ? 'bg-indigo-100 border-indigo-300' : 'bg-indigo-50/50 hover:bg-indigo-100/70 border-indigo-100'
+                                    }`}
                                   onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
                                   title="Clique para selecionar este inventário"
                                 >

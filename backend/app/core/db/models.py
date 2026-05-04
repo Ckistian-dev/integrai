@@ -499,7 +499,7 @@ class Empresa(Base):
     certificado_senha = Column(String, info={'tab': 'Fiscal', 'ui_type': 'password', 'label': 'Senha do Certificado', 'placeholder': 'Senha do arquivo .pfx'})
     nfe_serie = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Série NFe', 'placeholder': '1'})
     nfe_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFe', 'placeholder': '1', 'read_only': True})
-    nfe_ultimo_nsu = Column(String, default="0", info={'tab': 'Fiscal', 'label': 'Último NSU SEFAZ', 'placeholder': '0'})
+    nfe_ultimo_nsu = Column(String, default="0", info={'tab': 'Fiscal', 'label': 'Último NSU SEFAZ', 'placeholder': '0', 'read_only': True})
     nfce_serie = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Série NFCe', 'placeholder': '1'})
     nfce_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFCe', 'placeholder': '1', 'read_only': True})
     ambiente_sefaz = Column(IntEnum(EmpresaAmbienteSefazEnum), nullable=False, default=EmpresaAmbienteSefazEnum.homologacao, info={
@@ -1013,7 +1013,7 @@ class Pedido(Base):
     # --- Aba: Fiscal ---
     tipo_operacao = Column(SQLAlchemyEnum(RegraTipoOperacaoEnum, native_enum=False), default=RegraTipoOperacaoEnum.venda_mercadoria,
                            info={'tab': 'Fiscal', 'label': 'Tipo de Operação', 'placeholder': 'Selecione...'})
-    numero_nf = Column(Integer, info={'tab': 'Fiscal', 'label': 'Número NFe', 'placeholder': ''})
+    numero_nf = Column(String, info={'tab': 'Fiscal', 'label': 'Número NFe', 'placeholder': ''})
     chave_acesso = Column(String(44), index=True, info={'tab': 'Fiscal', 'label': 'Chave de Acesso NFe', 'placeholder': ''})
     chave_nfe_referencia = Column(String(44), info={'tab': 'Fiscal', 'label': 'Chave NFe Referenciada', 'placeholder': ''})
     protocolo_autorizacao = Column(String, info={'tab': 'Fiscal', 'label': 'Protocolo', 'placeholder': ''})

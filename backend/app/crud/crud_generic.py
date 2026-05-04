@@ -26,7 +26,12 @@ def create(db: Session, *, model: ModelType, obj_in: BaseModel, id_empresa: int)
     'obj_in' já deve ser um schema Pydantic validado.
     """
     obj_in_data = obj_in.model_dump()
-    db_obj = model(**obj_in_data, id_empresa=id_empresa)
+    
+    # Filtra apenas os campos que existem no modelo SQLAlchemy para evitar TypeError
+    # de argumentos inesperados no construtor.
+    valid_data = {k: v for k, v in obj_in_data.items() if hasattr(model, k)}
+    
+    db_obj = model(**valid_data, id_empresa=id_empresa)
     db.add(db_obj)
     db.commit()
     db.refresh(db_obj)

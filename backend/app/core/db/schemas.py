@@ -91,10 +91,7 @@ class EmpresaBase(BaseModel):
     cor_sidebar: Optional[str] = "#1f2937"
     # Campos Fiscais
     nfe_serie: Optional[int] = 1
-    nfe_numero_sequencial: Optional[int] = 1
-    nfe_ultimo_nsu: Optional[str] = "0"
     nfce_serie: Optional[int] = 1
-    nfce_numero_sequencial: Optional[int] = 1
     ambiente_sefaz: Optional[EmpresaAmbienteSefazEnum] = EmpresaAmbienteSefazEnum.homologacao
     certificado_senha: Optional[str] = None
     certificado_nome_arquivo: Optional[str] = None
@@ -132,10 +129,6 @@ class EmpresaUpdate(BaseModel):
     certificado_arquivo: Optional[bytes] = None
     certificado_senha: Optional[str] = None
     certificado_nome_arquivo: Optional[str] = None
-    nfe_serie: Optional[int] = None
-    nfe_numero_sequencial: Optional[int] = None
-    nfce_serie: Optional[int] = None
-    nfce_numero_sequencial: Optional[int] = None
     ambiente_sefaz: Optional[EmpresaAmbienteSefazEnum] = None
     id_classificacao_contabil_padrao: Optional[int] = None
     id_classificacao_contabil_cancelamento: Optional[int] = None
@@ -150,6 +143,10 @@ class Empresa(EmpresaBase):  # RENOMEADO de EmpresaRead para Empresa
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
     certificado_arquivo: Optional[bytes] = None
+    
+    nfe_numero_sequencial: Optional[int] = None
+    nfce_numero_sequencial: Optional[int] = None
+    nfe_ultimo_nsu: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -544,7 +541,7 @@ class PedidoBase(BaseModel):
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = RegraTipoOperacaoEnum.venda_mercadoria
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
-    numero_nf: Optional[int] = None
+    numero_nf: Optional[str] = None
     data_nf: Optional[date] = None
     chave_acesso: Optional[str] = None
     chave_nfe_referencia: Optional[str] = None
@@ -609,7 +606,7 @@ class PedidoUpdate(BaseModel):
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = None
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
-    numero_nf: Optional[int] = None
+    numero_nf: Optional[str] = None
     data_nf: Optional[date] = None
     chave_acesso: Optional[str] = None
     chave_nfe_referencia: Optional[str] = None
