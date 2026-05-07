@@ -123,6 +123,14 @@ def get_registry_entry(model_name: str) -> Optional[Dict[str, Any]]:
         
         # O display_name original agora aponta para o singular
         display_name = display_name_singular
+
+        # 🎯 1.5. SOBREPOSIÇÃO POR ATRIBUTOS DO MODELO (Se definidos)
+        if hasattr(model_class, '__label__'):
+            display_name_singular = getattr(model_class, '__label__')
+            display_name = display_name_singular # Mantém compatibilidade
+        
+        if hasattr(model_class, '__label_plural__'):
+            display_name_plural = getattr(model_class, '__label_plural__')
         
         # **************** FIM DA CORREÇÃO DA PLURALIZAÇÃO ****************
 

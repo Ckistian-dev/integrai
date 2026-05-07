@@ -9,12 +9,14 @@ services:
       - ./postgres-data:/var/lib/postgresql/data
       - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 5
     ports:
       - "5440:5432"
+    networks:
+      - app-network
 
   api:
     container_name: erp_api
@@ -35,3 +37,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - app-network
+
+  tunnel:
+    image: node:alpine
+    container_name: localtunnel_tunnel
+    restart: always
+    command: >
+      sh -c "npm install -g localtunnel &&  lt --port 8000 --host http://localtunnel.me --subdomain ${DEV_SUBDOMAIN} --local-host api"
+    depends_on:
+      - api
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

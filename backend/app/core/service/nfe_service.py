@@ -1598,7 +1598,7 @@ class NFeService:
             indicador_presenca=pedido_origem.indicador_presenca,
 
             # Alterações para Devolução
-            tipo_operacao=RegraTipoOperacaoEnum.devolucao,
+            tipo_operacao=RegraTipoOperacaoEnum.devolucao_entrada,
             chave_nfe_referencia=pedido_origem.chave_acesso,
             observacao=f"{pedido_origem.observacao} | Devolução referente ao pedido #{pedido_origem.id}" if pedido_origem.observacao else f"Devolução referente ao pedido #{pedido_origem.id}"
         )
@@ -1789,10 +1789,15 @@ class NFeService:
             # Determina Finalidade (1=Normal, 4=Devolução)
             fin_nfe = 1
             tp_nf = 1 # 1=Saída (Padrão)
-            if tipo_op_enum == RegraTipoOperacaoEnum.devolucao:
+            
+            if tipo_op_enum == RegraTipoOperacaoEnum.devolucao_entrada:
                 fin_nfe = 4
-                nat_op = 'DEVOLUCAO DE MERCADORIA'
-                tp_nf = 0 # 0=Entrada (Devolução de Venda)
+                nat_op = 'DEVOLUCAO - ENTRADA'
+                tp_nf = 0 # 0=Entrada
+            elif tipo_op_enum == RegraTipoOperacaoEnum.devolucao_saida:
+                fin_nfe = 4
+                nat_op = 'DEVOLUCAO - SAIDA'
+                tp_nf = 1 # 1=Saída
 
             # Lógica de Pagamento
             t_pag = '90' # Sem pagamento (default)
@@ -2169,7 +2174,7 @@ class NFeService:
                     
                     # FALLBACK DEVOLUÇÃO: Se não encontrar regra específica de devolução,
                     # tenta aplicar a regra de Venda para manter a tributação (destaque de ICMS/IBS/CBS)
-                    if not regra and tipo_op_enum == RegraTipoOperacaoEnum.devolucao:
+                    if not regra and tipo_op_enum in [RegraTipoOperacaoEnum.devolucao_entrada, RegraTipoOperacaoEnum.devolucao_saida]:
                         print(f"DEBUG: Fallback Devolução - Buscando regra de Venda para produto {produto_db.sku}")
                         regra = self._encontrar_regra_tributaria(produto_db, cli_db, RegraTipoOperacaoEnum.venda_mercadoria)
                 

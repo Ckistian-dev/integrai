@@ -63,6 +63,8 @@ class FieldMetadata(BaseModel):
 class ModelMetadata(BaseModel):
     model_name: str
     display_name: str
+    display_name_singular: Optional[str] = None
+    display_name_plural: Optional[str] = None
     display_field: Optional[str] = None # O campo principal de display do modelo (ex: "nome_razao")
     fields: List[FieldMetadata]
 
@@ -889,6 +891,46 @@ Magento_configuracoes = MagentoConfiguracao
 Magento_configuracaoCreate = MagentoConfiguracaoCreate
 Magento_configuracaoUpdate = MagentoConfiguracaoUpdate
 
+class TiktokConfiguracaoBase(BaseModel):
+    app_key: str
+    app_secret: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    shop_id: Optional[str] = None
+    vendedor_padrao_id: Optional[int] = None
+    situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
+    filtros_padrao: Optional[List[Dict[str, Any]]] = []
+
+class TiktokConfiguracaoCreate(TiktokConfiguracaoBase):
+    pass
+
+class TiktokConfiguracaoUpdate(TiktokConfiguracaoBase):
+    app_key: Optional[str] = None
+    app_secret: Optional[str] = None
+
+class TiktokConfiguracao(TiktokConfiguracaoBase):
+    id: int
+    id_empresa: int
+    criado_em: datetime
+    atualizado_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class TiktokPedidoListItem(BaseModel):
+    order_id: str
+    create_time: datetime
+    order_status: str
+    payment_method: Optional[str] = None
+    total_amount: float
+    buyer_email: Optional[str] = None
+    ja_importado: bool = False
+
+Tiktok_configuracao = TiktokConfiguracao
+Tiktok_configuracoes = TiktokConfiguracao
+Tiktok_configuracaoCreate = TiktokConfiguracaoCreate
+Tiktok_configuracaoUpdate = TiktokConfiguracaoUpdate
+
 # Aliases para ClassificacaoContabil
 Classificacao_contabil = ClassificacaoContabil
 Classificacao_contabilCreate = ClassificacaoContabilCreate
@@ -898,8 +940,6 @@ class ElasticEmailConfiguracaoBase(BaseModel):
     api_key: str
     from_email: str
     from_name: Optional[str] = None
-    subject: Optional[str] = "Sua Nota Fiscal - Pedido #{pedido_id}"
-    body_html: Optional[str] = None
     ativo: bool = True
 
 class ElasticEmailConfiguracaoCreate(ElasticEmailConfiguracaoBase):
@@ -919,6 +959,43 @@ Elastic_email_configuracao = ElasticEmailConfiguracao
 Elastic_email_configuracoes = ElasticEmailConfiguracao
 Elastic_email_configuracaoCreate = ElasticEmailConfiguracaoCreate
 Elastic_email_configuracaoUpdate = ElasticEmailConfiguracaoUpdate
+
+
+# --- Schemas de EmailRegra ---
+
+class EmailRegraBase(BaseModel):
+    nome: str
+    trigger: str  # ex: "Orçamento → Aprovação"
+    subject: str = "Atualização do Pedido {pedido_id}"
+    body_html: Optional[str] = None
+    anexos: List[str] = []
+    ativo: bool = True
+
+class EmailRegraCreate(EmailRegraBase):
+    pass
+
+class EmailRegraUpdate(BaseModel):
+    nome: Optional[str] = None
+    trigger: Optional[str] = None
+    subject: Optional[str] = None
+    body_html: Optional[str] = None
+    anexos: Optional[List[str]] = None
+    ativo: Optional[bool] = None
+
+class EmailRegra(EmailRegraBase):
+    id: int
+    id_empresa: int
+    criado_em: datetime
+    atualizado_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+# Aliases para o dispatcher
+Email_regra = EmailRegra
+Email_regras = EmailRegra
+Email_regraCreate = EmailRegraCreate
+Email_regraUpdate = EmailRegraUpdate
 
 # --- 11. Schemas de Opções de Campos (CreatableSelect) ---
 
@@ -1011,10 +1088,12 @@ def update_all_forward_refs():
     IntelipostConfiguracao.model_rebuild()
     MeliConfiguracaoBase.model_rebuild()
     MagentoConfiguracaoBase.model_rebuild()
+    TiktokConfiguracaoBase.model_rebuild()
     OpcaoCampo.model_rebuild()
     UsuarioPreferencia.model_rebuild()
     Relatorio.model_rebuild()
     ElasticEmailConfiguracao.model_rebuild()
     NotaFiscalRecebida.model_rebuild()
+    EmailRegra.model_rebuild()
     
 update_all_forward_refs()

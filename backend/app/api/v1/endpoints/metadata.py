@@ -92,6 +92,14 @@ def get_model_metadata(model_name: str):
             fields=[] # Campos dinâmicos construídos pelo frontend
         )
 
+    if model_name == "tiktok_pedidos":
+        return ModelMetadata(
+            model_name="tiktok_pedidos",
+            display_name="Pedidos Tiktok Shop",
+            display_field="id",
+            fields=[] # Campos dinâmicos construídos pelo frontend
+        )
+
     registry_entry = get_registry_entry(model_name)
     if not registry_entry:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -256,6 +264,8 @@ def get_model_metadata(model_name: str):
         return ModelMetadata(
             model_name=model_name,
             display_name=display_name,
+            display_name_singular=registry_entry.get("display_name_singular", display_name),
+            display_name_plural=registry_entry.get("display_name_plural", display_name),
             fields=fields,
             display_field=display_field
         )

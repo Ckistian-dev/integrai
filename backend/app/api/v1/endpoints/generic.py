@@ -28,6 +28,7 @@ from app.api.dependencies import get_current_active_user
 from app.core.db import models, database, schemas
 from app.api.v1.model_dispatch import get_registry_entry
 from app.core.service.nfe_service import NFeService
+from app.core.service.elastic_email_service import ElasticEmailService
 
 # Constante global para o fuso horário de Brasília
 TZ_BR = timezone(timedelta(hours=-3))
@@ -2568,6 +2569,26 @@ def update_item(
                             db.commit()
                 except Exception as e:
                     print(f"Erro ao gerar financeiro de estorno: {e}")
+
+            # 🎯 LÓGICA ESPECÍFICA: Disparo de E-mails por Trigger de Status
+            if old_situacao != item.situacao:
+                try:
+                    import asyncio
+                    situacao_de_str = old_situacao.value if hasattr(old_situacao, 'value') else str(old_situacao or "")
+                    situacao_para_str = item.situacao.value if hasattr(item.situacao, 'value') else str(item.situacao)
+                    
+                    email_svc = ElasticEmailService(db, current_user.id_empresa)
+                    asyncio.run(email_svc.send_trigger_emails(
+                        pedido=item,
+                        situacao_de=situacao_de_str,
+                        situacao_para=situacao_para_str,
+                        pdf_b64=None,  # Sem NFe anexada por padrão (regras com anexar_nfe=True precisam da NFe gerada)
+                        xml_str=None,
+                    ))
+                except Exception as e:
+                    # Erro de e-mail não deve bloquear a atualização do pedido
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
 
     return registry["schema"].from_orm(item)
 

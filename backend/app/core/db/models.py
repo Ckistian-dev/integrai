@@ -205,7 +205,8 @@ class RegraTipoOperacaoEnum(str, enum.Enum):
     venda_mercadoria = "Venda de Mercadoria"
     venda_producao = "Venda de Produção"
     revenda = "Revenda de Mercadoria"
-    devolucao = "Devolução de Mercadoria"
+    devolucao_entrada = "Devolução - Entrada"
+    devolucao_saida = "Devolução - Saída"
     remessa_conserto = "Remessa para Conserto"
     remessa_demonstracao = "Remessa para Demonstração"
     retorno_conserto = "Retorno de Conserto"
@@ -438,6 +439,8 @@ class Empresa(Base):
     Modelo do Tenant (Empresa). Esta é a tabela central.
     """
     __tablename__ = "empresas"
+    __label__ = "Dados da Empresa"
+    __label_plural__ = "Empresas"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -551,6 +554,8 @@ class Perfil(Base):
     Controla acesso a páginas, subpáginas, botões e colunas visíveis.
     """
     __tablename__ = "perfil"
+    __label__ = "Perfil de Acesso"
+    __label_plural__ = "Perfis de Acesso"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -586,6 +591,8 @@ class Usuario(Base):
     Modelo de Usuário do sistema.
     """
     __tablename__ = "usuarios"
+    __label__ = "Usuário"
+    __label_plural__ = "Usuários"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -622,6 +629,8 @@ class Cadastro(Base):
     Pode ser Cliente, Fornecedor, Transportadora, Vendedor.
     """
     __tablename__ = "cadastros"
+    __label__ = "Cadastro (Pessoas)"
+    __label_plural__ = "Clientes e Fornecedores"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -700,6 +709,8 @@ class Embalagem(Base):
     Modelo de Embalagens.
     """
     __tablename__ = "embalagens"
+    __label__ = "Embalagem"
+    __label_plural__ = "Embalagens"
     
     id = Column(Integer, primary_key=True, index=True)
     
@@ -730,6 +741,8 @@ class Produto(Base):
     Modelo de Produtos.
     """
     __tablename__ = "produtos"
+    __label__ = "Produto"
+    __label_plural__ = "Produtos"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -819,6 +832,8 @@ class Conta(Base):
     Modelo de Contas a Pagar/Receber.
     """
     __tablename__ = "contas"
+    __label__ = "Lançamento Financeiro"
+    __label_plural__ = "Contas a Pagar e Receber"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -875,6 +890,8 @@ class Estoque(Base):
     Modelo de Estoque (Lotes).
     """
     __tablename__ = "estoque"
+    __label__ = "Movimentação de Estoque"
+    __label_plural__ = "Movimentações de Estoque"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -927,6 +944,8 @@ class Pedido(Base):
     Modelo de Pedidos de Venda.
     """
     __tablename__ = "pedidos"
+    __label__ = "Pedido de Venda"
+    __label_plural__ = "Pedidos de Venda"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1083,6 +1102,8 @@ class Tributacao(Base):
     Modelo de Regras Tributárias.
     """
     __tablename__ = "regras_tributarias"
+    __label__ = "Regra de Imposto"
+    __label_plural__ = "Regras Tributárias"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1166,6 +1187,8 @@ class ClassificacaoContabil(Base):
     Modelo de Classificação Contábil.
     """
     __tablename__ = "classificacao_contabil"
+    __label__ = "Plano de Contas"
+    __label_plural__ = "Plano de Contas"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1191,6 +1214,8 @@ class IntelipostConfiguracao(Base):
     Modelo para armazenar as configurações da integração Intelipost.
     """
     __tablename__ = "intelipost_configuracoes"
+    __label__ = "Configuração Intelipost"
+    __label_plural__ = "Configurações Intelipost"
 
     id = Column(Integer, primary_key=True, index=True)
     api_key = Column(String, nullable=False, info={'tab': 'Dados Gerais', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
@@ -1213,6 +1238,8 @@ Intelipost_configuracoes = IntelipostConfiguracao
 
 class MeliConfiguracao(Base):
     __tablename__ = "meli_configuracoes"
+    __label__ = "Configuração Mercado Livre"
+    __label_plural__ = "Configurações Mercado Livre"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1258,6 +1285,8 @@ class MagentoConfiguracao(Base):
     Modelo para armazenar as configurações da integração Adobe Commerce (Magento 2).
     """
     __tablename__ = "magento_configuracoes"
+    __label__ = "Configuração Magento"
+    __label_plural__ = "Configurações Magento"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1289,24 +1318,56 @@ class MagentoConfiguracao(Base):
 Magento_configuracao = MagentoConfiguracao
 Magento_configuracoes = MagentoConfiguracao
 
+class TiktokConfiguracao(Base):
+    __tablename__ = "tiktok_configuracoes"
+    __label__ = "Configuração Tiktok Shop"
+    __label_plural__ = "Configurações Tiktok Shop"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Aba: Conexão
+    app_key = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'App Key', 'placeholder': ''})
+    app_secret = Column(String, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'App Secret', 'placeholder': ''})
+    access_token = Column(String, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
+    refresh_token = Column(String, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Refresh Token', 'placeholder': ''})
+    shop_id = Column(String, nullable=True, info={'tab': 'Conexão', 'label': 'Shop ID', 'placeholder': ''})
+    
+    # Aba: Preferências
+    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+                      info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
+    
+    filtros_padrao = Column(JSON, nullable=True, default=[], info={'tab': 'Preferências', 'label': 'Filtros Padrão de Importação', 'component': 'default_filters'})
+
+    # Controle
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    
+    # Relacionamentos
+    empresa = relationship("Empresa", backref="tiktok_config")
+
+# Alias para compatibilidade com o dispatcher
+Tiktok_configuracao = TiktokConfiguracao
+Tiktok_configuracoes = TiktokConfiguracao
+
 # Alias para ClassificacaoContabil
 Classificacao_contabil = ClassificacaoContabil
 
 class ElasticEmailConfiguracao(Base):
     """
-    Configurações para envio de e-mails via Elastic Email.
+    Configurações globais para envio de e-mails via Elastic Email (credenciais da API).
     """
     __tablename__ = "elastic_email_configuracoes"
+    __label__ = "Configuração Elastic Email"
+    __label_plural__ = "Configurações Elastic Email"
 
     id = Column(Integer, primary_key=True, index=True)
     api_key = Column(String, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'API Key (Elastic Email)', 'placeholder': 'Sua API Key'})
     from_email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail do Remetente', 'placeholder': 'exemplo@suaempresa.com.br'})
     from_name = Column(String, info={'tab': 'Geral', 'label': 'Nome do Remetente', 'placeholder': 'Minha Loja'})
-    
-    subject = Column(String, default="Sua Nota Fiscal - Pedido #{pedido_id}", info={'tab': 'Personalização', 'label': 'Assunto do E-mail', 'placeholder': 'Use {pedido_id} ou {cliente_nome}', 'col_span': 2})
-    body_html = Column(Text, info={'tab': 'Personalização', 'label': 'Corpo do E-mail (HTML)', 'type': 'textarea', 'placeholder': 'Olá {cliente_nome}, sua nota fiscal chegou!', 'col_span': 2})
-    
-    ativo = Column(Boolean, default=True, info={'tab': 'Geral', 'label': 'Envio Automático Ativo?'})
+
+    ativo = Column(Boolean, default=True, info={'tab': 'Geral', 'label': 'Integração Ativa?'})
 
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     empresa = relationship("Empresa", backref="elastic_email_config")
@@ -1314,6 +1375,103 @@ class ElasticEmailConfiguracao(Base):
 # Aliases para o dispatcher
 Elastic_email_configuracao = ElasticEmailConfiguracao
 Elastic_email_configuracoes = ElasticEmailConfiguracao
+
+
+class EmailRegra(Base):
+    """
+    Regras de disparo de e-mail automático baseadas em mudança de situação do Pedido.
+    A config de credenciais (API Key) é resolvida automaticamente pela empresa.
+    """
+    __tablename__ = "email_regras"
+    __label__ = "Regra de Automação de E-mail"
+    __label_plural__ = "Regras de E-mail"
+
+    # Transições disponíveis no fluxo de pedidos
+    TRIGGERS = [
+        'Orçamento → Aprovação',
+        'Aprovação → Programação',
+        'Programação → Produção',
+        'Produção → Embalagem',
+        'Embalagem → Faturamento',
+        'Faturamento → Expedição',
+        'Expedição → Despachado',
+        'Qualquer → Cancelado',
+        'Qualquer → Faturamento',
+        'Qualquer → Despachado',
+    ]
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Identificação da regra
+    nome = Column(String, nullable=False,
+                  info={'tab': 'Geral', 'label': 'Nome da Regra', 'placeholder': 'Ex: E-mail de Faturamento'})
+
+    # Trigger: transição de situação como campo único (ex: "Orçamento → Aprovação")
+    trigger = Column(String, nullable=False,
+                     info={
+                         'tab': 'Gatilho', 'label': 'Gatilho (Transição de Status)',
+                         'component': 'select',
+                         'col_span': 2,
+                         'placeholder': 'Selecione a transição...',
+                         'options': [
+                             {'label': 'Orçamento → Aprovação', 'value': 'Orçamento → Aprovação'},
+                             {'label': 'Aprovação → Programação', 'value': 'Aprovação → Programação'},
+                             {'label': 'Programação → Produção', 'value': 'Programação → Produção'},
+                             {'label': 'Produção → Embalagem', 'value': 'Produção → Embalagem'},
+                             {'label': 'Embalagem → Faturamento', 'value': 'Embalagem → Faturamento'},
+                             {'label': 'Faturamento → Expedição', 'value': 'Faturamento → Expedição'},
+                             {'label': 'Expedição → Despachado', 'value': 'Expedição → Despachado'},
+                             {'label': 'Qualquer → Cancelado', 'value': 'Qualquer → Cancelado'},
+                             {'label': 'Qualquer → Faturamento', 'value': 'Qualquer → Faturamento'},
+                             {'label': 'Qualquer → Despachado', 'value': 'Qualquer → Despachado'},
+                         ]
+                     })
+
+    # Conteúdo do e-mail
+    subject = Column(String, nullable=False, default="Atualização do Pedido {pedido_id}",
+                     info={'tab': 'Conteúdo', 'label': 'Assunto', 'placeholder': 'Use {pedido_id}, {cliente_nome}, {situacao}, {valor_total}', 'col_span': 2})
+    body_html = Column(Text, nullable=True,
+                       info={'tab': 'Conteúdo', 'label': 'Corpo do E-mail (HTML)', 'type': 'textarea',
+                             'placeholder': 'Olá {cliente_nome}, seu pedido {pedido_id} foi atualizado para {situacao}.', 'col_span': 2})
+
+    # Opções de Anexos (Multiselect)
+    anexos = Column(JSON, default=list,
+                    info={
+                        'tab': 'Opções', 
+                        'label': 'Anexos a enviar',
+                        'component': 'multiselect',
+                        'options': [
+                            {'label': 'DANFE (PDF)', 'value': 'danfe'},
+                            {'label': 'XML da NFe', 'value': 'xml'},
+                        ]
+                    })
+    ativo = Column(Boolean, default=True,
+                   info={'tab': 'Geral', 'label': 'Regra Ativa?'})
+
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa = relationship("Empresa", backref="email_regras")
+
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @property
+    def situacao_de(self):
+        """Extrai o status de origem do trigger (ex: 'Orçamento → Aprovação' -> 'Orçamento')."""
+        if self.trigger and '→' in self.trigger:
+            parte = self.trigger.split('→')[0].strip()
+            return None if parte.lower() == 'qualquer' else parte
+        return None
+
+    @property
+    def situacao_para(self):
+        """Extrai o status destino do trigger (ex: 'Orçamento → Aprovação' -> 'Aprovação')."""
+        if self.trigger and '→' in self.trigger:
+            return self.trigger.split('→')[1].strip()
+        return self.trigger
+
+# Aliases para o dispatcher
+Email_regra = EmailRegra
+Email_regras = EmailRegra
 
 
 class OpcaoCampo(Base):
@@ -1371,6 +1529,8 @@ class Relatorio(Base):
     Modelo para salvar configurações de relatórios personalizados.
     """
     __tablename__ = "relatorios"
+    __label__ = "Relatório Personalizado"
+    __label_plural__ = "Relatórios Personalizados"
 
     id = Column(Integer, primary_key=True, index=True)
     
@@ -1397,6 +1557,8 @@ class Relatorio(Base):
 class NotaFiscalRecebida(Base):
     """Modelo para notas emitidas contra o CNPJ da empresa (DF-e)."""
     __tablename__ = "nfe_recebidas"
+    __label__ = "Nota Fiscal Recebida"
+    __label_plural__ = "Notas Fiscais Recebidas (DF-e)"
     id = Column(Integer, primary_key=True, index=True)
     chave_acesso = Column(String(44), index=True, nullable=True, info={'label': 'Chave de Acesso'})
     nsu = Column(String, index=True, info={'label': 'NSU'})

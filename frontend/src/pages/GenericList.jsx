@@ -289,11 +289,14 @@ const GenericList = () => {
   const { modelName: paramModelName, statusFilter } = useParams();
   const isIntelipostView = paramModelName === 'intelipost';
   const isMeliView = paramModelName === 'mercadolivre_pedidos';
-  const isMagentoView = paramModelName === 'magento_pedidos'; // Detecta visualização Magento
+  const isMagentoView = paramModelName === 'magento_pedidos';
+  const isTiktokView = paramModelName === 'tiktok_pedidos';
+  const isEmailRulesView = paramModelName === 'email_regras';
 
   const modelName = isMeliView ? 'mercadolivre_pedidos' :
     isMagentoView ? 'magento_pedidos' :
-      (paramModelName === 'intelipost' ? 'pedidos' : paramModelName);
+      isTiktokView ? 'tiktok_pedidos' :
+        (paramModelName === 'intelipost' ? 'pedidos' : paramModelName);
 
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -302,7 +305,7 @@ const GenericList = () => {
   // Mapeia o modelName da rota para a chave de permissão correta
   const permissionKey = useMemo(() => {
     // Para as visualizações de integração, a chave de permissão é 'integracoes'
-    if (isMeliView || isMagentoView || isIntelipostView) {
+    if (isMeliView || isMagentoView || isTiktokView || isIntelipostView) {
       return 'integracoes';
     }
     if (paramModelName === 'perfis') {
@@ -371,6 +374,9 @@ const GenericList = () => {
   const [pedidoParaCotar, setPedidoParaCotar] = useState(null);
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isTiktokAuthModalOpen, setIsTiktokAuthModalOpen] = useState(false);
+  const [isMeliAuthModalOpen, setIsMeliAuthModalOpen] = useState(false);
+  const [pendingAuthUrl, setPendingAuthUrl] = useState('');
   const [ordersToImport, setOrdersToImport] = useState([]);
 
   // --- ESTADOS PARA CANCELAMENTO NFE ---
@@ -769,6 +775,9 @@ const GenericList = () => {
         } else if (isMagentoView) {
           // ROTA ESPECÍFICA PROXY DO MAGENTO
           url = `/magento/pedidos`;
+        } else if (isTiktokView) {
+          // ROTA ESPECÍFICA PROXY DO TIKTOK
+          url = `/tiktok/pedidos`;
         } else {
           // ROTA PADRÃO GENÉRICA
           url = `/generic/${modelName}`;
@@ -883,8 +892,8 @@ const GenericList = () => {
           if (err.response && err.response.status === 403 && isMeliView) {
             setError("Não conectado ao Mercado Livre. Clique em 'Sincronizar' para conectar.");
           } else {
-            setError(`Não foi possível carregar os dados.`);
-            toast.error("Erro ao carregar dados.");
+            setError(err.response?.data?.detail || `Não foi possível carregar os dados.`);
+            toast.error(err.response?.data?.detail || "Erro ao carregar dados.");
           }
         }
       } finally {
@@ -1217,6 +1226,16 @@ const GenericList = () => {
     setIsImportModalOpen(true);
   };
 
+  const handleImportTiktokOrder = () => {
+    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    if (toImport.length === 0) {
+      toast.info("Os pedidos selecionados já foram importados.");
+      return;
+    }
+    setOrdersToImport(toImport);
+    setIsImportModalOpen(true);
+  };
+
   const confirmImportOrder = async () => {
     if (ordersToImport.length === 0) return;
 
@@ -1231,7 +1250,9 @@ const GenericList = () => {
         try {
           const endpoint = isMeliView
             ? `/mercadolivre/pedidos/${orderId}/importar`
-            : `/magento/pedidos/${orderId}/importar`;
+            : isTiktokView
+              ? `/tiktok/pedidos/${orderId}/importar`
+              : `/magento/pedidos/${orderId}/importar`;
 
           await api.post(endpoint);
           successCount++;
@@ -1333,6 +1354,23 @@ const GenericList = () => {
     } catch (err) { toast.error("Erro ao enviar manifestação."); }
   };
 
+  const handleEmailConfigClick = async () => {
+    try {
+      setIsFetchingData(true);
+      const response = await api.get('/generic/elastic_email_configuracoes');
+      const items = response.data.items;
+      if (items && items.length > 0) {
+        navigate(`/elastic_email_configuracoes/edit/${items[0].id}`);
+      } else {
+        navigate(`/elastic_email_configuracoes/new`);
+      }
+    } catch (err) {
+      navigate(`/elastic_email_configuracoes/new`);
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
   const handleMeliConfigClick = async () => {
     try {
       // Verifica se já existe config
@@ -1357,19 +1395,56 @@ const GenericList = () => {
     } catch (err) {
       // Se receber 403, significa que precisa autenticar (token inválido ou inexistente)
       if (err.response && err.response.status === 403) {
-        if (window.confirm("Não há uma conexão ativa com o Mercado Livre. Deseja fazer login agora?")) {
-          try {
-            const res = await api.get('/mercadolivre/auth_url');
-            const { url, verifier } = res.data;
-            if (verifier) localStorage.setItem('meli_verifier', verifier);
-            window.location.href = url;
-            return; // Retorna para evitar desativar o loading enquanto redireciona
-          } catch (authErr) {
-            toast.error("Erro ao iniciar autenticação.");
-          }
+        try {
+          const res = await api.get('/mercadolivre/auth_url');
+          const { url, verifier } = res.data;
+          setPendingAuthUrl(url);
+          if (verifier) localStorage.setItem('meli_verifier', verifier);
+          setIsMeliAuthModalOpen(true);
+        } catch (authErr) {
+          toast.error("Erro ao iniciar autenticação.");
         }
       } else {
         toast.error("Erro ao sincronizar conexão com Mercado Livre.");
+      }
+      setIsFetchingData(false);
+    }
+  };
+
+  const handleTiktokConfigClick = async () => {
+    try {
+      setIsFetchingData(true);
+      const response = await api.get('/generic/tiktok_configuracoes');
+      const items = response.data.items;
+      if (items && items.length > 0) {
+        navigate(`/tiktok_configuracoes/edit/${items[0].id}`);
+      } else {
+        navigate(`/tiktok_configuracoes/new`);
+      }
+    } catch (err) {
+      navigate(`/tiktok_configuracoes/new`);
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
+  const handleTiktokSyncClick = async () => {
+    try {
+      setIsFetchingData(true);
+      await api.post('/tiktok/sync');
+      setRefreshTrigger(prev => prev + 1);
+      toast.success("Conexão sincronizada com sucesso!");
+    } catch (err) {
+      if (err.response && err.response.status === 403) {
+        try {
+          const res = await api.get('/tiktok/auth_url');
+          setPendingAuthUrl(res.data.url);
+          setIsTiktokAuthModalOpen(true);
+        } catch (authErr) {
+          toast.error("Erro ao iniciar autenticação.");
+        }
+      } else {
+        toast.error("Erro ao sincronizar conexão com Tiktok Shop.");
       }
       setIsFetchingData(false);
     }
@@ -2637,14 +2712,25 @@ const GenericList = () => {
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           {/* Botões Lado Esquerdo */}
           <div className="flex gap-2">
-            {!isIntelipostView && !isMeliView && !isMagentoView && modelName !== 'nfe_recebidas' && canCreate && (
+            {!isIntelipostView && !isMeliView && !isMagentoView && modelName !== 'nfe_rece_bidas' && canCreate && (
               <Link
                 to={`/${modelName}/new`}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium"
               >
                 <Plus size={16} className="mr-2" />
-                Novo
+                {isEmailRulesView ? 'Nova Regra' : 'Novo'}
               </Link>
+            )}
+
+            {isEmailRulesView && (
+              <button
+                onClick={handleEmailConfigClick}
+                disabled={isFetchingData}
+                className="flex items-center px-4 py-2 bg-teal-600 text-white rounded-md shadow-sm hover:bg-teal-700 text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                <Settings size={16} className="mr-2" />
+                Configurações
+              </button>
             )}
 
             {isIntelipostView && (
@@ -2716,6 +2802,29 @@ const GenericList = () => {
               >
                 <Settings size={16} className="mr-2" />
                 Configurações Magento
+              </button>
+            )}
+
+            {/* BOTÃO CONFIG TIKTOK */}
+            {isTiktokView && (
+              <button
+                onClick={handleTiktokConfigClick}
+                className="flex items-center px-4 py-2 bg-pink-600 text-white rounded-md hover:bg-pink-700 font-medium"
+              >
+                <Settings size={16} className="mr-2" />
+                Configurações TikTok
+              </button>
+            )}
+
+            {/* BOTÃO SINCRONIZAR TIKTOK */}
+            {isTiktokView && (
+              <button
+                onClick={handleTiktokSyncClick}
+                disabled={isFetchingData}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-70"
+              >
+                <RefreshCw size={16} className={`mr-2 ${isFetchingData ? 'animate-spin' : ''}`} />
+                Sincronizar
               </button>
             )}
 
@@ -2849,6 +2958,18 @@ const GenericList = () => {
                 onClick={handleImportMagentoOrder}
                 disabled={selectedRowIds.length === 0 || isFetchingData}
                 className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium disabled:cursor-not-allowed"
+              >
+                <FileDown size={16} className="mr-2" />
+                {selectedRowIds.length > 1 ? `Importar ${selectedRowIds.length} Pedidos` : 'Importar Pedido'}
+              </button>
+            )}
+
+            {/* BOTÃO IMPORTAR TIKTOK */}
+            {isTiktokView && (
+              <button
+                onClick={handleImportTiktokOrder}
+                disabled={selectedRowIds.length === 0 || isFetchingData}
+                className="flex items-center px-4 py-2 bg-pink-600 text-white rounded-md hover:bg-pink-700 font-medium disabled:cursor-not-allowed"
               >
                 <FileDown size={16} className="mr-2" />
                 {selectedRowIds.length > 1 ? `Importar ${selectedRowIds.length} Pedidos` : 'Importar Pedido'}
@@ -3242,6 +3363,24 @@ const GenericList = () => {
                           }
                         }
 
+                        if (colName === 'trigger' && modelName === 'email_regras' && value) {
+                          const parts = String(value).split('→');
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              {parts.map((p, idx) => (
+                                <React.Fragment key={idx}>
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-tight ${
+                                    idx === 0 ? 'bg-gray-100 text-gray-600' : 'bg-teal-100 text-teal-700'
+                                  }`}>
+                                    {p.trim()}
+                                  </span>
+                                  {idx < parts.length - 1 && <span className="text-gray-300 font-bold">→</span>}
+                                </React.Fragment>
+                              ))}
+                            </div>
+                          );
+                        }
+
                         if (modelName === 'estoque' && (colName === 'custo' || colName === 'valor_total')) {
                           return <span className="font-medium text-gray-900">{formatCurrency(value || 0)}</span>;
                         }
@@ -3559,9 +3698,32 @@ const GenericList = () => {
           confirmText="Sim, Importar"
         >
           {ordersToImport.length > 1
-            ? `Deseja importar os ${ordersToImport.length} pedidos selecionados do ${isMeliView ? "Mercado Livre" : "Magento"} para o ERP?`
-            : `Deseja importar este pedido do ${isMeliView ? "Mercado Livre" : "Magento"} para o ERP?`
+            ? `Deseja importar os ${ordersToImport.length} pedidos selecionados do ${isMeliView ? "Mercado Livre" : isTiktokView ? "Tiktok Shop" : "Magento"} para o ERP?`
+            : `Deseja importar este pedido do ${isMeliView ? "Mercado Livre" : isTiktokView ? "Tiktok Shop" : "Magento"} para o ERP?`
           }
+        </Modal>
+
+        {/* MODAIS DE AUTORIZAÇÃO (ML E TIKTOK) */}
+        <Modal
+          isOpen={isMeliAuthModalOpen}
+          onClose={() => setIsMeliAuthModalOpen(false)}
+          onConfirm={() => { window.location.href = pendingAuthUrl; }}
+          title="Conectar ao Mercado Livre"
+          variant="info"
+          confirmText="Fazer Login"
+        >
+          Não há uma conexão ativa com o Mercado Livre. Deseja fazer login agora para sincronizar seus pedidos?
+        </Modal>
+
+        <Modal
+          isOpen={isTiktokAuthModalOpen}
+          onClose={() => setIsTiktokAuthModalOpen(false)}
+          onConfirm={() => { window.location.href = pendingAuthUrl; }}
+          title="Conectar ao Tiktok Shop"
+          variant="info"
+          confirmText="Fazer Login"
+        >
+          Não há uma conexão ativa com o Tiktok Shop. Deseja fazer login agora para sincronizar seus pedidos?
         </Modal>
 
         {/* MODAL DE CANCELAMENTO DE NFE */}
@@ -3656,6 +3818,8 @@ const GenericList = () => {
             </div>
           </div>
         </Modal>
+
+
 
         {/* MODAL DE FILTROS MAGENTO */}
         <Transition.Root show={isFilterModalOpen} as={React.Fragment}>

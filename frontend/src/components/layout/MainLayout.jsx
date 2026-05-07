@@ -103,7 +103,8 @@ const MainLayout = () => {
     { name: 'Intelipost', path: '/intelipost' },
     { name: 'Mercado Livre', path: '/mercadolivre_pedidos' },
     { name: 'Magento', path: '/magento_pedidos' },
-    { name: 'Elastic Email', path: '/elastic_email_configuracoes' },
+    { name: 'Tiktok Shop', path: '/tiktok_pedidos' },
+    { name: 'Elastic Email', path: '/email_regras' },
   ], []);
 
   const financeiroItems = useMemo(() => [
@@ -149,7 +150,7 @@ const MainLayout = () => {
   );
 
   const isPedidosActive = location.pathname.startsWith('/pedidos');
-  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes');
+  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/email_regras');
   const isFinanceiroActive = location.pathname.startsWith('/contas') || location.pathname.startsWith('/classificacao_contabil');
   const isUsuariosActive = location.pathname.startsWith('/usuarios') || location.pathname.startsWith('/perfis');
   const isEstoqueActive = location.pathname.startsWith('/estoque');
@@ -568,17 +569,13 @@ const MainLayout = () => {
                           );
                         }
 
-                        const isElasticEmail = subItem.name === 'Elastic Email';
-
                         return (
                         <NavLink
                           key={subItem.name}
                           to={subItem.path}
-                          onClick={(e) => isElasticEmail ? handleSingletonClick(e, 'elastic_email_configuracoes') : null}
                           className={({ isActive }) => {
-                            const isPathActive = isActive || (isElasticEmail && location.pathname.startsWith('/elastic_email_configuracoes'));
                             return `flex items-center py-2 px-3 rounded-lg text-sm ${
-                              isPathActive
+                              isActive
                               ? 'bg-teal-600 text-white font-medium'
                               : 'text-gray-300 hover:bg-gray-700'
                             } ${!isExpanded ? 'justify-center' : ''}`;

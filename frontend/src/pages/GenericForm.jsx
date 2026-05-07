@@ -657,8 +657,8 @@ const GenericForm = ({ modelName: propModelName }) => {
 
   // Textos dos botões e título (MANTIDOS DO SEU CÓDIGO ORIGINAL)
   const pageTitle = isEditMode
-    ? `Editar ${metadata?.display_name || modelName}`
-    : `Novo ${metadata?.display_name || modelName}`; // Alterado para "Novo" para se aproximar da imagem
+    ? `Editar ${metadata?.display_name_singular || metadata?.display_name || modelName}`
+    : `Novo ${metadata?.display_name_singular || metadata?.display_name || modelName}`; 
 
   // --- INÍCIO DAS MUDANÇAS DE LAYOUT ---
 
