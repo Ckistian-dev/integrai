@@ -42,6 +42,25 @@ class MeliService:
         if not self.credentials:
             logger.info(f"Empresa {self.id_empresa} possui configuração, mas ainda não está autenticada (tabela meli_credentials vazia).")
 
+    def _extract_state_code(self, address_data: dict) -> models.EstadoEnum:
+        """Extrai e valida o código do estado (UF) de um endereço do ML"""
+        state_id = address_data.get('state', {}).get('id') or ''
+        country_id = address_data.get('country', {}).get('id') or 'BR'
+        
+        # Se for exterior, mapeia para EX
+        if country_id != 'BR':
+            return models.EstadoEnum.EX
+            
+        if not state_id:
+            return None
+            
+        # Pega os últimos 2 caracteres (ex: BR-SP -> SP ou simplesmente SP)
+        extracted = str(state_id)[-2:].upper()
+        if extracted in models.EstadoEnum.__members__:
+            return models.EstadoEnum[extracted]
+            
+        return None
+
     async def get_auth_url(self):
         """Gera URL para iniciar OAuth com PKCE"""
         logger.info(f"Gerando URL de autorização ML para empresa {self.id_empresa}")
@@ -334,16 +353,16 @@ class MeliService:
             fantasia="CLIENTE MERCADO LIVRE",
             tipo_pessoa=tipo_pessoa,
             tipo_cadastro=CadastroTipoCadastroEnum.cliente,
-            email=f"ml_{ml_order['buyer']['id']}@not-real.com", # ML esconde emails hoje em dia
+            email=None, 
             telefone="".join(filter(str.isdigit, str(shipping_addr.get('receiver_phone') or '')))[:20],
             
             # Endereço
             cep="".join(filter(str.isdigit, str(shipping_addr.get('zip_code') or '')))[:9],
             logradouro=(shipping_addr.get('street_name') or '')[:255],
-            numero=str(shipping_addr.get('street_number') or 'S/N')[:20],
+            numero=str(shipping_addr.get('street_number') or '')[:20],
             complemento=(shipping_addr.get('comment') or '')[:255],
             cidade=(shipping_addr.get('city', {}).get('name') or '')[:255],
-            estado=(shipping_addr.get('state', {}).get('id') or '')[-2:], # Ex: BR-SP -> SP
+            estado=self._extract_state_code(shipping_addr),
             bairro=(shipping_addr.get('neighborhood', {}).get('name') or '')[:255],
             
             indicador_ie=CadastroIndicadorIEEnum.nao_contribuinte,
@@ -748,6 +767,10 @@ class MeliService:
             obs_text += f" | Serviço: {shipping_option.get('name')}"
         if shipment_details.get('logistic_type'):
             obs_text += f" | Logística: {shipment_details.get('logistic_type')}"
+        
+        # Identifica se não há endereço para marcar como "A Combinar"
+        if not shipment_details.get('receiver_address'):
+            obs_text += " | Entrega a Combinar"
 
         # --- DETERMINAÇÃO DO PAGAMENTO ---
         payments_list = ml_order.get('payments', [])
@@ -805,10 +828,10 @@ class MeliService:
             # --- ENDEREÇO DE ENTREGA IMPORTADO DO ML ---
             endereco_cep="".join(filter(str.isdigit, str(shipping_addr.get('zip_code') or '')))[:9],
             endereco_logradouro=(shipping_addr.get('street_name') or '')[:255],
-            endereco_numero=str(shipping_addr.get('street_number') or 'S/N')[:20],
+            endereco_numero=str(shipping_addr.get('street_number') or '')[:20],
             endereco_complemento=(shipping_addr.get('comment') or '')[:255],
             endereco_cidade=(shipping_addr.get('city', {}).get('name') or '')[:255],
-            endereco_estado=(shipping_addr.get('state', {}).get('id') or '')[-2:],
+            endereco_estado=self._extract_state_code(shipping_addr),
             endereco_bairro=(shipping_addr.get('neighborhood', {}).get('name') or '')[:255],
             
             # Veículo (ML não fornece placa, deixamos NULL)

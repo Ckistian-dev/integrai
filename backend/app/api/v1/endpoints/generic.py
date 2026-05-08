@@ -2118,6 +2118,21 @@ def create_item(
         validade_dias = empresa.validade_orcamento if (empresa and empresa.validade_orcamento) else 7
         item_data["data_validade"] = (datetime.now(TZ_BR) + timedelta(days=validade_dias)).date()
 
+    # 🎯 LÓGICA ESPECÍFICA: Validação de Plano de Contas vs Tipo de Conta
+    if model_name == "contas":
+        id_classificacao = item_data.get("id_classificacao_contabil")
+        tipo_conta = item_data.get("tipo_conta")
+        if id_classificacao:
+            classificacao = db.query(models.ClassificacaoContabil).filter(
+                models.ClassificacaoContabil.id == id_classificacao,
+                models.ClassificacaoContabil.id_empresa == current_user.id_empresa
+            ).first()
+            if classificacao:
+                if tipo_conta == "A Receber" and classificacao.tipo_movimentacao != "Entrada":
+                    raise HTTPException(status_code=400, detail="Contas a Receber só podem utilizar planos de contas do tipo Entrada.")
+                if tipo_conta == "A Pagar" and classificacao.tipo_movimentacao == "Entrada":
+                    raise HTTPException(status_code=400, detail="Contas a Pagar não podem utilizar planos de contas do tipo Entrada.")
+
     try:
         CreateSchema = registry["create_schema"]
         validated_data = CreateSchema(**item_data)
@@ -2366,6 +2381,23 @@ def update_item(
         # Lógica específica: Preencher data_despacho ao despachar
         if new_situacao_from_payload == models.PedidoSituacaoEnum.despachado and db_obj.data_despacho is None:
             item_data["data_despacho"] = datetime.now(TZ_BR).date()
+
+    # 🎯 LÓGICA ESPECÍFICA: Validação de Plano de Contas vs Tipo de Conta
+    if model_name == "contas":
+        id_classificacao = item_data.get("id_classificacao_contabil", db_obj.id_classificacao_contabil)
+        tipo_conta = item_data.get("tipo_conta", db_obj.tipo_conta)
+        
+        if id_classificacao:
+            classificacao = db.query(models.ClassificacaoContabil).filter(
+                models.ClassificacaoContabil.id == id_classificacao,
+                models.ClassificacaoContabil.id_empresa == current_user.id_empresa
+            ).first()
+            if classificacao:
+                tipo_str = tipo_conta.value if hasattr(tipo_conta, 'value') else str(tipo_conta)
+                if tipo_str == "A Receber" and classificacao.tipo_movimentacao != "Entrada":
+                    raise HTTPException(status_code=400, detail="Contas a Receber só podem utilizar planos de contas do tipo Entrada.")
+                if tipo_str == "A Pagar" and classificacao.tipo_movimentacao == "Entrada":
+                    raise HTTPException(status_code=400, detail="Contas a Pagar não podem utilizar planos de contas do tipo Entrada.")
 
     try:
         UpdateSchema = registry["update_schema"]

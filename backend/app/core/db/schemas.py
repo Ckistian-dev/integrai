@@ -59,6 +59,7 @@ class FieldMetadata(BaseModel):
     col_span: Optional[int] = None
     read_only: bool = False
     visible: bool = True
+    ui_type: Optional[str] = None
 
 class ModelMetadata(BaseModel):
     model_name: str
@@ -745,6 +746,7 @@ class ClassificacaoContabilBase(BaseModel):
     grupo: str
     descricao: str
     tipo: str
+    tipo_movimentacao: str = "Saída"
     considerar: bool = True
 
 class ClassificacaoContabilCreate(ClassificacaoContabilBase):
@@ -754,6 +756,7 @@ class ClassificacaoContabilUpdate(BaseModel):
     grupo: Optional[str] = None
     descricao: Optional[str] = None
     tipo: Optional[str] = None
+    tipo_movimentacao: Optional[str] = None
     considerar: Optional[bool] = None
 
 class ClassificacaoContabil(ClassificacaoContabilBase):
@@ -793,6 +796,43 @@ class IntelipostConfiguracao(IntelipostConfiguracaoBase):
 Intelipost_configuracao = IntelipostConfiguracao
 Intelipost_configuracaoCreate = IntelipostConfiguracaoCreate
 Intelipost_configuracaoUpdate = IntelipostConfiguracaoUpdate
+
+# --- Schemas de Outras Empresas ---
+
+class OutrasEmpresasConfiguracaoBase(BaseModel):
+    nome: str
+    email: str
+    senha: str
+    ativo: bool = True
+    token: Optional[str] = None
+    token_expiracao: Optional[datetime] = None
+
+class OutrasEmpresasConfiguracaoCreate(OutrasEmpresasConfiguracaoBase):
+    pass
+
+class OutrasEmpresasConfiguracaoUpdate(BaseModel):
+    nome: Optional[str] = None
+    email: Optional[str] = None
+    senha: Optional[str] = None
+    ativo: Optional[bool] = None
+    token: Optional[str] = None
+    token_expiracao: Optional[datetime] = None
+
+class OutrasEmpresasConfiguracao(OutrasEmpresasConfiguracaoBase):
+    id: int
+    id_empresa: int
+    criado_em: datetime
+    atualizado_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+Outra_empresa_configuracao = OutrasEmpresasConfiguracao
+Outra_empresa_configuracaoCreate = OutrasEmpresasConfiguracaoCreate
+Outra_empresa_configuracaoUpdate = OutrasEmpresasConfiguracaoUpdate
+Outras_empresas_configuracao = OutrasEmpresasConfiguracao
+Outras_empresas_configuracaoCreate = OutrasEmpresasConfiguracaoCreate
+Outras_empresas_configuracaoUpdate = OutrasEmpresasConfiguracaoUpdate
 
 
 class MeliConfiguracaoBase(BaseModel):

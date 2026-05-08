@@ -216,6 +216,11 @@ def get_model_metadata(model_name: str):
             if col.name in ["criado_em", "atualizado_em"]:
                 read_only = True
                 visible = False
+            
+            ui_type = col.info.get('ui_type')
+            # Se não houver ui_type manual, mas o nome sugerir senha, define como password
+            if not ui_type and ("senha" in col.name.lower() or "password" in col.name.lower()):
+                ui_type = "password"
 
             # --- 3. CRIA O FIELDMETADATA (com a aba) ---
             field = FieldMetadata(
@@ -233,7 +238,8 @@ def get_model_metadata(model_name: str):
                 filename_field=filename_field,
                 col_span=col_span,
                 read_only=read_only,
-                visible=visible
+                visible=visible,
+                ui_type=ui_type
             )
             fields.append(field)
             

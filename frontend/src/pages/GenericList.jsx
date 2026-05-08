@@ -3441,7 +3441,8 @@ const GenericList = () => {
                           return <span className="text-gray-400 text-xs italic">{`[Dados: ${Object.keys(value).join(', ')}]`}</span>;
                         }
 
-                        return field?.ui_type === 'password' ? '*********' : formatDisplayValue(value);
+                        const isPassword = field?.ui_type === 'password' || colName.toLowerCase().includes('senha') || colName.toLowerCase().includes('password');
+                        return isPassword ? '*********' : formatDisplayValue(value);
                       };
 
                       const renderRow = (item, index) => (

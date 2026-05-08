@@ -33,6 +33,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
 
   // Tabelas disponíveis para o Dashboard
   const modelosDisponiveis = [
+    { value: 'todos', label: 'Todas as Tabelas (Global)' },
     { value: 'pedidos', label: 'Pedidos de Venda' },
     { value: 'contas', label: 'Financeiro (Contas)' },
     { value: 'produtos', label: 'Produtos' },
@@ -115,7 +116,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
 
   // Busca metadados sempre que o "modelo" (tabela) mudar
   useEffect(() => {
-    if (!config.modelo || !isOpen) return;
+    if (!config.modelo || !isOpen || config.modelo === 'todos') return;
 
     const fetchFields = async () => {
       setLoadingMetadata(true);
@@ -545,19 +546,30 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                         <>
                           <div>
                             <label className="block text-sm font-medium text-gray-700">Campo Alvo do Filtro</label>
-                            <select
-                              name="campo"
-                              value={config.campo}
-                              onChange={handleChange}
-                              disabled={loadingMetadata}
-                              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                            >
-                              <option value="">Selecione...</option>
-                              <option value="__search__">Busca Global (Pesquisar em tudo)</option>
-                              {metadataFields.map(f => (
-                                <option key={f.name} value={f.name}>{f.label}</option>
-                              ))}
-                            </select>
+                            {config.modelo === 'todos' ? (
+                              <input
+                                type="text"
+                                name="campo"
+                                value={config.campo}
+                                onChange={handleChange}
+                                placeholder="ex: __search__ ou data_criacao"
+                                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                              />
+                            ) : (
+                              <select
+                                name="campo"
+                                value={config.campo}
+                                onChange={handleChange}
+                                disabled={loadingMetadata}
+                                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                              >
+                                <option value="">Selecione...</option>
+                                <option value="__search__">Busca Global (Pesquisar em tudo)</option>
+                                {metadataFields.map(f => (
+                                  <option key={f.name} value={f.name}>{f.label}</option>
+                                ))}
+                              </select>
+                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700">Tipo de Comportamento</label>

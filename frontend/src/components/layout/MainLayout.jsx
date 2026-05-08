@@ -105,6 +105,7 @@ const MainLayout = () => {
     { name: 'Magento', path: '/magento_pedidos' },
     { name: 'Tiktok Shop', path: '/tiktok_pedidos' },
     { name: 'Elastic Email', path: '/email_regras' },
+    { name: 'Outras Empresas', path: '/outras_empresas_configuracoes' },
   ], []);
 
   const financeiroItems = useMemo(() => [
@@ -150,7 +151,7 @@ const MainLayout = () => {
   );
 
   const isPedidosActive = location.pathname.startsWith('/pedidos');
-  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/email_regras');
+  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/email_regras') || location.pathname.startsWith('/outras_empresas_configuracoes');
   const isFinanceiroActive = location.pathname.startsWith('/contas') || location.pathname.startsWith('/classificacao_contabil');
   const isUsuariosActive = location.pathname.startsWith('/usuarios') || location.pathname.startsWith('/perfis');
   const isEstoqueActive = location.pathname.startsWith('/estoque');

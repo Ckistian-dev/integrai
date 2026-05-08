@@ -50,6 +50,43 @@ class IntEnum(TypeDecorator):
     def python_type(self):
         return self._enumtype
 
+# --- TypeDecorator para Enums de String ---
+class SafeStrEnum(TypeDecorator):
+    """
+    TypeDecorator para Enums de string que trata valores inválidos (como '') como None
+    ao carregar do banco de dados, evitando LookupError.
+    """
+    impl = String
+    cache_ok = True
+
+    def __init__(self, enumtype, *args, **kwargs):
+        super(SafeStrEnum, self).__init__(*args, **kwargs)
+        self._enumtype = enumtype
+
+    def process_bind_param(self, value, dialect):
+        """Converte o enum para string ao salvar."""
+        if value is None:
+            return None
+        if isinstance(value, self._enumtype):
+            return value.value
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        """Converte de volta para enum ao carregar, tratando erros."""
+        if value is not None:
+            str_val = str(value).strip()
+            if str_val != '':
+                try:
+                    # Tenta conversão direta pelo valor
+                    return self._enumtype(value)
+                except (ValueError, KeyError):
+                    # Fallback: verifica se o valor bruto está nos membros (pelo nome)
+                    if value in self._enumtype.__members__:
+                        return self._enumtype[value]
+                    # Se ainda assim não encontrar, retorna None para evitar crash
+                    return None
+        return None
+
 # --- Definição de Enums ---
 # (Centralizando todos os Enums definidos nas planilhas)
 
@@ -467,7 +504,7 @@ class Empresa(Base):
     # --- Aba: Endereço ---
     cep = Column(String(9), nullable=False, 
                  info={'format_mask': 'cep', 'tab': 'Endereço', 'label': 'CEP', 'placeholder': '00000-000'})
-    estado = Column(SQLAlchemyEnum(EstadoEnum, native_enum=False), nullable=False,
+    estado = Column(SafeStrEnum(EstadoEnum), nullable=False,
                     info={'tab': 'Endereço', 'label': 'Estado (UF)', 'placeholder': 'Selecione...'})
     cidade = Column(String, 
                     info={'tab': 'Endereço', 'label': 'Cidade', 'placeholder': 'Ex: São Paulo'})
@@ -666,7 +703,7 @@ class Cadastro(Base):
     # --- Aba: Endereço ---
     cep = Column(String(9), nullable=False, 
                  info={'format_mask': 'cep', 'tab': 'Endereço', 'label': 'CEP', 'placeholder': '00000-000'})
-    estado = Column(SQLAlchemyEnum(EstadoEnum, native_enum=False), 
+    estado = Column(SafeStrEnum(EstadoEnum), 
                     info={'tab': 'Endereço', 'label': 'Estado (UF)', 'placeholder': 'Selecione...'})
     cidade = Column(String, 
                     info={'tab': 'Endereço', 'label': 'Cidade', 'placeholder': 'Nome da cidade'})
@@ -681,9 +718,6 @@ class Cadastro(Base):
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
     
-    # --- Aba: Integrações ---
-    delivery_method_id_intelipost = Column(String, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)', 'placeholder': 'Ex: 12345'})
-
     # --- Campos Internos (sem aba) ---
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
@@ -982,7 +1016,7 @@ class Pedido(Base):
 
     # --- Aba: Endereço de Entrega ---
     endereco_cep = Column(String(9), info={'format_mask': 'cep', 'tab': 'Endereço de Entrega', 'label': 'CEP', 'placeholder': '00000-000'})
-    endereco_estado = Column(SQLAlchemyEnum(EstadoEnum, native_enum=False), info={'tab': 'Endereço de Entrega', 'label': 'Estado (UF)', 'placeholder': 'Selecione...'})
+    endereco_estado = Column(SafeStrEnum(EstadoEnum), info={'tab': 'Endereço de Entrega', 'label': 'Estado (UF)', 'placeholder': 'Selecione...'})
     endereco_cidade = Column(String, info={'tab': 'Endereço de Entrega', 'label': 'Cidade', 'placeholder': 'Ex: São Paulo'})
     endereco_bairro = Column(String, info={'tab': 'Endereço de Entrega', 'label': 'Bairro', 'placeholder': 'Ex: Centro'})
     endereco_logradouro = Column(String, info={'tab': 'Endereço de Entrega', 'label': 'Logradouro', 'placeholder': 'Rua, Avenida, etc.'})
@@ -1003,7 +1037,7 @@ class Pedido(Base):
 
     # --- Aba: Frete (Veículo) ---
     veiculo_placa = Column(String, info={'tab': 'Frete', 'label': 'Placa do Veículo', 'placeholder': 'ABC-1234', 'visible': False})
-    veiculo_uf = Column(SQLAlchemyEnum(EstadoEnum, native_enum=False), info={'tab': 'Frete', 'label': 'UF do Veículo', 'placeholder': 'UF', 'visible': False})
+    veiculo_uf = Column(SafeStrEnum(EstadoEnum), info={'tab': 'Frete', 'label': 'UF do Veículo', 'placeholder': 'UF', 'visible': False})
     veiculo_antt = Column(String, info={'tab': 'Frete', 'label': 'RNTC (ANTT)', 'placeholder': '', 'visible': False})
 
     # --- Aba: Frete (Volumes) ---
@@ -1198,6 +1232,17 @@ class ClassificacaoContabil(Base):
                        info={'tab': 'Geral', 'label': 'Descrição', 'placeholder': 'Ex: Material de Escritório'})
     tipo = Column(String, nullable=False, 
                   info={'tab': 'Geral', 'component': 'creatable_select', 'label': 'Tipo', 'placeholder': 'Ex: Variável'})
+    tipo_movimentacao = Column(String, nullable=False, default="Saída", 
+                               info={
+                                   'tab': 'Geral', 
+                                   'label': 'Tipo de Movimentação', 
+                                   'component': 'select',
+                                   'placeholder': 'Selecione...',
+                                   'options': [
+                                       {'label': 'Entrada', 'value': 'Entrada'},
+                                       {'label': 'Saída', 'value': 'Saída'},
+                                   ]
+                               })
     considerar = Column(Boolean, nullable=False, default=True, 
                         info={'tab': 'Geral', 'label': 'Considerar?', 'placeholder': ''})
 
@@ -1375,6 +1420,31 @@ class ElasticEmailConfiguracao(Base):
 # Aliases para o dispatcher
 Elastic_email_configuracao = ElasticEmailConfiguracao
 Elastic_email_configuracoes = ElasticEmailConfiguracao
+
+
+class OutrasEmpresasConfiguracao(Base):
+    __tablename__ = "outras_empresas_configuracoes"
+    __label__ = "Configuração Outras Empresas"
+    __label_plural__ = "Configurações Outras Empresas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'Nome de Identificação', 'placeholder': 'Ex: Filial SP'})
+    email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail da Empresa', 'placeholder': 'email@empresa.com'})
+    senha = Column(String, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Senha', 'placeholder': 'Senha de acesso'})
+    
+    ativo = Column(Boolean, default=True, info={'tab': 'Geral', 'label': 'Integração Ativa?'})
+    token = Column(Text, nullable=True, info={'tab': 'Acesso', 'label': 'Token de Acesso (Auto)', 'read_only': True, 'ui_type': 'password'})
+    token_expiracao = Column(DateTime(timezone=True), nullable=True, info={'tab': 'Acesso', 'label': 'Expira em', 'read_only': True})
+
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa = relationship("Empresa", backref="outras_empresas_config")
+
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+
+Outra_empresa_configuracao = OutrasEmpresasConfiguracao
+Outras_empresas_configuracoes = OutrasEmpresasConfiguracao
+Outras_empresas_configuracao = OutrasEmpresasConfiguracao
 
 
 class EmailRegra(Base):

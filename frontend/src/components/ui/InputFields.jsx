@@ -774,7 +774,7 @@ export const DefaultFiltersInput = ({ field, value: activeFilters = [], onChange
 
 
 /** * Componente de Select Assíncrono com busca (para Foreign Keys) * Usa react-select/async */
-export const AsyncSelectInput = ({ field, value, onChange, error, modelName, ...props }) => {
+export const AsyncSelectInput = ({ field, value, onChange, error, modelName, formData, ...props }) => {
   const { label, name, required, foreign_key_model, foreign_key_label_field } = field;
   
   // Estado para o objeto de seleção { value, label } e para o carregamento inicial
@@ -812,6 +812,16 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, ...
         if (modelName !== 'contas') {
           filters.push({ field: 'tipo_cadastro', operator: 'equals', value: 'fornecedor' });
         }
+      }
+    }
+
+    // Filtro dinâmico para Plano de Contas baseado no Tipo de Conta (Pagar/Receber)
+    if (foreign_key_model === 'classificacao_contabil' && modelName === 'contas') {
+      const tipoConta = formData?.tipo_conta;
+      if (tipoConta === 'A Receber') {
+        filters.push({ field: 'tipo_movimentacao', operator: 'equals', value: 'Entrada' });
+      } else if (tipoConta === 'A Pagar') {
+        filters.push({ field: 'tipo_movimentacao', operator: 'neq', value: 'Entrada' });
       }
     }
 

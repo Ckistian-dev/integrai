@@ -6,6 +6,8 @@ import DatePicker, { registerLocale } from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import ptBR from 'date-fns/locale/pt-BR';
 import api from '../api/axiosConfig';
+import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
 import CardConfigModal from '../components/dashboard/CardConfigModal';
 import { toast } from 'react-toastify';
 
@@ -52,7 +54,7 @@ const CustomXAxisTick = ({ x, y, payload }) => {
   );
 };
 
-const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdateConfig }) => {
+const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdateConfig, selectedEmpresas = ['current'], empresasTokens = {}, outrasEmpresas = [] }) => {
   const [data, setData] = useState(null);
   const [filterOptions, setFilterOptions] = useState(config.opcoes || []);
   const [dateInputText, setDateInputText] = useState(undefined);
@@ -73,18 +75,59 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     if (config.tipo === 'filtro' && config.operacao === 'checkbox_list') {
       if (config.opcoes && config.opcoes.length > 0) {
         setFilterOptions(config.opcoes);
-      } else if (config.modelo && config.campo) {
-        api.get(`/generic/${config.modelo}/distinct/${config.campo}`).then(res => {
-          const validOptions = res.data.filter(v => v !== null && v !== '');
-          if (validOptions.length > 0 && typeof validOptions[0] === 'object') {
-            setFilterOptions(validOptions);
-          } else {
-            setFilterOptions(validOptions.map(v => ({ label: String(v), value: String(v) })));
+      } else if (config.modelo && config.modelo !== 'todos' && config.campo) {
+        const fetchOptions = async () => {
+          try {
+            const getBaseUrl = () => {
+              const base = api.defaults.baseURL || '';
+              if (base.startsWith('http')) return base;
+              return `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+            };
+            const baseUrl = getBaseUrl();
+            let allOptionsMap = new Map();
+
+            for (const empId of selectedEmpresas) {
+              try {
+                let res;
+                if (empId === 'current') {
+                  res = await api.get(`/generic/${config.modelo}/distinct/${config.campo}`);
+                } else {
+                  let token = empresasTokens[empId];
+                  if (!token) {
+                    const emp = outrasEmpresas.find(e => e.id === empId);
+                    if (emp?.token) token = emp.token;
+                  }
+                  if (token) {
+                    res = await axios.get(`${baseUrl}/generic/${config.modelo}/distinct/${config.campo}`, {
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                  }
+                }
+                
+                if (res && res.data) {
+                  const validOptions = res.data.filter(v => v !== null && v !== '');
+                  validOptions.forEach(opt => {
+                    if (typeof opt === 'object') {
+                      allOptionsMap.set(String(opt.value), opt);
+                    } else {
+                      allOptionsMap.set(String(opt), { label: String(opt), value: String(opt) });
+                    }
+                  });
+                }
+              } catch (e) {
+                console.error(`Erro ao buscar opções da empresa ${empId}:`, e);
+              }
+            }
+            
+            setFilterOptions(Array.from(allOptionsMap.values()));
+          } catch (err) {
+            console.error(err);
           }
-        }).catch(err => console.error(err));
+        };
+        fetchOptions();
       }
     }
-  }, [config.tipo, config.operacao, config.opcoes, config.modelo, config.campo]);
+  }, [config.tipo, config.operacao, config.opcoes, config.modelo, config.campo, selectedEmpresas, empresasTokens, outrasEmpresas]);
 
   // Efeito para rolar automaticamente para a direita ao adicionar novas colunas
   useEffect(() => {
@@ -113,7 +156,7 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
 
     if (globalFilters) {
       Object.values(globalFilters).forEach(gf => {
-        if (gf.modelo === config.modelo && gf.value) {
+        if ((!gf.modelo || gf.modelo === 'todos' || gf.modelo === config.modelo || gf.field === '__search__') && gf.value !== undefined && gf.value !== '') {
           mergedFilters.push({ field: gf.field, operator: gf.operator, value: gf.value });
         }
       });
@@ -123,13 +166,102 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
       mergedFilters.push({ field: '__sort__', operator: config.sort_order || 'desc', value: config.sort_by || 'id' });
     }
 
-    api.post('/dashboard/custom/data', { ...config, filtros: mergedFilters }).then(res => {
-      setData(res.data);
-    }).catch(err => {
-      console.error(err);
-      setData([]); // Previne o loop de carregamento infinito em caso de erro
-    });
-  }, [config, globalFilters]);
+    const fetchDataForCompanies = async () => {
+      try {
+        let allData = [];
+        
+        // Determina a URL base absoluta para evitar erros com caminhos relativos
+        const getBaseUrl = () => {
+          const base = api.defaults.baseURL || '';
+          if (base.startsWith('http')) return base;
+          return `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+        };
+        const baseUrl = getBaseUrl();
+
+        for (const empId of selectedEmpresas) {
+          try {
+            if (empId === 'current') {
+              const res = await api.post('/dashboard/custom/data', { ...config, filtros: mergedFilters });
+              const processedData = Array.isArray(res.data) ? res.data.map(item => ({...item, _empresa: 'Atual'})) : res.data;
+
+              if (config.tipo === 'metrica') {
+                allData.push(processedData);
+              } else {
+                allData = allData.concat(processedData);
+              }
+            } else {
+              let token = empresasTokens[empId];
+              
+              // Se não tem token no estado, tenta pegar o que veio do banco (outrasEmpresas)
+              if (!token) {
+                const emp = outrasEmpresas.find(e => e.id === empId);
+                if (emp?.token) token = emp.token;
+              }
+
+              if (token) {
+                try {
+                  const res = await axios.post(`${baseUrl}/dashboard/custom/data`, { ...config, filtros: mergedFilters }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  
+                  const empName = outrasEmpresas.find(e => e.id === empId)?.nome || `Empresa ${empId}`;
+                  const processedData = Array.isArray(res.data) ? res.data.map(item => ({...item, _empresa: empName})) : res.data;
+
+                  if (config.tipo === 'metrica') {
+                    allData.push(processedData);
+                  } else {
+                    allData = allData.concat(processedData);
+                  }
+                } catch (reqErr) {
+                  // Se der 401 (Unauthorized), o token provavelmente expirou
+                  if (reqErr.response?.status === 401 && typeof onRefreshToken === 'function') {
+                    console.log(`Token expirado para empresa ${empId}, tentando renovar...`);
+                    onRefreshToken(empId);
+                  }
+                  throw reqErr;
+                }
+              }
+            }
+          } catch (itemErr) {
+            console.error(`Erro ao buscar dados da empresa ${empId}:`, itemErr);
+            // Continua para as próximas empresas mesmo se uma falhar
+          }
+        }
+        
+        if (allData.length === 0) {
+          setData(config.tipo === 'metrica' ? { value: 0 } : []);
+          return;
+        }
+
+        if (config.tipo === 'metrica') {
+          const totalVal = allData.reduce((acc, curr) => acc + (curr.value || 0), 0);
+          setData({ value: totalVal });
+        } else if (config.tipo === 'tabela') {
+          setData(allData);
+        } else {
+          const aggregated = {};
+          allData.forEach(item => {
+            if (!item || typeof item !== 'object') return;
+            const nameKey = item.name || 'Sem Categoria';
+            if (!aggregated[nameKey]) aggregated[nameKey] = { ...item, name: nameKey };
+            else {
+              Object.keys(item).forEach(k => {
+                if (k !== 'name' && typeof item[k] === 'number') {
+                  aggregated[nameKey][k] = (aggregated[nameKey][k] || 0) + item[k];
+                }
+              });
+            }
+          });
+          setData(Object.values(aggregated));
+        }
+      } catch (err) {
+        console.error("Erro fatal no fetchDataForCompanies:", err);
+        setData(config.tipo === 'metrica' ? { value: 0 } : []);
+      }
+    };
+    
+    fetchDataForCompanies();
+  }, [config, globalFilters, selectedEmpresas, empresasTokens]);
 
   // Processa dados dos gráficos inserindo a "Meta Progressiva" se necessário
   const chartData = React.useMemo(() => {
@@ -449,9 +581,9 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     if (config.colunas && config.colunas.length > 0) {
       colunasRender = config.colunas;
     } else if (metadata && metadata.fields.length > 0) {
-      colunasRender = metadata.fields.map(f => f.name).filter(c => c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json');
+      colunasRender = [...metadata.fields.map(f => f.name).filter(c => c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json'), '_empresa'];
     } else if (data && data.length > 0) {
-      colunasRender = Object.keys(data[0]).filter(k => k !== 'id');
+      colunasRender = [...Object.keys(data[0]).filter(k => k !== 'id')];
     }
 
     const toggleSort = (colName) => {
@@ -507,11 +639,11 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1 truncate">
                           {isEditing && <GripVertical size={12} className="text-gray-300 group-hover:text-gray-400" />}
-                          <span>{fieldMeta ? fieldMeta.label : formatLabel(col)}</span>
+                          <span>{col === '_empresa' ? 'Empresa (Origem)' : (fieldMeta ? fieldMeta.label : formatLabel(col))}</span>
                         </div>
 
                         {isEditing && (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-3">
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); toggleSort(col); }}
@@ -650,11 +782,16 @@ const AddCardSelector = ({ onSelect, onCancel }) => {
 };
 
 const CustomDashboard = () => {
+  const { user } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [layout, setLayout] = useState([]);
   const [cardsConfig, setCardsConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [globalFilters, setGlobalFilters] = useState({});
+
+  const [outrasEmpresas, setOutrasEmpresas] = useState([]);
+  const [selectedEmpresas, setSelectedEmpresas] = useState(['current']);
+  const [empresasTokens, setEmpresasTokens] = useState({});
 
   const [workspaces, setWorkspaces] = useState([{ id: 'default', name: 'Visão Geral' }]);
   const [activeWorkspace, setActiveWorkspace] = useState('default');
@@ -722,6 +859,76 @@ const CustomDashboard = () => {
     });
   }, []);
 
+  useEffect(() => {
+    api.get('/generic/outras_empresas_configuracoes').then(res => {
+      setOutrasEmpresas(res.data.items || []);
+    }).catch(err => console.log('Sem outras empresas configuradas', err));
+  }, []);
+
+  // Inicializa tokens do banco se existirem
+  useEffect(() => {
+    if (outrasEmpresas.length > 0) {
+      const dbTokens = {};
+      outrasEmpresas.forEach(emp => {
+        if (emp.token) dbTokens[emp.id] = emp.token;
+      });
+      if (Object.keys(dbTokens).length > 0) {
+        setEmpresasTokens(prev => ({ ...dbTokens, ...prev }));
+      }
+    }
+  }, [outrasEmpresas]);
+
+  const fetchSingleToken = async (empId) => {
+    const empresa = outrasEmpresas.find(e => e.id === empId);
+    if (!empresa) return;
+
+    // Determina a URL base absoluta para o login
+    const getBaseUrl = () => {
+        const base = api.defaults.baseURL || '';
+        if (base.startsWith('http')) return base;
+        return `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+    };
+    const baseUrl = getBaseUrl();
+
+    try {
+        const form = new URLSearchParams();
+        form.append('username', empresa.email);
+        form.append('password', empresa.senha);
+        const res = await axios.post(`${baseUrl}/login/token`, form, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+        
+        const newToken = res.data.access_token;
+        setEmpresasTokens(prev => ({ ...prev, [empId]: newToken }));
+
+        // Salva o token no banco para uso futuro (persistência)
+        api.put(`/generic/outras_empresas_configuracoes/${empId}`, {
+            token: newToken,
+            token_expiracao: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Fallback 24h
+        }).catch(err => console.error("Erro ao persistir token:", err));
+
+        return newToken;
+    } catch (e) {
+        console.error(`Erro ao fazer login na empresa ${empresa.nome}:`, e);
+        return null;
+    }
+  };
+
+  useEffect(() => {
+    const fetchTokens = async () => {
+      for (const empId of selectedEmpresas) {
+        if (empId === 'current') continue;
+        if (!empresasTokens[empId]) {
+          await fetchSingleToken(empId);
+        }
+      }
+    };
+    
+    if (outrasEmpresas.length > 0) {
+      fetchTokens();
+    }
+  }, [selectedEmpresas, outrasEmpresas, empresasTokens]);
+
   const saveDashboard = async () => {
     try {
       await api.put('/dashboard/custom/preferences', {
@@ -784,6 +991,12 @@ const CustomDashboard = () => {
         [cardId]: filterData
       }
     }));
+  };
+
+  const handleEmpresaToggle = (empId) => {
+    setSelectedEmpresas(prev => 
+      prev.includes(empId) ? prev.filter(id => id !== empId) : [...prev, empId]
+    );
   };
 
   const addCard = (type) => {
@@ -871,7 +1084,31 @@ const CustomDashboard = () => {
             <h1 className="text-4xl font-bold text-gray-800">Dashboard</h1>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {outrasEmpresas.length > 0 && (
+              <Popover className="relative">
+                <Popover.Button className="bg-white border border-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-md shadow-sm hover:bg-gray-50 flex items-center gap-2 transition-colors text-sm">
+                  <Filter size={16} /> Empresas ({selectedEmpresas.length})
+                </Popover.Button>
+                <Transition as={Fragment} enter="transition ease-out duration-200" enterFrom="opacity-0 translate-y-1" enterTo="opacity-100 translate-y-0" leave="transition ease-in duration-150" leaveFrom="opacity-100 translate-y-0" leaveTo="opacity-0 translate-y-1">
+                  <Popover.Panel className="absolute right-0 z-50 mt-2 w-56 bg-white rounded-lg shadow-xl ring-1 ring-black ring-opacity-5 p-2">
+                    <div className="space-y-1">
+                      <label className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer">
+                        <input type="checkbox" checked={selectedEmpresas.includes('current')} onChange={() => handleEmpresaToggle('current')} className="rounded border-gray-300 text-teal-600 shadow-sm focus:ring-teal-500 mr-2" />
+                        <span className="text-sm text-gray-700">Empresa Atual</span>
+                      </label>
+                      {outrasEmpresas.map(emp => (
+                        <label key={emp.id} className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer">
+                          <input type="checkbox" checked={selectedEmpresas.includes(emp.id)} onChange={() => handleEmpresaToggle(emp.id)} className="rounded border-gray-300 text-teal-600 shadow-sm focus:ring-teal-500 mr-2" />
+                          <span className="text-sm text-gray-700">{emp.nome}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </Popover.Panel>
+                </Transition>
+              </Popover>
+            )}
+            
             {isEditing ? (
               <>
                 <button onClick={() => setShowTypeSelector(true)} className="flex items-center px-4 py-2 text-sm text-white bg-blue-600 font-medium rounded-md shadow-sm hover:bg-blue-700 transition-colors">
@@ -1029,6 +1266,10 @@ const CustomDashboard = () => {
                         [item.i]: newConfig
                       }));
                     }}
+                    selectedEmpresas={selectedEmpresas}
+                    empresasTokens={empresasTokens}
+                    outrasEmpresas={outrasEmpresas}
+                    onRefreshToken={fetchSingleToken}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-gray-400 text-sm text-center px-4">

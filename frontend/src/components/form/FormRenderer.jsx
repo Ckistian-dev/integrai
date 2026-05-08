@@ -34,6 +34,7 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     onChange,
     error,
     modelName,
+    formData,
     disabled: field.read_only,
     ...rest,
   };
@@ -187,6 +188,7 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
 
   const fieldName = field.name.toLowerCase();
   if (
+    field.ui_type === 'password' ||
     fieldName.includes('password') ||
     fieldName.includes('senha') ||
     fieldName.includes('hashed') ||
