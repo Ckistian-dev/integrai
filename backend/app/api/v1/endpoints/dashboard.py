@@ -117,6 +117,7 @@ def get_dynamic_card_data(
     search_term = getattr(query, 'search_term', None)
     sort_by = 'id'
     sort_order = 'desc'
+    joined_rels = {}
 
     # --- Aplicação de Filtros (Opcional, similar ao Relatórios/GenericList) ---
     if query.filtros:
@@ -134,10 +135,31 @@ def get_dynamic_card_data(
                 sort_order = operator
                 continue
 
-            if not field_name or not hasattr(model, field_name):
+            if not field_name:
+                continue
+
+            attr = None
+            if "." in field_name:
+                rel_name, col_name = field_name.split(".", 1)
+                mapper = inspect(model)
+                rel = mapper.relationships.get(rel_name)
+                if rel:
+                    related_model = rel.mapper.class_
+                    if hasattr(related_model, col_name):
+                        if rel_name not in joined_rels:
+                            rel_alias = aliased(related_model, name=f"filter_{rel_name}")
+                            db_query = db_query.outerjoin(rel_alias, getattr(model, rel_name))
+                            joined_rels[rel_name] = rel_alias
+                        else:
+                            rel_alias = joined_rels[rel_name]
+                        attr = getattr(rel_alias, col_name)
+            else:
+                if hasattr(model, field_name):
+                    attr = getattr(model, field_name)
+            
+            if attr is None:
                 continue
                 
-            attr = getattr(model, field_name)
             
             if operator == "equals":
                 if isinstance(value, str) and "," in value:

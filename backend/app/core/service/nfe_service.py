@@ -1676,7 +1676,7 @@ class NFeService:
         uf_empresa = uf_empresa.upper()
         
         # Verifica se estamos no ambiente de desenvolvimento
-        is_development = os.getenv("ENVIRONMENT", "development") == "development"
+        is_development = settings.ENVIRONMENT != "production"
 
         # 1=Produção, 2=Homologação
         ambiente_homologacao = (self.empresa.ambiente_sefaz.value == 2) or is_development
@@ -3647,7 +3647,7 @@ class NFeService:
         is_mercado_envios = False
         if pedido.transportadora and pedido.transportadora.nome_razao:
             nome_transp = pedido.transportadora.nome_razao.lower()
-            if "mercado env" in nome_transp or "mercado livre" in nome_transp:
+            if "mercado" in nome_transp and ("env" in nome_transp or "livre" in nome_transp):
                 is_mercado_envios = True
 
         if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
@@ -3658,7 +3658,7 @@ class NFeService:
                 try:
                     intelipost_service = IntelipostService(self.db, self.id_empresa)
                     dados_frete = {
-                        "delivery_method_id": pedido.delivery_method_id,
+                        "delivery_method_id": pedido.delivery_method_id_intelipost,
                         "quote_id": pedido.quote_id,
                         "final_shipping_cost": float(pedido.valor_frete or 0),
                         "data_entrega": pedido.data_entrega.isoformat() if pedido.data_entrega else None
@@ -3671,6 +3671,12 @@ class NFeService:
                     else:
                         intelipost_res = {"success": True, "message": "Ordem de envio criada na Intelipost!"}
                         pedido.intelipost_criado = True
+                        
+                    # Tenta salvar o ID da ordem de envio retornado pela Intelipost
+                    if isinstance(res, dict) and res.get("content"):
+                        shipment_id = res["content"].get("shipment_order_id")
+                        if shipment_id:
+                            pedido.intelipost_id = str(shipment_id)
                 except Exception as e:
                     logger.error(f"Erro ao criar envio na Intelipost: {e}")
                     # Reforço: se a exceção contiver "já existe", trata como aviso e não bloqueia a alteração de situação
@@ -3683,10 +3689,14 @@ class NFeService:
 
         # 3. Integração E-mail
         try:
-            email_svc = ElasticEmailService(self.db, self.id_empresa)
-            email_res = asyncio.run(email_svc.send_invoice_email(pedido, pdf_b64, xml_str))
-            if email_res and email_res.get("success"):
+            if settings.ENVIRONMENT != "production":
+                email_res = {"success": True, "message": "E-mail simulado com sucesso! (Ambiente de Desenvolvimento)"}
                 pedido.email_enviado = True
+            else:
+                email_svc = ElasticEmailService(self.db, self.id_empresa)
+                email_res = asyncio.run(email_svc.send_invoice_email(pedido, pdf_b64, xml_str))
+                if email_res and email_res.get("success"):
+                    pedido.email_enviado = True
         except Exception as e:
             logger.error(f"Erro ao enviar e-mail: {e}")
             email_res = {"success": False, "message": f"Erro envio e-mail: {str(e)}"}

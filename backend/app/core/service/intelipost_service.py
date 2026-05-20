@@ -38,7 +38,7 @@ class IntelipostService:
         self.headers = {
             'api-key': self.api_key,
             'Content-Type': 'application/json',
-            'platform': 'SeuSistemaERP'
+            'platform': 'IntegraAI'
         }
         
         self.client = httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=30.0)
@@ -389,9 +389,13 @@ class IntelipostService:
         # Se recebemos um ID de método (vindo da seleção de cotação), 
         # tentamos encontrar a transportadora correspondente no ERP para atualizar o pedido.
         if delivery_method_id:
+            pedido.delivery_method_id_intelipost = str(delivery_method_id)
             carrier = self._find_carrier_by_intelipost_id(delivery_method_id)
             if carrier:
                 pedido.id_transportadora = carrier.id
+
+        if not delivery_method_id:
+            delivery_method_id = pedido.delivery_method_id_intelipost
 
         if not delivery_method_id and pedido.transportadora:
             delivery_method_id = pedido.transportadora.delivery_method_id_intelipost

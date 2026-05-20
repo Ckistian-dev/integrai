@@ -583,6 +583,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                               <option value="date_range">Período de Data</option>
                               <option value="boolean">Caixa de Seleção (Checkbox Único)</option>
                               <option value="checkbox_list">Lista Múltipla (Tabela de Checkboxes)</option>
+                              <option value="toggle">Botão de Alternância (Toggle)</option>
                             </select>
                           </div>
                         </>

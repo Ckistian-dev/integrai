@@ -1350,13 +1350,44 @@ def get_distinct_values(
         raise HTTPException(status_code=404, detail="Model not found")
     
     model = registry["model"]
+    mapper = inspect(model)
+    
+    # 🎯 NOVA LÓGICA: Suporte a campos de relacionamentos (ex: cliente.cidade)
+    if "." in field_name:
+        rel_name, col_name = field_name.split(".", 1)
+        rel = mapper.relationships.get(rel_name)
+        if not rel:
+            raise HTTPException(status_code=400, detail=f"Relationship {rel_name} not found in model {model_name}")
+            
+        related_model = rel.mapper.class_
+        if not hasattr(related_model, col_name):
+            raise HTTPException(status_code=400, detail=f"Field {col_name} not found in related model {rel_name}")
+            
+        rel_alias = aliased(related_model)
+        column = getattr(rel_alias, col_name)
+        
+        query = db.query(distinct(column)).\
+            outerjoin(rel_alias, getattr(model, rel_name)).\
+            filter(
+                model.id_empresa == current_user.id_empresa,
+                column.isnot(None)
+            ).order_by(column.asc())
+            
+        results = query.all()
+        
+        # Converte valores se necessário (Enum, boolean)
+        ret = []
+        for r in results:
+            val = r[0]
+            if hasattr(val, 'value'): val = val.value
+            if val != "" and val is not None:
+                ret.append(val)
+        return ret
     
     if not hasattr(model, field_name):
          raise HTTPException(status_code=400, detail=f"Field {field_name} not found in model {model_name}")
          
     column = getattr(model, field_name)
-    
-    mapper = inspect(model)
     col_obj = model.__table__.columns.get(field_name)
     
     if col_obj is not None and col_obj.foreign_keys:
@@ -2377,6 +2408,26 @@ def update_item(
         if new_situacao_from_payload and (new_situacao_from_payload == models.PedidoSituacaoEnum.aprovacao or new_situacao_from_payload == models.PedidoSituacaoEnum.programacao):
             if db_obj.data_pedido is None:
                 item_data["data_pedido"] = datetime.now(TZ_BR).date()
+        
+        # 🎯 LÓGICA ESPECÍFICA: Bloquear Expedição se não tiver Intelipost
+        if new_situacao_from_payload == models.PedidoSituacaoEnum.expedicao:
+            # Só valida se houver configuração da Intelipost ativa e não for Mercado Envios
+            intelipost_config = db.query(models.IntelipostConfiguracao).filter(
+                models.IntelipostConfiguracao.id_empresa == current_user.id_empresa
+            ).first()
+            
+            is_mercado_envios = False
+            if db_obj.transportadora and db_obj.transportadora.nome_razao:
+                nome_transp = db_obj.transportadora.nome_razao.lower()
+                if "mercado" in nome_transp and ("env" in nome_transp or "livre" in nome_transp):
+                    is_mercado_envios = True
+            
+            if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
+                if not db_obj.intelipost_criado:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="O pedido não pode ser movido para Expedição pois ainda não foi criado na Intelipost. Realize o faturamento/integração primeiro."
+                    )
         
         # Lógica específica: Preencher data_despacho ao despachar
         if new_situacao_from_payload == models.PedidoSituacaoEnum.despachado and db_obj.data_despacho is None:

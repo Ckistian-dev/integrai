@@ -179,7 +179,12 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
   // Se o metadado indicar que é uma chave estrangeira,
   // usamos o componente de busca assíncrona.
   if (field.foreign_key_model && field.foreign_key_label_field) {
-    return <AsyncSelectInput {...props} value={value} />;
+    // Forçar a re-renderização (e limpeza de cacheOptions do AsyncSelect) se for plano de contas e o tipo_conta mudar
+    let selectKey = field.name;
+    if (modelName === 'contas' && field.name === 'id_classificacao_contabil') {
+      selectKey = `${field.name}-${formData?.tipo_conta}`;
+    }
+    return <AsyncSelectInput key={selectKey} {...props} value={value} />;
   }
 
   if (field.type === 'hidden') {

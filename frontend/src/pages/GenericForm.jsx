@@ -441,6 +441,11 @@ const GenericForm = ({ modelName: propModelName }) => {
     setFormData((prev) => {
       const newData = { ...prev, [name]: val };
 
+      // Clear classification when account type is changed
+      if (modelName === 'contas' && name === 'tipo_conta') {
+         newData.id_classificacao_contabil = null;
+      }
+
       // Automação para Contas: Se marcar como Pago e não tiver data de baixa, define hoje
       if (modelName === 'contas' && name === 'situacao' && val === 'Pago') {
         if (!newData.data_baixa) {

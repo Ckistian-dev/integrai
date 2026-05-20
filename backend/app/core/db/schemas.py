@@ -508,8 +508,9 @@ class PedidoBase(BaseModel):
     ipi_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     total_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     
-    delivery_method_id: Optional[str] = None
+    delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
+    intelipost_id: Optional[str] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -582,8 +583,9 @@ class PedidoUpdate(BaseModel):
     ipi_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     total_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
     
-    delivery_method_id: Optional[str] = None
+    delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
+    intelipost_id: Optional[str] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None

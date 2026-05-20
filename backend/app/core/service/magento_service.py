@@ -92,7 +92,7 @@ class MagentoService:
             "searchCriteria[sortOrders][0][field]": "created_at",
             "searchCriteria[sortOrders][0][direction]": "DESC",
             "searchCriteria[filter_groups][0][filters][0][field]": "status",
-            "searchCriteria[filter_groups][0][filters][0][value]": "processing,complete",
+            "searchCriteria[filter_groups][0][filters][0][value]": "processing,complete,em_producao",
             "searchCriteria[filter_groups][0][filters][0][condition_type]": "in"
         }
 
@@ -104,7 +104,7 @@ class MagentoService:
 
         try:
             logger.debug(f"Enviando requisição GET para {url} com params: {params}")
-            resp = requests.get(url, auth=self._get_auth(), params=params, headers=headers, timeout=10.0)
+            resp = requests.get(url, auth=self._get_auth(), params=params, headers=headers, timeout=60.0)
             logger.debug(f"Resposta Magento (list_orders): Status {resp.status_code} - Body: {resp.text}")
             if resp.status_code == 401:
                 logger.error(f"Erro de autenticação no Magento para empresa {self.id_empresa}: Token inválido.")
@@ -328,7 +328,7 @@ class MagentoService:
         }
 
         logger.debug(f"Enviando requisição GET para {url}")
-        resp = requests.get(url, auth=self._get_auth(), headers=headers)
+        resp = requests.get(url, auth=self._get_auth(), headers=headers, timeout=30.0)
         logger.debug(f"Resposta Magento (import_order): Status {resp.status_code} - Body: {resp.text}")
         if resp.status_code != 200:
             logger.error(f"Erro ao buscar pedido {magento_entity_id} no Magento: {resp.status_code} - {resp.text}")

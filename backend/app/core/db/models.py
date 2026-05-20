@@ -8,84 +8,8 @@ from sqlalchemy.orm import relationship, Mapper
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from .database import Base
+from .types import IntEnum, SafeStrEnum, Currency, EncryptedString, EncryptedJSON
 
-# --- TypeDecorator para Enums como Integers ---
-class IntEnum(TypeDecorator):
-    """
-    Permite o uso de Enums do Python que são persistidos como inteiros no banco de dados.
-    Isso resolve o problema de salvar o nome do enum em uma coluna INTEGER.
-    """
-    impl = Integer
-    cache_ok = True
-
-    def __init__(self, enumtype, *args, **kwargs):
-        super(IntEnum, self).__init__(*args, **kwargs)
-        self._enumtype = enumtype
-
-    def process_bind_param(self, value, dialect):
-        """Converte o enum para seu valor inteiro ao salvar no banco."""
-        if isinstance(value, self._enumtype):
-            return value.value
-        return value
-
-    def process_result_value(self, value, dialect):
-        """Converte o inteiro do banco de volta para o enum ao carregar."""
-        if value is not None:
-            try:
-                return self._enumtype(value)
-            except ValueError:
-                # Fallback para compatibilidade com dados antigos (Strings)
-                if isinstance(value, str):
-                    # Caso 1: String numérica ("1")
-                    if value.isdigit():
-                        return self._enumtype(int(value))
-                    
-                    # Caso 2: Nome do membro ("lucro_real")
-                    if value in self._enumtype.__members__:
-                        return self._enumtype[value]
-                raise
-        return value
-
-    @property
-    def python_type(self):
-        return self._enumtype
-
-# --- TypeDecorator para Enums de String ---
-class SafeStrEnum(TypeDecorator):
-    """
-    TypeDecorator para Enums de string que trata valores inválidos (como '') como None
-    ao carregar do banco de dados, evitando LookupError.
-    """
-    impl = String
-    cache_ok = True
-
-    def __init__(self, enumtype, *args, **kwargs):
-        super(SafeStrEnum, self).__init__(*args, **kwargs)
-        self._enumtype = enumtype
-
-    def process_bind_param(self, value, dialect):
-        """Converte o enum para string ao salvar."""
-        if value is None:
-            return None
-        if isinstance(value, self._enumtype):
-            return value.value
-        return str(value)
-
-    def process_result_value(self, value, dialect):
-        """Converte de volta para enum ao carregar, tratando erros."""
-        if value is not None:
-            str_val = str(value).strip()
-            if str_val != '':
-                try:
-                    # Tenta conversão direta pelo valor
-                    return self._enumtype(value)
-                except (ValueError, KeyError):
-                    # Fallback: verifica se o valor bruto está nos membros (pelo nome)
-                    if value in self._enumtype.__members__:
-                        return self._enumtype[value]
-                    # Se ainda assim não encontrar, retorna None para evitar crash
-                    return None
-        return None
 
 # --- Definição de Enums ---
 # (Centralizando todos os Enums definidos nas planilhas)
@@ -453,10 +377,7 @@ class FiscalPagamentoEnum(str, enum.Enum):
         return descriptions.get(self.value, self.value)
 
 # --- Tipos Customizados ---
-class Currency(Numeric):
-    """Tipo customizado para valores monetários (BRL)."""
-    def __init__(self, precision=15, scale=2, asdecimal=True, **kwargs):
-        super().__init__(precision=precision, scale=scale, asdecimal=asdecimal, **kwargs)
+# --- Tipos customizados centralizados em types.py ---
 
 # --- Validação Global: Trim em Strings ---
 @event.listens_for(Mapper, "before_insert")
@@ -536,7 +457,7 @@ class Empresa(Base):
                      ]
                  })
     certificado_arquivo = Column(LargeBinary, info={'tab': 'Fiscal', 'label': 'Certificado Digital (.pfx)', 'placeholder': '', 'filename_field': 'certificado_nome_arquivo'}) # O arquivo .pfx em bytes
-    certificado_senha = Column(String, info={'tab': 'Fiscal', 'ui_type': 'password', 'label': 'Senha do Certificado', 'placeholder': 'Senha do arquivo .pfx'})
+    certificado_senha = Column(EncryptedString, info={'tab': 'Fiscal', 'ui_type': 'password', 'label': 'Senha do Certificado', 'placeholder': 'Senha do arquivo .pfx'})
     nfe_serie = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Série NFe', 'placeholder': '1'})
     nfe_numero_sequencial = Column(Integer, default=1, info={'tab': 'Fiscal', 'label': 'Próxima NFe', 'placeholder': '1', 'read_only': True})
     nfe_ultimo_nsu = Column(String, default="0", info={'tab': 'Fiscal', 'label': 'Último NSU SEFAZ', 'placeholder': '0', 'read_only': True})
@@ -717,6 +638,9 @@ class Cadastro(Base):
                     info={'tab': 'Endereço', 'label': 'Número', 'placeholder': '123'})
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
+    
+    delivery_method_id_intelipost = Column(String, 
+                                          info={'tab': 'Integrações', 'label': 'ID Método Entrega Intelipost', 'placeholder': 'Ex: 123'})
     
     # --- Campos Internos (sem aba) ---
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1105,8 +1029,9 @@ class Pedido(Base):
     }, default=55) # 55=NFe, 65=NFCe
 
     # Campos Integração Intelipost
-    delivery_method_id = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)'})
+    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)'})
     quote_id = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Cotação (Intelipost)'})
+    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Ordem Envio (Intelipost)'})
     
     # Campos de Status de Integração
     meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'label': 'XML enviado ML?'})
@@ -1263,7 +1188,7 @@ class IntelipostConfiguracao(Base):
     __label_plural__ = "Configurações Intelipost"
 
     id = Column(Integer, primary_key=True, index=True)
-    api_key = Column(String, nullable=False, info={'tab': 'Dados Gerais', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
+    api_key = Column(EncryptedString, nullable=False, info={'tab': 'Dados Gerais', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
     origin_zip_code = Column(String(9), nullable=False, info={'tab': 'Dados Gerais', 'format_mask': 'cep', 'label': 'CEP de Origem', 'placeholder': '00000-000'})
     origin_warehouse_code = Column(String, nullable=True, info={'tab': 'Dados Gerais', 'label': 'Código do CD (Warehouse)', 'placeholder': 'Ex: CD01'})
     
@@ -1290,7 +1215,7 @@ class MeliConfiguracao(Base):
     
     # Aba: Geral
     app_id = Column(String, nullable=True, info={'tab': 'Geral', 'label': 'App ID', 'placeholder': ''})
-    client_secret = Column(String, nullable=True, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Client Secret', 'placeholder': ''})
+    client_secret = Column(EncryptedString, nullable=True, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Client Secret', 'placeholder': ''})
     redirect_uri = Column(String, nullable=True, info={'tab': 'Geral', 'label': 'Redirect URI', 'placeholder': ''})
     
     # Aba: Preferências
@@ -1317,8 +1242,8 @@ class MeliCredentials(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id_ml = Column(BigInteger, unique=True, nullable=False)
-    access_token = Column(String, nullable=False)
-    refresh_token = Column(String, nullable=False)
+    access_token = Column(EncryptedString, nullable=False)
+    refresh_token = Column(EncryptedString, nullable=False)
     expires_in = Column(Integer, nullable=False)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -1338,9 +1263,9 @@ class MagentoConfiguracao(Base):
     # Aba: Conexão
     base_url = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'URL da Loja (Base URL)', 'placeholder': 'https://minhaloja.com.br'})
     consumer_key = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'Consumer Key', 'placeholder': ''})
-    consumer_secret = Column(String, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Consumer Secret', 'placeholder': ''})
-    access_token = Column(String, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
-    token_secret = Column(String, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Token Secret', 'placeholder': ''})
+    consumer_secret = Column(EncryptedString, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Consumer Secret', 'placeholder': ''})
+    access_token = Column(EncryptedString, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
+    token_secret = Column(EncryptedString, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Token Secret', 'placeholder': ''})
     store_view_code = Column(String, default='default', info={'tab': 'Conexão', 'label': 'Código da Store View (ex: default)', 'placeholder': 'default'})
     
     # Aba: Preferências
@@ -1372,9 +1297,9 @@ class TiktokConfiguracao(Base):
     
     # Aba: Conexão
     app_key = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'App Key', 'placeholder': ''})
-    app_secret = Column(String, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'App Secret', 'placeholder': ''})
-    access_token = Column(String, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
-    refresh_token = Column(String, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Refresh Token', 'placeholder': ''})
+    app_secret = Column(EncryptedString, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'App Secret', 'placeholder': ''})
+    access_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
+    refresh_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Refresh Token', 'placeholder': ''})
     shop_id = Column(String, nullable=True, info={'tab': 'Conexão', 'label': 'Shop ID', 'placeholder': ''})
     
     # Aba: Preferências
@@ -1408,7 +1333,7 @@ class ElasticEmailConfiguracao(Base):
     __label_plural__ = "Configurações Elastic Email"
 
     id = Column(Integer, primary_key=True, index=True)
-    api_key = Column(String, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'API Key (Elastic Email)', 'placeholder': 'Sua API Key'})
+    api_key = Column(EncryptedString, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'API Key (Elastic Email)', 'placeholder': 'Sua API Key'})
     from_email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail do Remetente', 'placeholder': 'exemplo@suaempresa.com.br'})
     from_name = Column(String, info={'tab': 'Geral', 'label': 'Nome do Remetente', 'placeholder': 'Minha Loja'})
 
@@ -1430,10 +1355,10 @@ class OutrasEmpresasConfiguracao(Base):
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'Nome de Identificação', 'placeholder': 'Ex: Filial SP'})
     email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail da Empresa', 'placeholder': 'email@empresa.com'})
-    senha = Column(String, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Senha', 'placeholder': 'Senha de acesso'})
+    senha = Column(EncryptedString, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Senha', 'placeholder': 'Senha de acesso'})
     
     ativo = Column(Boolean, default=True, info={'tab': 'Geral', 'label': 'Integração Ativa?'})
-    token = Column(Text, nullable=True, info={'tab': 'Acesso', 'label': 'Token de Acesso (Auto)', 'read_only': True, 'ui_type': 'password'})
+    token = Column(EncryptedString, nullable=True, info={'tab': 'Acesso', 'label': 'Token de Acesso (Auto)', 'read_only': True, 'ui_type': 'password'})
     token_expiracao = Column(DateTime(timezone=True), nullable=True, info={'tab': 'Acesso', 'label': 'Expira em', 'read_only': True})
 
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)

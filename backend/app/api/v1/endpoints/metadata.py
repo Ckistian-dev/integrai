@@ -243,6 +243,40 @@ def get_model_metadata(model_name: str):
             )
             fields.append(field)
             
+        # --- NOVO: Adiciona campos das tabelas referenciadas (para filtros do dashboard) ---
+        from sqlalchemy import inspect
+        mapper = inspect(model)
+        for rel in mapper.relationships:
+            if rel.direction.name == 'MANYTOONE':
+                related_model = rel.mapper.class_
+                for rel_col in related_model.__table__.columns:
+                    if rel_col.name in SKIPPED_FIELDS or "senha" in rel_col.name.lower() or "password" in rel_col.name.lower():
+                        continue
+                    
+                    label = rel_col.info.get('label') or get_field_label(rel_col.name)
+                    rel_label = get_field_label(rel.key)
+                    label = f"{rel_label} - {label}"
+                    
+                    # Usa tipo select se for Enum, para manter as opções no front
+                    rel_field_type = "text"
+                    rel_options = None
+                    if isinstance(rel_col.type, SQLAlchemyEnum) and hasattr(rel_col.type, 'python_type') and rel_col.type.python_type:
+                        rel_field_type = "select"
+                        rel_options = [
+                            {"label": getattr(item, 'description', item.name.replace('_', ' ').title()), "value": item.value}
+                            for item in rel_col.type.python_type
+                        ]
+                    
+                    fields.append(FieldMetadata(
+                        name=f"{rel.key}.{rel_col.name}",
+                        label=label,
+                        type=rel_field_type,
+                        required=False,
+                        options=rel_options,
+                        tab="Relacionamentos",
+                        visible=False
+                    ))
+            
         # 🎯 Adiciona campos virtuais para a visão de estoque
         if model_name == "estoque":
             fields.append(FieldMetadata(

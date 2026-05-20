@@ -2444,7 +2444,12 @@ const GenericList = () => {
                     <Menu as="div" className="relative flex items-center h-full px-2">
                       <Menu.Button className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 focus:outline-none">
                         <span className="truncate max-w-[120px]">
-                          {currentField?.options?.find(o => String(o.value) === String(filterVal.value))?.label || "Todos"}
+                          {(() => {
+                            const vals = filterVal.value ? String(filterVal.value).split(',') : [];
+                            if (vals.length === 0) return "Todos";
+                            if (vals.length === 1) return currentField?.options?.find(o => String(o.value) === String(vals[0]))?.label || "Desconhecido";
+                            return `${vals.length} selecionados`;
+                          })()}
                         </span>
                       </Menu.Button>
                       <Transition
@@ -2460,7 +2465,7 @@ const GenericList = () => {
                           <div className="p-1">
                             <Menu.Item>
                               {({ active }) => {
-                                const isSelected = filterVal.value === "" || !filterVal.value;
+                                const isSelected = !filterVal.value;
                                 return (
                                   <button onClick={() => handleQuickFilterChange(uniqueKey, { ...filterVal, value: "" })} className={`${active ? 'bg-gray-100 text-gray-900' : 'text-gray-700'} ${isSelected ? 'bg-blue-50 text-blue-700 font-bold' : ''} group flex w-full items-center justify-between rounded-md px-2 py-2 text-sm`}>
                                     <span>Todos</span>
@@ -2472,12 +2477,26 @@ const GenericList = () => {
                             {currentField?.options?.map(opt => (
                               <Menu.Item key={opt.value}>
                                 {({ active }) => {
-                                  const isSelected = String(filterVal.value) === String(opt.value);
+                                  const vals = filterVal.value ? String(filterVal.value).split(',') : [];
+                                  const isSelected = vals.includes(String(opt.value));
                                   return (
-                                    <button onClick={() => handleQuickFilterChange(uniqueKey, { ...filterVal, value: opt.value })} className={`${active ? 'bg-gray-100 text-gray-900' : 'text-gray-700'} ${isSelected ? 'bg-blue-50 text-blue-700 font-bold' : ''} group flex w-full items-center justify-between rounded-md px-2 py-2 text-sm`}>
+                                    <div 
+                                      onClick={(e) => { 
+                                          e.preventDefault(); 
+                                          e.stopPropagation(); 
+                                          let newVals = [...vals];
+                                          if (isSelected) {
+                                              newVals = newVals.filter(v => String(v) !== String(opt.value));
+                                          } else {
+                                              newVals.push(String(opt.value));
+                                          }
+                                          handleQuickFilterChange(uniqueKey, { ...filterVal, value: newVals.join(',') }); 
+                                      }} 
+                                      className={`${active ? 'bg-gray-100 text-gray-900 cursor-pointer' : 'text-gray-700 cursor-pointer'} ${isSelected ? 'bg-blue-50 text-blue-700 font-bold' : ''} group flex w-full items-center justify-between rounded-md px-2 py-2 text-sm`}
+                                    >
                                       <span>{opt.label}</span>
                                       {isSelected && <Check size={14} />}
-                                    </button>
+                                    </div>
                                   );
                                 }}
                               </Menu.Item>

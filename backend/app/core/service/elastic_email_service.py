@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.core.db import models
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,15 @@ class ElasticEmailService:
                     f"[EmailRegra '{regra.nome}'] Enviando e-mail para "
                     f"{pedido.cliente.email} (Pedido #{pedido.id}, {situacao_de} -> {situacao_para})..."
                 )
+
+                if settings.ENVIRONMENT != "production":
+                    logger.info(f"[EmailRegra '{regra.nome}'] SIMULADO: E-mail não enviado pois o ambiente é '{settings.ENVIRONMENT}'.")
+                    return {
+                        "success": True,
+                        "regra": regra.nome,
+                        "message": "E-mail simulado com sucesso! (Ambiente de Desenvolvimento)",
+                    }
+
                 resp = await client.post(
                     f"{self.base_url}/emails", json=payload, headers=headers, timeout=30.0
                 )

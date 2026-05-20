@@ -108,9 +108,19 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
                   const validOptions = res.data.filter(v => v !== null && v !== '');
                   validOptions.forEach(opt => {
                     if (typeof opt === 'object') {
-                      allOptionsMap.set(String(opt.value), opt);
+                      const label = String(opt.label).trim();
+                      if (allOptionsMap.has(label)) {
+                        const existing = allOptionsMap.get(label);
+                        const existingVals = String(existing.value).split(',');
+                        if (!existingVals.includes(String(opt.value))) {
+                          existing.value = existing.value + ',' + String(opt.value);
+                        }
+                      } else {
+                        allOptionsMap.set(label, { label: label, value: String(opt.value) });
+                      }
                     } else {
-                      allOptionsMap.set(String(opt), { label: String(opt), value: String(opt) });
+                      const strVal = String(opt).trim();
+                      allOptionsMap.set(strVal, { label: strVal, value: strVal });
                     }
                   });
                 }
@@ -322,7 +332,7 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     const currentVal = globalFilters[config.i]?.value || '';
     return (
       <div className="flex flex-col h-full p-4 overflow-visible">
-        {config.operacao !== 'boolean' && (
+        {config.operacao !== 'boolean' && config.operacao !== 'toggle' && (
           <label className="text-sm font-bold text-gray-700 mb-2 shrink-0 truncate" title={config.titulo}>{config.titulo}</label>
         )}
         {config.operacao === 'boolean' ? (
@@ -337,6 +347,22 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
               <span className="ml-3 text-sm font-bold text-gray-700 group-hover:text-blue-600 transition-colors select-none">{config.titulo}</span>
             </label>
           </div>
+        ) : config.operacao === 'toggle' ? (
+          <div className="flex-1 flex items-center justify-between w-full">
+            <span className="text-sm font-bold text-gray-700 select-none truncate pr-2 group-hover:text-blue-600 transition-colors" title={config.titulo}>{config.titulo}</span>
+            <label className="flex items-center cursor-pointer group shrink-0">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={currentVal === true || currentVal === 'true'}
+                  onChange={(e) => onFilterChange(config.i, { modelo: config.modelo, field: config.campo, operator: 'equals', value: e.target.checked ? true : false })}
+                />
+                <div className={`block w-10 h-6 rounded-full transition-colors ${currentVal === true || currentVal === 'true' ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${currentVal === true || currentVal === 'true' ? 'transform translate-x-4' : ''}`}></div>
+              </div>
+            </label>
+          </div>
         ) : config.operacao === 'checkbox_list' ? (
           <div className="flex-1 overflow-auto custom-scrollbar border border-gray-200 rounded-md p-2 bg-white mx-[-18px] mb-[-18px]">
             {filterOptions.length === 0 ? (
@@ -344,7 +370,8 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
             ) : (
               filterOptions.map((opt, idx) => {
                 const currentValues = String(currentVal).split(',').filter(Boolean);
-                const isChecked = currentValues.includes(String(opt.value));
+                const optVals = String(opt.value).split(',');
+                const isChecked = optVals.some(v => currentValues.includes(v));
                 return (
                   <label key={idx} className="flex items-start p-1 hover:bg-gray-50 cursor-pointer rounded border-b border-gray-50 last:border-0 group">
                     <input
@@ -352,8 +379,13 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
                       checked={isChecked}
                       onChange={(e) => {
                         let newValues = [...currentValues];
-                        if (e.target.checked) newValues.push(String(opt.value));
-                        else newValues = newValues.filter(v => v !== String(opt.value));
+                        if (e.target.checked) {
+                          optVals.forEach(v => {
+                            if (!newValues.includes(v)) newValues.push(v);
+                          });
+                        } else {
+                          newValues = newValues.filter(v => !optVals.includes(v));
+                        }
                         onFilterChange(config.i, { modelo: config.modelo, field: config.campo, operator: 'equals', value: newValues.join(',') });
                       }}
                       className="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer shrink-0"
@@ -1241,14 +1273,14 @@ const CustomDashboard = () => {
                   ...position
                 } : l));
               }}
-              minWidth={item.minW}
-              minHeight={item.minH}
+              minWidth={['filtro', 'metrica', 'texto'].includes(cardsConfig[item.i]?.tipo) ? 150 : (item.minW || 300)}
+              minHeight={['filtro', 'metrica', 'texto'].includes(cardsConfig[item.i]?.tipo) ? 50 : 150}
               disableDragging={!isEditing}
               enableResizing={isEditing}
               bounds="parent"
               dragGrid={[8, 8]}
               resizeGrid={[8, 8]}
-              className={`bg-white rounded-xl shadow-sm border border-gray-100 group ${cardsConfig[item.i]?.tipo === 'filtro' ? '!z-40' : '!z-10'}`}
+              className={`bg-white rounded-xl shadow-sm border border-gray-100 group hover:!z-50 focus-within:!z-50 transition-all ${cardsConfig[item.i]?.tipo === 'filtro' ? '!z-40' : '!z-10'}`}
             >
 
               {/* Wrapper do conteúdo para esconder overflow (ex: tabelas) sem cortar os resizers da grade */}
