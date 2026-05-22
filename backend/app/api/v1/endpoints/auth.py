@@ -18,15 +18,19 @@ def login_for_access_token(
     Endpoint de login. Recebe email (no campo 'username') e senha.
     Retorna um token JWT.
     """
+    print(f"[DEBUG AUTH ENDPOINT] Recebido pedido de login. Username: '{form_data.username}'")
     user = crud_user.authenticate_user(
         db, email=form_data.username, senha=form_data.password
     )
     if not user:
+        print("[DEBUG AUTH ENDPOINT] Autenticação falhou: Credenciais inválidas.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or senha",
             headers={"WWW-Authenticate": "Bearer"},
         )
+        
+    print(f"[DEBUG AUTH ENDPOINT] Autenticação bem sucedida. Gerando token para usuário ID={user.id}")
         
     business = crud_business.get_business(db, id_empresa=user.id_empresa) # Corrigido para get_empresa/id_empresa
     if not business:

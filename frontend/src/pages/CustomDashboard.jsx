@@ -54,7 +54,7 @@ const CustomXAxisTick = ({ x, y, payload }) => {
   );
 };
 
-const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdateConfig, selectedEmpresas = ['current'], empresasTokens = {}, outrasEmpresas = [] }) => {
+const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdateConfig, selectedEmpresas = ['current'], empresasTokens = {}, outrasEmpresas = [], onRefreshToken }) => {
   const [data, setData] = useState(null);
   const [filterOptions, setFilterOptions] = useState(config.opcoes || []);
   const [dateInputText, setDateInputText] = useState(undefined);
@@ -226,7 +226,26 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
                   // Se der 401 (Unauthorized), o token provavelmente expirou
                   if (reqErr.response?.status === 401 && typeof onRefreshToken === 'function') {
                     console.log(`Token expirado para empresa ${empId}, tentando renovar...`);
-                    onRefreshToken(empId);
+                    const newToken = await onRefreshToken(empId);
+                    if (newToken) {
+                      try {
+                        const retryRes = await axios.post(`${baseUrl}/dashboard/custom/data`, { ...config, filtros: mergedFilters }, {
+                          headers: { Authorization: `Bearer ${newToken}` }
+                        });
+                        const empName = outrasEmpresas.find(e => e.id === empId)?.nome || `Empresa ${empId}`;
+                        const processedData = Array.isArray(retryRes.data) ? retryRes.data.map(item => ({...item, _empresa: empName})) : retryRes.data;
+                        
+                        if (config.tipo === 'metrica') {
+                          allData.push(processedData);
+                        } else {
+                          allData = allData.concat(processedData);
+                        }
+                        continue; // Retry com sucesso, prossegue pro próximo empId
+                      } catch (retryErr) {
+                        console.error(`Falha no retry para a empresa ${empId}`, retryErr);
+                        throw retryErr;
+                      }
+                    }
                   }
                   throw reqErr;
                 }
@@ -910,39 +929,58 @@ const CustomDashboard = () => {
     }
   }, [outrasEmpresas]);
 
+  // Evita múltiplas requisições simultâneas de login para a mesma empresa
+  const refreshPromises = useRef({});
+
   const fetchSingleToken = async (empId) => {
     const empresa = outrasEmpresas.find(e => e.id === empId);
     if (!empresa) return;
 
-    // Determina a URL base absoluta para o login
-    const getBaseUrl = () => {
-        const base = api.defaults.baseURL || '';
-        if (base.startsWith('http')) return base;
-        return `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+    // Se já existe uma requisição de login em andamento para esta empresa, aguarda ela
+    if (refreshPromises.current[empId]) {
+        return refreshPromises.current[empId];
+    }
+
+    const performLogin = async () => {
+        // Determina a URL base absoluta para o login
+        const getBaseUrl = () => {
+            const base = api.defaults.baseURL || '';
+            if (base.startsWith('http')) return base;
+            return `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+        };
+        const baseUrl = getBaseUrl();
+
+        try {
+            const form = new URLSearchParams();
+            form.append('username', empresa.email);
+            form.append('password', empresa.senha);
+            const res = await axios.post(`${baseUrl}/login/token`, form, {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+            
+            const newToken = res.data.access_token;
+            setEmpresasTokens(prev => ({ ...prev, [empId]: newToken }));
+
+            // Salva o token no banco para uso futuro (persistência)
+            api.put(`/generic/outras_empresas_configuracoes/${empId}`, {
+                token: newToken,
+                token_expiracao: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Fallback 24h
+            }).catch(err => console.error("Erro ao persistir token:", err));
+
+            return newToken;
+        } catch (e) {
+            console.error(`Erro ao fazer login na empresa ${empresa.nome}:`, e);
+            toast.error(`Falha ao autenticar na empresa ${empresa.nome}. Verifique as credenciais nas configurações.`);
+            return null;
+        }
     };
-    const baseUrl = getBaseUrl();
 
+    refreshPromises.current[empId] = performLogin();
     try {
-        const form = new URLSearchParams();
-        form.append('username', empresa.email);
-        form.append('password', empresa.senha);
-        const res = await axios.post(`${baseUrl}/login/token`, form, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-        
-        const newToken = res.data.access_token;
-        setEmpresasTokens(prev => ({ ...prev, [empId]: newToken }));
-
-        // Salva o token no banco para uso futuro (persistência)
-        api.put(`/generic/outras_empresas_configuracoes/${empId}`, {
-            token: newToken,
-            token_expiracao: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Fallback 24h
-        }).catch(err => console.error("Erro ao persistir token:", err));
-
-        return newToken;
-    } catch (e) {
-        console.error(`Erro ao fazer login na empresa ${empresa.nome}:`, e);
-        return null;
+        const result = await refreshPromises.current[empId];
+        return result;
+    } finally {
+        delete refreshPromises.current[empId];
     }
   };
 

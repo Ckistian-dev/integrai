@@ -36,11 +36,22 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models. U
     """
     Autentica um usuário. Retorna o usuário se for válido, senão None.
     """
-    user = get_user_by_email(db, email)
+    print(f"[DEBUG AUTH] Tentando autenticar usuário com email: '{email}'")
+    
+    # Adicionamos order_by id_empresa desc para tentar contornar temporariamente casos de empresas antigas
+    user = db.query(models. Usuario).filter(models. Usuario.email == email).order_by(models.Usuario.id.desc()).first()
+    
     if not user:
+        print(f"[DEBUG AUTH] Falha: Usuário com email '{email}' não encontrado no banco de dados.")
         return None
+        
+    print(f"[DEBUG AUTH] Usuário encontrado: ID={user.id}, Empresa={user.id_empresa}")
+    
     if not verify_password(senha, user.senha):
+        print(f"[DEBUG AUTH] Falha: Senha incorreta para o usuário '{email}' (ID={user.id}, Empresa={user.id_empresa}).")
         return None
+        
+    print(f"[DEBUG AUTH] Sucesso: Usuário '{email}' autenticado corretamente para Empresa={user.id_empresa}.")
     return user
 
 def update_user(db: Session, *, db_obj: models. Usuario, obj_in:  UsuarioUpdate) -> models. Usuario:
