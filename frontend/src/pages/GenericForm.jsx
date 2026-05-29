@@ -43,6 +43,11 @@ const GenericForm = ({ modelName: propModelName }) => {
   // Ref para rastrear qual era o cliente anterior (para preenchimento automático ao trocar)
   const previousClientIdRef = useRef(null);
 
+  // Filtra abas que possuem pelo menos um campo visível
+  const visibleTabs = useMemo(() => {
+    return tabs.filter(tab => tab.fields.some(field => field.visible !== false));
+  }, [tabs]);
+
   // --- LÓGICA DE PERMISSÕES GRANULARES ---
   const permissionKey = useMemo(() => {
     // Mapeia models que usam permissões de outros módulos
@@ -167,9 +172,12 @@ const GenericForm = ({ modelName: propModelName }) => {
 
         setTabs(structuredTabs);
 
-        // Define a primeira aba como ativa
-        if (structuredTabs.length > 0) {
-          setActiveTab(structuredTabs[0].name);
+        // Define a primeira aba VISÍVEL como ativa
+        const firstVisibleTab = structuredTabs.find(tab => 
+          tab.fields.some(field => field.visible !== false)
+        );
+        if (firstVisibleTab) {
+          setActiveTab(firstVisibleTab.name);
         }
 
       } catch (err) {
@@ -532,9 +540,25 @@ const GenericForm = ({ modelName: propModelName }) => {
     setIsSaving(true);
     setFormErrors({});
 
+    // Validação genérica para campos obrigatórios (required)
+    const errors = {};
+    const allFields = tabs.flatMap(tab => tab.fields || []);
+    allFields.forEach((field) => {
+      if (field.required && field.visible !== false && field.read_only !== true) {
+        const val = formData[field.name];
+        if (
+          val === null || 
+          val === undefined || 
+          String(val).trim() === '' || 
+          (Array.isArray(val) && val.length === 0)
+        ) {
+          errors[field.name] = `${field.label} é obrigatório.`;
+        }
+      }
+    });
+
     // Validações específicas para Contas
     if (modelName === 'contas') {
-      const errors = {};
       const situacao = formData.situacao;
 
       if (situacao === 'Em Aberto') {
@@ -549,13 +573,13 @@ const GenericForm = ({ modelName: propModelName }) => {
           errors.pagamento = 'Forma de pagamento é obrigatória.';
         }
       }
+    }
 
-      if (Object.keys(errors).length > 0) {
-        setFormErrors(errors);
-        toast.error('Verifique os campos obrigatórios.');
-        setIsSaving(false);
-        return;
-      }
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      toast.error('Verifique os campos obrigatórios.');
+      setIsSaving(false);
+      return;
     }
 
     try {
@@ -622,12 +646,13 @@ const GenericForm = ({ modelName: propModelName }) => {
   // Função para lidar com a navegação entre abas via teclado (Tab)
   const handleTabPress = (e, tabIndex, fieldIndex) => {
     if (e.key === 'Tab' && !e.shiftKey) {
-      const currentTab = tabs[tabIndex];
+      const currentTab = visibleTabs[tabIndex];
+      if (!currentTab) return;
       
       // Encontra o índice do último campo VISÍVEL desta aba
       let lastVisibleIndex = -1;
       for (let i = currentTab.fields.length - 1; i >= 0; i--) {
-        if (currentTab.fields[i].type !== 'hidden') {
+        if (currentTab.fields[i].type !== 'hidden' && currentTab.fields[i].visible !== false) {
           lastVisibleIndex = i;
           break;
         }
@@ -636,14 +661,14 @@ const GenericForm = ({ modelName: propModelName }) => {
       // Verifica se é o último campo visível da aba atual
       if (fieldIndex === lastVisibleIndex) {
         // Verifica se existe uma próxima aba
-        if (tabIndex < tabs.length - 1) {
+        if (tabIndex < visibleTabs.length - 1) {
           e.preventDefault();
-          const nextTab = tabs[tabIndex + 1];
+          const nextTab = visibleTabs[tabIndex + 1];
           setActiveTab(nextTab.name);
           
           // Foca no primeiro campo VISÍVEL da próxima aba
           setTimeout(() => {
-            const firstVisibleField = nextTab.fields.find(f => f.type !== 'hidden');
+            const firstVisibleField = nextTab.fields.find(f => f.type !== 'hidden' && f.visible !== false);
             if (firstVisibleField) {
               const element = document.getElementById(firstVisibleField.name);
               if (element) {
@@ -684,11 +709,11 @@ const GenericForm = ({ modelName: propModelName }) => {
             </h1>
 
             {/* --- 3. RENDERIZAÇÃO DA BARRA DE ABAS --- */}
-            {tabs.length > 0 && (
+            {visibleTabs.length > 0 && (
               <div className="mb-4 border-b border-gray-200">
                 {/* Ajuste no espaçamento para ficar mais parecido com a imagem */}
                 <nav className="-mb-px flex space-x-2" aria-label="Tabs">
-                  {tabs.map((tab) => (
+                  {visibleTabs.map((tab) => (
                     <button
                       key={tab.name}
                       type="button" // Importante: impede o submit do form
@@ -719,7 +744,7 @@ const GenericForm = ({ modelName: propModelName }) => {
                 </div>
               ) : (
                 // Itera sobre as abas e renderiza o conteúdo
-                tabs.map((tab, tabIndex) => (
+                visibleTabs.map((tab, tabIndex) => (
                   <div
                     key={tab.name}
                     // Usa 'hidden' para esconder abas inativas

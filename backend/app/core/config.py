@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
-    POSTGRES_SERVER: str = "db" # Nome do serviço do DB no docker-compose.yml
+    POSTGRES_SERVER: str = "localhost" # Nome do serviço do DB no docker-compose.yml ou localhost
     ENVIRONMENT: str = "development"
 
     backend_cors_origins: str | list[str] = []
@@ -47,6 +47,6 @@ class Settings(BaseSettings):
     RESP_TECNICO_CSRT_PRODUCAO: Optional[str] = None
 
     # Configuração para o Pydantic ler o arquivo .env (sintaxe Pydantic V2)
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()

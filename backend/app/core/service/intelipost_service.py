@@ -269,6 +269,59 @@ class IntelipostService:
         results = await asyncio.gather(*tasks)
         all_volumes = [vol for sublist in results for vol in sublist]
 
+        # Ajusta os volumes para corresponder exatamente à quantidade de volumes no campo de pedidos (pedido.volumes_quantidade)
+        target_qty = pedido.volumes_quantidade
+        if target_qty and target_qty > 0:
+            # Pega as medidas diretamente do cadastro de produtos do pedido
+            prod_dimensions = []
+            for item in lista_itens:
+                prod_id = item.get('id_produto') or item.get('produto_id')
+                if prod_id:
+                    prod = self.db.query(models.Produto).filter(
+                        models.Produto.id == prod_id,
+                        models.Produto.id_empresa == self.id_empresa
+                    ).first()
+                    if prod:
+                        w = float(prod.largura or 10.0)
+                        h = float(prod.altura or 10.0)
+                        l = float(prod.comprimento or 10.0)
+                        qtd = int(float(item.get('quantidade') or 1))
+                        for _ in range(max(1, qtd)):
+                            prod_dimensions.append((w, h, l))
+
+            # Se não conseguimos nenhuma dimensão, usamos fallback padrão
+            if not prod_dimensions:
+                prod_dimensions = [(10.0, 10.0, 10.0)]
+
+            # Ajusta a lista de dimensões para ter exatamente target_qty elementos
+            if len(prod_dimensions) < target_qty:
+                last_dim = prod_dimensions[-1]
+                while len(prod_dimensions) < target_qty:
+                    prod_dimensions.append(last_dim)
+            elif len(prod_dimensions) > target_qty:
+                prod_dimensions = prod_dimensions[:target_qty]
+
+            # Pega o peso bruto total do pedido
+            peso_bruto_total = float(pedido.volumes_peso_bruto) if pedido.volumes_peso_bruto and pedido.volumes_peso_bruto > 0 else sum(vol.get('weight', 0.0) for vol in all_volumes)
+            if peso_bruto_total <= 0:
+                peso_bruto_total = 1.0 # fallback
+            
+            peso_individual = peso_bruto_total / target_qty
+
+            # Reconstrói os volumes para ter exatamente target_qty volumes com as medidas dos produtos
+            adjusted_volumes = []
+            for i in range(target_qty):
+                w, h, l = prod_dimensions[i]
+                adjusted_volumes.append({
+                    "weight": round(peso_individual, 3),
+                    "width": w,
+                    "height": h,
+                    "length": l,
+                    "volume_type_code": "BOX",
+                    "products_quantity": 1
+                })
+            all_volumes = adjusted_volumes
+
         if not all_volumes:
             raise HTTPException(status_code=400, detail="Não há volumes calculados para este pedido.")
 
@@ -333,6 +386,7 @@ class IntelipostService:
             vol_copy['length'] = float(vol_copy.get('length', 1))
             vol_copy['width'] = float(vol_copy.get('width', 1))
             vol_copy['height'] = float(vol_copy.get('height', 1))
+            vol_copy['volume_type_code'] = vol_copy.get('volume_type_code') or vol_copy.get('volume_type') or 'BOX'
 
             # REMOVE CAMPOS QUE NÃO EXISTEM NA DOC DE SHIPMENT (mas existiam na cotação)
             # 'cost_of_goods' no nível do volume pode quebrar o shipment

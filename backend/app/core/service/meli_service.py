@@ -298,21 +298,21 @@ class MeliService:
         """Lógica portada do sistema antigo para SQLAlchemy"""
         logger.info(f"Buscando ou criando cliente para o pedido ML {ml_order['id']}")
         
-        # 1. Prioridade: Billing Info (Endpoint específico)
+        # 1. Prioridade: Billing Info (Endpoint específico, com dados fiscais/CPF do comprador)
         doc_number = billing_info.get('doc_number') if billing_info else None
         doc_type = billing_info.get('doc_type') if billing_info else None
         
         if not doc_number:
-            # 2. Fallback: Shipment (Receiver ID)
-            receiver_id = shipment_details.get('receiver_identification', {})
-            doc_number = receiver_id.get('number')
+            # 2. Fallback: Dados fiscais/billing do comprador dentro do pedido
+            buyer_billing = ml_order.get('buyer', {}).get('billing_info', {})
+            doc_number = buyer_billing.get('doc_number')
             if not doc_type:
-                doc_type = receiver_id.get('type')
+                doc_type = buyer_billing.get('doc_type')
 
         if not doc_number:
             # 3. Fallback Final: ID do Comprador
             doc_number = f"ML{ml_order['buyer']['id']}" # Fallback
-            logger.debug(f"Documento não encontrado no envio. Usando fallback: {doc_number}")
+            logger.debug(f"Documento não encontrado nos dados do comprador. Usando fallback ID: {doc_number}")
         
         # 2. Verifica se cliente existe
         cliente = self.db.query(models.Cadastro).filter(
@@ -327,16 +327,12 @@ class MeliService:
         # 3. Se não existe, cria novo
         shipping_addr = shipment_details.get('receiver_address', {})
         
-        # --- NOVA LÓGICA: PRIORIZA NOME DO RECEBEDOR (ENTREGA) ---
-        nome_completo = shipping_addr.get('receiver_name')
-        
+        # --- NOVA LÓGICA: DADOS DO COMPRADOR ---
+        nome = ml_order.get('buyer', {}).get('first_name')
+        sobrenome = ml_order.get('buyer', {}).get('last_name')
+        nome_completo = f"{nome or ''} {sobrenome or ''}".strip()
         if not nome_completo:
-            # Fallback para dados do comprador caso o nome do recebedor não esteja disponível
-            nome = ml_order['buyer'].get('first_name')
-            sobrenome = ml_order['buyer'].get('last_name')
-            nome_completo = f"{nome or ''} {sobrenome or ''}".strip()
-            if not nome_completo:
-                nome_completo = ml_order['buyer']['nickname']
+            nome_completo = ml_order.get('buyer', {}).get('nickname')
 
         # Determina tipo de pessoa
         tipo_pessoa = CadastroTipoPessoaEnum.fisica
@@ -585,7 +581,7 @@ class MeliService:
         logger.info(f"Iniciando importação detalhada do pedido ML {order_id_ml}")
 
         # 1. Verifica duplicidade
-        search_str = f"ID ML: {order_id_ml}"
+        search_str = f"{order_id_ml}"
         exists = self.db.query(models.Pedido).filter(
             models.Pedido.observacao.contains(search_str),
             models.Pedido.id_empresa == self.id_empresa,
@@ -760,7 +756,12 @@ class MeliService:
             total_pedido += valor_frete
 
         # Observações ricas
-        obs_text = f"Pedido ML: {ml_order['id']} | Comprador: {ml_order['buyer']['nickname']}"
+        pack_id = ml_order.get('pack_id')
+        if pack_id:
+            obs_text = f"Pedido ML: {pack_id} | ID: {ml_order['id']} | Comprador: {ml_order['buyer']['nickname']}"
+        else:
+            obs_text = f"Pedido ML: {ml_order['id']} | Comprador: {ml_order['buyer']['nickname']}"
+            
         if tracking_number:
             obs_text += f" | Rastreio: {tracking_number}"
         if shipping_option.get('name'):
@@ -797,6 +798,72 @@ class MeliService:
             elif forma_pagamento == FiscalPagamentoEnum.cartao_credito:
                 # Ex: Cartão: VISA
                 obs_text += f" | Cartão: {metodo_real}"
+
+        # Verifica se já existe um pedido importado com o mesmo pack_id
+        pack_id = ml_order.get('pack_id')
+        if pack_id:
+            search_pack = f"Pedido ML: {pack_id}"
+            existing_pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.observacao.contains(search_pack),
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.situacao != 'cancelado'
+            ).first()
+
+            if existing_pedido:
+                logger.info(f"Encontrado pedido existente {existing_pedido.id} com o mesmo pack_id {pack_id}. Unificando itens...")
+                # Unifica itens
+                current_items = list(existing_pedido.itens) if existing_pedido.itens else []
+                for new_item in itens_erp:
+                    found = False
+                    for existing_item in current_items:
+                        if existing_item.get('id_produto') == new_item['id_produto'] and existing_item.get('valor_unitario') == new_item['valor_unitario']:
+                            existing_item['quantidade'] += new_item['quantidade']
+                            existing_item['subtotal'] = round(existing_item['subtotal'] + new_item['subtotal'], 2)
+                            existing_item['valor_ipi'] = round(existing_item['valor_ipi'] + new_item['valor_ipi'], 2)
+                            existing_item['total_com_ipi'] = round(existing_item['total_com_ipi'] + new_item['total_com_ipi'], 2)
+                            found = True
+                            break
+                    if not found:
+                        current_items.append(new_item)
+                existing_pedido.itens = current_items
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(existing_pedido, "itens")
+
+                # Atualiza volumes e pesos
+                peso_bruto_total_merged = (float(existing_pedido.volumes_peso_bruto) if existing_pedido.volumes_peso_bruto else 0.0) + peso_bruto_total
+                existing_pedido.volumes_peso_bruto = peso_bruto_total_merged if peso_bruto_total_merged > 0 else None
+                existing_pedido.volumes_peso_liquido = peso_bruto_total_merged if peso_bruto_total_merged > 0 else None
+
+                # Atualiza valor de frete (soma se houver frete adicional)
+                existing_pedido.valor_frete = float(existing_pedido.valor_frete or 0) + valor_frete
+
+                # Recalcula total final
+                total_prod_merged = sum(float(item['subtotal']) for item in current_items)
+                total_ipi_merged = sum(float(item.get('valor_ipi') or 0) for item in current_items)
+                
+                total_pedido_merged = total_prod_merged + total_ipi_merged
+                if existing_pedido.modalidade_frete == PedidoModalidadeFreteEnum.fob:
+                    total_pedido_merged += float(existing_pedido.valor_frete or 0)
+                existing_pedido.total = total_pedido_merged
+
+                # Atualiza observação para incluir os dois IDs reais do Mercado Livre
+                obs = existing_pedido.observacao or ""
+                match_id = re.search(r"ID:\s*([\d,\s]+)", obs)
+                if match_id:
+                    old_ids = match_id.group(1).strip()
+                    existing_ids_list = [x.strip() for x in old_ids.split(',')]
+                    if order_id_ml not in existing_ids_list:
+                        new_ids_str = f"{old_ids}, {order_id_ml}"
+                        obs = obs.replace(match_id.group(0), f"ID: {new_ids_str}")
+                else:
+                    obs += f" | ID: {order_id_ml}"
+                existing_pedido.observacao = obs
+
+                self.db.add(existing_pedido)
+                self.db.commit()
+                self.db.refresh(existing_pedido)
+                logger.info(f"Pedido unificado com sucesso no ID ERP {existing_pedido.id}")
+                return existing_pedido
 
         # 6. Criação do Pedido
         data_ml = datetime.fromisoformat(ml_order['date_created'].replace('Z', '+00:00'))

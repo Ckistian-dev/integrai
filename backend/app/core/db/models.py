@@ -639,9 +639,6 @@ class Cadastro(Base):
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
     
-    delivery_method_id_intelipost = Column(String, 
-                                          info={'tab': 'Integrações', 'label': 'ID Método Entrega Intelipost', 'placeholder': 'Ex: 123'})
-    
     # --- Campos Internos (sem aba) ---
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
@@ -676,7 +673,7 @@ class Embalagem(Base):
     descricao = Column(String, nullable=False, 
                        info={'tab': 'Dados Gerais', 'label': 'Descrição da Embalagem', 'placeholder': 'Ex: Caixa Padrão Correios'})
     regras = Column(JSON,
-                    info={'tab': 'Regras de Empacotamento', 'label': 'Regras', 'placeholder': ''}) # JSON para flexibilidade
+                    info={'tab': 'Regras de Empacotamento', 'label': 'Regras', 'placeholder': '', 'col_span': 2}) # JSON para flexibilidade
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais', 'label': 'Ativo?', 'placeholder': ''})
 

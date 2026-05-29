@@ -1890,7 +1890,8 @@ class NFeService:
                 endereco_uf=uf_empresa,
                 endereco_cep=self._limpar_formatacao(self.empresa.cep),
                 endereco_pais=CODIGO_BRASIL,
-                inscricao_estadual_subst_tributaria=iest_especifico
+                inscricao_estadual_subst_tributaria=iest_especifico,
+                endereco_telefone=self._limpar_formatacao(self.empresa.telefone)
             )
 
             # Lógica de Destino (idDest)
@@ -3620,9 +3621,15 @@ class NFeService:
                 pedido.meli_xml_enviado = True
             else:
                 try:
-                    match = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
-                    if match:
-                        order_id_ml = match.group(1)
+                    # Tenta obter o ID do pedido do Mercado Livre de forma inteligente (respeitando o novo formato com Pack_id)
+                    match_id = re.search(r"ID:\s*(\d+)", pedido.observacao or "")
+                    if match_id:
+                        order_id_ml = match_id.group(1)
+                    else:
+                        match = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
+                        order_id_ml = match.group(1) if match else None
+
+                    if order_id_ml:
                         meli_service = MeliService(self.db, self.id_empresa)
                         res = asyncio.run(meli_service.upload_xml(order_id_ml, xml_str))
                         

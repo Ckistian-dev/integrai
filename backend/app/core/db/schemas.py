@@ -317,14 +317,14 @@ class ProdutoBase(BaseModel):
     anp: Optional[str] = None
     escala_relevante: bool = True
     cnpj_fabricante: Optional[str] = None
-    ipi_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
-    preco: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    custo: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    ipi_aliquota: Decimal = Field(0)
+    preco: Optional[Decimal] = Field(None)
+    custo: Optional[Decimal] = Field(None)
     estoque_negativo: bool = False
-    peso: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
-    altura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    largura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    comprimento: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    peso: Optional[Decimal] = Field(None)
+    altura: Optional[Decimal] = Field(None)
+    largura: Optional[Decimal] = Field(None)
+    comprimento: Optional[Decimal] = Field(None)
     situacao: bool = True
     
     id_embalagem: Optional[int] = None
@@ -353,14 +353,14 @@ class ProdutoUpdate(BaseModel):
     anp: Optional[str] = None
     escala_relevante: Optional[bool] = None
     cnpj_fabricante: Optional[str] = None
-    ipi_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    preco: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    custo: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    ipi_aliquota: Optional[Decimal] = Field(None)
+    preco: Optional[Decimal] = Field(None)
+    custo: Optional[Decimal] = Field(None)
     estoque_negativo: Optional[bool] = None
-    peso: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
-    altura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    largura: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
-    comprimento: Optional[Decimal] = Field(None, max_digits=10, decimal_places=2)
+    peso: Optional[Decimal] = Field(None)
+    altura: Optional[Decimal] = Field(None)
+    largura: Optional[Decimal] = Field(None)
+    comprimento: Optional[Decimal] = Field(None)
     situacao: Optional[bool] = None
     id_embalagem: Optional[int] = None
     id_fornecedor: Optional[int] = None
@@ -414,13 +414,13 @@ class ContaBase(BaseModel):
     data_emissao: Optional[date] = None
     data_vencimento: Optional[date] = None # Corrigido de data_vendimento no models para data_vencimento
     data_baixa: Optional[date] = None
-    id_classificacao_contabil: Optional[int] = None
+    id_classificacao_contabil: int
     caixa_destino_origem: Optional[str] = None
     observacoes: Optional[str] = None
     pagamento: Optional[FiscalPagamentoEnum] = None
-    valor: Decimal = Field(..., max_digits=15, decimal_places=2)
+    valor: Decimal = Field(...)
     
-    id_fornecedor: Optional[int] = None
+    id_fornecedor: int
 
 class ContaCreate(ContaBase):
     pass
@@ -437,7 +437,7 @@ class ContaUpdate(BaseModel):
     caixa_destino_origem: Optional[str] = None
     observacoes: Optional[str] = None
     pagamento: Optional[FiscalPagamentoEnum] = None
-    valor: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    valor: Optional[Decimal] = Field(None)
     id_fornecedor: Optional[int] = None
 
 class Conta(ContaBase):  # RENOMEADO de ContaRead para Conta
@@ -504,9 +504,9 @@ class PedidoBase(BaseModel):
     origem_venda: Optional[str] = None
     indicador_presenca: Optional[PedidoIndicadorPresencaEnum] = PedidoIndicadorPresencaEnum.presencial
     modalidade_frete: Optional[PedidoModalidadeFreteEnum] = None
-    valor_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    ipi_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    total_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    valor_frete: Optional[Decimal] = Field(None)
+    ipi_frete: Optional[Decimal] = Field(None)
+    total_frete: Optional[Decimal] = Field(None)
     
     delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
@@ -520,8 +520,8 @@ class PedidoBase(BaseModel):
     volumes_especie: Optional[str] = None
     volumes_marca: Optional[str] = None
     volumes_numeracao: Optional[str] = None
-    volumes_peso_bruto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
-    volumes_peso_liquido: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
+    volumes_peso_bruto: Optional[Decimal] = Field(None)
+    volumes_peso_liquido: Optional[Decimal] = Field(None)
     
     # Campos de Endereço de Entrega
     endereco_cep: Optional[str] = Field(None, max_length=9)
@@ -532,16 +532,16 @@ class PedidoBase(BaseModel):
     endereco_numero: Optional[str] = None
     endereco_complemento: Optional[str] = None
     
-    total: Optional[Decimal] = Field(None, max_digits=20, decimal_places=2)
-    desconto: Optional[Decimal] = Field(None, max_digits=20, decimal_places=2)
-    total_desconto: Optional[Decimal] = Field(None, max_digits=20, decimal_places=2)
+    total: Optional[Decimal] = Field(None)
+    desconto: Optional[Decimal] = Field(None)
+    total_desconto: Optional[Decimal] = Field(None)
     itens: Optional[List[Dict[str, Any]]] = None
     pagamento: Optional[FiscalPagamentoEnum] = None
     pagamento_descricao: Optional[str] = None
     caixa_destino_origem: Optional[str] = None
     observacao: Optional[str] = None
     observacoes_nf: Optional[str] = None
-    ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
+    ordem_finalizacao: Optional[Decimal] = Field(None)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = RegraTipoOperacaoEnum.venda_mercadoria
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
@@ -579,9 +579,9 @@ class PedidoUpdate(BaseModel):
     origem_venda: Optional[str] = None
     indicador_presenca: Optional[PedidoIndicadorPresencaEnum] = None
     modalidade_frete: Optional[PedidoModalidadeFreteEnum] = None
-    valor_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    ipi_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    total_frete: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    valor_frete: Optional[Decimal] = Field(None)
+    ipi_frete: Optional[Decimal] = Field(None)
+    total_frete: Optional[Decimal] = Field(None)
     
     delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
@@ -595,19 +595,19 @@ class PedidoUpdate(BaseModel):
     volumes_especie: Optional[str] = None
     volumes_marca: Optional[str] = None
     volumes_numeracao: Optional[str] = None
-    volumes_peso_bruto: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
-    volumes_peso_liquido: Optional[Decimal] = Field(None, max_digits=10, decimal_places=3)
+    volumes_peso_bruto: Optional[Decimal] = Field(None)
+    volumes_peso_liquido: Optional[Decimal] = Field(None)
     
-    total: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
-    total_desconto: Optional[Decimal] = Field(None, max_digits=15, decimal_places=2)
+    total: Optional[Decimal] = Field(None)
+    desconto: Optional[Decimal] = Field(None)
+    total_desconto: Optional[Decimal] = Field(None)
     itens: Optional[List[Dict[str, Any]]] = None
     pagamento: Optional[FiscalPagamentoEnum] = None
     pagamento_descricao: Optional[str] = None
     caixa_destino_origem: Optional[str] = None
     observacao: Optional[str] = None
     observacoes_nf: Optional[str] = None
-    ordem_finalizacao: Optional[Decimal] = Field(None, max_digits=5, decimal_places=1)
+    ordem_finalizacao: Optional[Decimal] = Field(None)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = None
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
@@ -668,26 +668,26 @@ class TributacaoBase(BaseModel):
     
     cfop: Optional[str] = None
     icms_cst: Optional[FiscalICMSCSTEnum] = None
-    icms_reducao_bc_perc: Decimal = Field(0, max_digits=5, decimal_places=2)
-    icms_p_dif: Decimal = Field(0, max_digits=5, decimal_places=2)
+    icms_reducao_bc_perc: Decimal = Field(0)
+    icms_p_dif: Decimal = Field(0)
     icms_st_cst: Optional[FiscalICMSCSTEnum] = None
-    icms_st_mva_perc: Decimal = Field(0, max_digits=5, decimal_places=2)
-    icms_st_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
-    fcp_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
+    icms_st_mva_perc: Decimal = Field(0)
+    icms_st_aliquota: Decimal = Field(0)
+    fcp_aliquota: Decimal = Field(0)
     ipi_cst: Optional[FiscalIPICSTEnum] = None
     ipi_codigo_enquadramento: Optional[str] = None
     pis_cst: Optional[FiscalPISCOFINSCSTEnum] = None
-    pis_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
+    pis_aliquota: Decimal = Field(0)
     cofins_cst: Optional[FiscalPISCOFINSCSTEnum] = None
-    cofins_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
+    cofins_aliquota: Decimal = Field(0)
     cbenef: Optional[str] = None
-    ibs_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
-    cbs_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
-    is_aliquota: Decimal = Field(0, max_digits=5, decimal_places=2)
+    ibs_aliquota: Decimal = Field(0)
+    cbs_aliquota: Decimal = Field(0)
+    is_aliquota: Decimal = Field(0)
     reforma_cst: Optional[str] = '000'
     reforma_c_class_trib: Optional[str] = '000001'
     
-    fcp_aliquota_destino: Decimal = Field(0, max_digits=5, decimal_places=2)
+    fcp_aliquota_destino: Decimal = Field(0)
     
     regras_uf: Optional[Dict[str, Any]] = Field(default_factory=dict)
     
@@ -708,26 +708,26 @@ class TributacaoUpdate(BaseModel):
     
     cfop: Optional[str] = None
     icms_cst: Optional[FiscalICMSCSTEnum] = None
-    icms_reducao_bc_perc: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    icms_p_dif: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    icms_reducao_bc_perc: Optional[Decimal] = Field(None)
+    icms_p_dif: Optional[Decimal] = Field(None)
     icms_st_cst: Optional[FiscalICMSCSTEnum] = None
-    icms_st_mva_perc: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    icms_st_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    fcp_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    icms_st_mva_perc: Optional[Decimal] = Field(None)
+    icms_st_aliquota: Optional[Decimal] = Field(None)
+    fcp_aliquota: Optional[Decimal] = Field(None)
     ipi_cst: Optional[FiscalIPICSTEnum] = None
     ipi_codigo_enquadramento: Optional[str] = None
     pis_cst: Optional[FiscalPISCOFINSCSTEnum] = None
-    pis_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    pis_aliquota: Optional[Decimal] = Field(None)
     cofins_cst: Optional[FiscalPISCOFINSCSTEnum] = None
-    cofins_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    cofins_aliquota: Optional[Decimal] = Field(None)
     cbenef: Optional[str] = None
-    ibs_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    cbs_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
-    is_aliquota: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    ibs_aliquota: Optional[Decimal] = Field(None)
+    cbs_aliquota: Optional[Decimal] = Field(None)
+    is_aliquota: Optional[Decimal] = Field(None)
     reforma_cst: Optional[str] = None
     reforma_c_class_trib: Optional[str] = None
     
-    fcp_aliquota_destino: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2)
+    fcp_aliquota_destino: Optional[Decimal] = Field(None)
     
     regras_uf: Optional[Dict[str, Any]] = {}
     
