@@ -639,6 +639,8 @@ class Cadastro(Base):
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
     
+    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)'})
+    
     # --- Campos Internos (sem aba) ---
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())

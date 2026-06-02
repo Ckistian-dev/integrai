@@ -285,6 +285,13 @@ const statusChangeActions = {
   ]
 };
 
+const getSortArray = (sort) => {
+  if (!sort) return [];
+  if (Array.isArray(sort)) return sort;
+  if (sort.field) return [sort];
+  return [];
+};
+
 const GenericList = () => {
   const { modelName: paramModelName, statusFilter } = useParams();
   const isIntelipostView = paramModelName === 'intelipost';
@@ -466,7 +473,7 @@ const GenericList = () => {
   // --- ESTADOS PARA EDIÇÃO DE TABELA ---
   const [isEditMode, setIsEditMode] = useState(false);
   const [addColumnSearch, setAddColumnSearch] = useState("");
-  const [userPreferences, setUserPreferences] = useState({ visibleColumns: [], filters: [], sort: { field: 'id', direction: 'desc' } });
+  const [userPreferences, setUserPreferences] = useState({ visibleColumns: [], filters: [], sort: [{ field: 'id', direction: 'desc' }] });
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
 
   // --- LÓGICA DE TOTAIS E LIMITE EFETIVO ---
@@ -480,8 +487,7 @@ const GenericList = () => {
 
   // Estabiliza as dependências do useEffect para evitar loops infinitos
   const filtersJson = JSON.stringify(userPreferences.filters);
-  const sortField = userPreferences.sort?.field;
-  const sortDirection = userPreferences.sort?.direction;
+  const sortsJson = JSON.stringify(userPreferences.sort);
 
   useEffect(() => {
     const fetchMetadata = async () => {
@@ -502,7 +508,7 @@ const GenericList = () => {
       setDropdownFilterValue("");
 
       // Reseta estados que podem persistir entre navegações e causar conflitos
-      setUserPreferences({ visibleColumns: [], filters: [], sort: { field: 'id', direction: 'desc' } });
+      setUserPreferences({ visibleColumns: [], filters: [], sort: [{ field: 'id', direction: 'desc' }] });
       setColumnsToDisplay([]);
       setMagentoDynamicFilters([]);
       setQuickFilterValues({}); // Limpa filtros da tela anterior para evitar busca com parâmetros errados
@@ -586,7 +592,7 @@ const GenericList = () => {
             visibleColumns: allCols,
             quickFilterFields: defaultQuickFields,
             quickFilterValues: defaultQuickValues,
-            sort: { field: 'id', direction: 'desc' },
+            sort: [{ field: 'id', direction: 'desc' }],
             filters: []
           });
           setQuickFilterValues(defaultQuickValues);
@@ -641,8 +647,7 @@ const GenericList = () => {
     statusFilter,
     debouncedQuickFilterValuesJson,
     filtersJson,
-    sortField,
-    sortDirection,
+    sortsJson,
     refreshTrigger,
     limit,
     setSelectedGroupKey // Adicionado para permitir o reset
@@ -742,7 +747,7 @@ const GenericList = () => {
       // Monta uma chave única para identificar se os parâmetros de busca mudaram de fato
       const paramsKey = JSON.stringify({
         modelName, page, effectiveLimit, statusFilter,
-        filtersJson, sortField, sortDirection,
+        filtersJson, sortsJson,
         refreshTrigger, isMeliView, isMagentoView,
         debouncedQuickFilterValuesJson
       });
@@ -762,11 +767,12 @@ const GenericList = () => {
         // CORREÇÃO 1: Declarar a variável url
         let url = '';
 
+        const sortList = getSortArray(userPreferences.sort);
         const params = {
           skip,
           limit: effectiveLimit,
-          sort_by: userPreferences.sort?.field || 'id',
-          sort_order: userPreferences.sort?.direction || 'desc'
+          sort_by: sortList.length > 0 ? sortList.map(s => s.field).join(',') : 'id',
+          sort_order: sortList.length > 0 ? sortList.map(s => s.direction).join(',') : 'desc'
         };
 
         if (isMeliView) {
@@ -912,8 +918,7 @@ const GenericList = () => {
     modelName,
     refreshTrigger,
     filtersJson,
-    sortField,
-    sortDirection,
+    sortsJson,
     debouncedQuickFilterValuesJson,
     effectiveLimit
   ]);
@@ -1841,8 +1846,9 @@ const GenericList = () => {
       }
 
       // Adiciona ordenação
-      params.sort_by = userPreferences.sort?.field || 'id';
-      params.sort_order = userPreferences.sort?.direction || 'desc';
+      const sortList = getSortArray(userPreferences.sort);
+      params.sort_by = sortList.length > 0 ? sortList.map(s => s.field).join(',') : 'id';
+      params.sort_order = sortList.length > 0 ? sortList.map(s => s.direction).join(',') : 'desc';
 
       // Adiciona colunas visíveis (Respeitando a configuração da tabela)
       if (columnsToDisplay && columnsToDisplay.length > 0) {
@@ -2194,10 +2200,23 @@ const GenericList = () => {
   };
 
   const toggleSort = (field) => {
-    const newSort = {
-      field,
-      direction: userPreferences.sort?.field === field && userPreferences.sort?.direction === 'asc' ? 'desc' : 'asc'
-    };
+    const sortList = getSortArray(userPreferences.sort);
+    const idx = sortList.findIndex(s => s.field === field);
+    let newSort;
+    if (idx === -1) {
+      if (sortList.length >= 2) {
+        newSort = [sortList[0], { field, direction: 'asc' }];
+      } else {
+        newSort = [...sortList, { field, direction: 'asc' }];
+      }
+    } else {
+      const current = sortList[idx];
+      if (current.direction === 'asc') {
+        newSort = sortList.map((s, i) => i === idx ? { ...s, direction: 'desc' } : s);
+      } else {
+        newSort = sortList.filter((_, i) => i !== idx);
+      }
+    }
     handleSavePreferences({ ...userPreferences, sort: newSort });
   };
 
@@ -3238,7 +3257,10 @@ const GenericList = () => {
                   {columnsToDisplay.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
                     const isCurrency = field?.format_mask === 'currency';
-                    const sort = userPreferences.sort?.field === colName ? userPreferences.sort : null;
+                    const sortList = getSortArray(userPreferences.sort);
+                    const sortIdx = sortList.findIndex(s => s.field === colName);
+                    const sort = sortIdx !== -1 ? sortList[sortIdx] : null;
+                    const sortPriority = sortIdx !== -1 ? sortIdx + 1 : null;
 
                     return (
                       <th
@@ -3256,7 +3278,46 @@ const GenericList = () => {
                         <div className="flex items-center gap-2 justify-between">
                           <div className="flex items-center gap-1 truncate">
                             {isEditMode && <GripVertical size={12} className="text-gray-300 group-hover:text-gray-400" />}
-                            <span>{colName === 'id' ? 'ID' : colName === 'ja_importado' ? 'Importado' : formatLabel(field?.label || colName)}</span>
+                            {isEditMode ? (
+                              <input
+                                type="text"
+                                value={userPreferences.customColumnLabels?.[colName] ?? formatLabel(colName === 'id' ? 'ID' : colName === 'ja_importado' ? 'Importado' : (field?.label || colName))}
+                                onChange={(e) => {
+                                  const newLabels = {
+                                    ...(userPreferences.customColumnLabels || {}),
+                                    [colName]: e.target.value
+                                  };
+                                  setUserPreferences({ ...userPreferences, customColumnLabels: newLabels });
+                                }}
+                                onBlur={() => {
+                                  handleSavePreferences(userPreferences);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.target.blur();
+                                  }
+                                }}
+                                className="bg-transparent border-b border-gray-300 focus:border-blue-500 focus:outline-none w-28 text-sm font-semibold text-gray-700 uppercase"
+                                draggable={false}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                              />
+                            ) : (
+                              <span>
+                                {userPreferences.customColumnLabels?.[colName] || formatLabel(colName === 'id' ? 'ID' : colName === 'ja_importado' ? 'Importado' : (field?.label || colName))}
+                              </span>
+                            )}
+                            {!isEditMode && sort && (
+                              <span className="inline-flex items-center gap-0.5 ml-1 text-blue-600">
+                                {sort.direction === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
+                                {sortPriority && sortList.length > 1 && (
+                                  <span className="text-[9px] bg-blue-100 text-blue-800 rounded px-0.5 font-bold leading-none">
+                                    {sortPriority}
+                                  </span>
+                                )}
+                              </span>
+                            )}
                           </div>
 
                           {isEditMode && (
@@ -3266,7 +3327,14 @@ const GenericList = () => {
                                 onClick={(e) => { e.stopPropagation(); toggleSort(colName); }}
                                 className={`p-1 rounded hover:bg-gray-200 ${sort ? 'text-blue-600' : 'text-gray-300'}`}
                               >
-                                {sort?.direction === 'desc' ? <ArrowDown size={14} /> : <ArrowUp size={14} className={!sort ? 'opacity-50' : ''} />}
+                                <div className="flex items-center gap-0.5">
+                                  {sort?.direction === 'desc' ? <ArrowDown size={14} /> : <ArrowUp size={14} className={!sort ? 'opacity-50' : ''} />}
+                                  {sortPriority && sortList.length > 1 && (
+                                    <span className="text-[10px] bg-blue-100 text-blue-800 rounded px-1 font-extrabold leading-none">
+                                      {sortPriority}
+                                    </span>
+                                  )}
+                                </div>
                               </button>
                               <button
                                 type="button"

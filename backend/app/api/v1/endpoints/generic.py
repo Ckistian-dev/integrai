@@ -1222,72 +1222,73 @@ def list_items(
     # 4. Ordenação Dinâmica
     if sort_by:
         model = registry["model"]
-        sort_col = None
+        sort_by_list = [s.strip() for s in sort_by.split(",")]
+        sort_order_list = [s.strip() for s in sort_order.split(",")] if sort_order else []
         
-        # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
-        if "." in sort_by:
-            parts = sort_by.split(".")
-            if len(parts) == 2:
-                rel_name, field_name = parts
-                if hasattr(model, rel_name):
-                    rel_attr = getattr(model, rel_name)
-                    try:
-                        related_model = rel_attr.property.mapper.class_
-                        rel_alias = aliased(related_model, name=f"sort_{rel_name}")
-                        base_query = base_query.outerjoin(rel_alias, rel_attr)
-                        sort_col = getattr(rel_alias, field_name, None)
-                    except: pass
-        
-        # Caso 2: Atributo direto do modelo
-        if sort_col is None and hasattr(model, sort_by):
-            sort_col = getattr(model, sort_by)
+        order_by_clauses = []
+        for i, sb in enumerate(sort_by_list):
+            so = sort_order_list[i] if i < len(sort_order_list) else (sort_order_list[0] if sort_order_list else "desc")
             
-            # Se for uma Foreign Key, tenta ordenar pelo campo de display do relacionado automaticamente
-            mapper = inspect(model)
-            column = model.__table__.columns.get(sort_by)
-            if column is not None and column.foreign_keys:
-                rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
-                if rel:
-                    related_model = rel.mapper.class_
-                    PREFERRED_DISPLAY_FIELDS = [
-                        "nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"
-                    ]
-                    display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
-                    if display_field:
-                        rel_alias = aliased(related_model, name=f"sort_auto_{rel.key}")
-                        base_query = base_query.outerjoin(rel_alias, getattr(model, rel.key))
-                        sort_col = getattr(rel_alias, display_field)
-
-        if sort_col is not None:
-            # Identifica o tipo da coluna para decidir a estratégia de ordenação
-            is_text_field = False
-            if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
-                is_text_field = True
-
-            needs_numeric_sort = any(kw in sort_by.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
+            sort_col = None
+            # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
+            if "." in sb:
+                parts = sb.split(".")
+                if len(parts) == 2:
+                    rel_name, field_name = parts
+                    if hasattr(model, rel_name):
+                        rel_attr = getattr(model, rel_name)
+                        try:
+                            related_model = rel_attr.property.mapper.class_
+                            rel_alias = aliased(related_model, name=f"sort_{i}_{rel_name}")
+                            base_query = base_query.outerjoin(rel_alias, rel_attr)
+                            sort_col = getattr(rel_alias, field_name, None)
+                        except: pass
             
-            # Define a expressão de ordenação conforme o tipo do campo
-            if needs_numeric_sort:
-                # Ordenação Natural/Numérica (ex: 1, 2, 10 em vez de 1, 10, 2)
-                sort_expressions = [func.length(cast(sort_col, String)), sort_col]
-            elif is_text_field:
-                # Ordenação Textual (A-Z ignorando acentos e case)
-                sort_expressions = [func.unaccent(func.lower(sort_col))]
-            else:
-                # Ordenação Padrão
-                sort_expressions = [sort_col]
+            # Caso 2: Atributo direto do modelo
+            if sort_col is None and hasattr(model, sb):
+                sort_col = getattr(model, sb)
+                
+                # Se for uma Foreign Key, tenta ordenar pelo campo de display do relacionado automaticamente
+                mapper = inspect(model)
+                column = model.__table__.columns.get(sb)
+                if column is not None and column.foreign_keys:
+                    rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                    if rel:
+                        related_model = rel.mapper.class_
+                        PREFERRED_DISPLAY_FIELDS = [
+                            "nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"
+                        ]
+                        display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
+                        if display_field:
+                            rel_alias = aliased(related_model, name=f"sort_auto_{i}_{rel.key}")
+                            base_query = base_query.outerjoin(rel_alias, getattr(model, rel.key))
+                            sort_col = getattr(rel_alias, display_field)
 
-            # Aplica a direção (ASC/DESC) e trata nulos
-            order_by_clauses = []
-            for expr in sort_expressions:
-                if sort_order == "desc":
-                    order_by_clauses.append(expr.desc().nulls_last())
+            if sort_col is not None:
+                # Identifica o tipo da coluna para decidir a estratégia de ordenação
+                is_text_field = False
+                if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
+                    is_text_field = True
+
+                needs_numeric_sort = any(kw in sb.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
+                
+                # Define a expressão de ordenação conforme o tipo do campo
+                if needs_numeric_sort:
+                    sort_expressions = [func.length(cast(sort_col, String)), sort_col]
+                elif is_text_field:
+                    sort_expressions = [func.unaccent(func.lower(sort_col))]
                 else:
-                    order_by_clauses.append(expr.asc().nulls_last())
-            
+                    sort_expressions = [sort_col]
+
+                for expr in sort_expressions:
+                    if so == "desc":
+                        order_by_clauses.append(expr.desc().nulls_last())
+                    else:
+                        order_by_clauses.append(expr.asc().nulls_last())
+
+        if order_by_clauses:
             base_query = base_query.order_by(*order_by_clauses)
         else:
-            # Caso o campo de ordenação seja inválido, usa o padrão
             base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
     else:
         # Ordenação padrão (ID desc) se não especificado
@@ -1570,21 +1571,76 @@ def export_items_to_csv(
         base_query = apply_search_filter(base_query, registry["model"], search_term, search_field)
 
     # 4. Ordenação Dinâmica (Igual à listagem)
-    if sort_by and hasattr(registry["model"], sort_by):
-        sort_col = getattr(registry["model"], sort_by)
+    if sort_by:
+        model = registry["model"]
+        sort_by_list = [s.strip() for s in sort_by.split(",")]
+        sort_order_list = [s.strip() for s in sort_order.split(",")] if sort_order else []
         
-        needs_numeric_sort = any(kw in sort_by.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
-        
-        if sort_order == "desc":
-            if needs_numeric_sort:
-                base_query = base_query.order_by(func.length(cast(sort_col, String)).desc().nulls_last(), sort_col.desc().nulls_last())
-            else:
-                base_query = base_query.order_by(sort_col.desc().nulls_last())
+        order_by_clauses = []
+        for i, sb in enumerate(sort_by_list):
+            so = sort_order_list[i] if i < len(sort_order_list) else (sort_order_list[0] if sort_order_list else "desc")
+            
+            sort_col = None
+            # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
+            if "." in sb:
+                parts = sb.split(".")
+                if len(parts) == 2:
+                    rel_name, field_name = parts
+                    if hasattr(model, rel_name):
+                        rel_attr = getattr(model, rel_name)
+                        try:
+                            related_model = rel_attr.property.mapper.class_
+                            rel_alias = aliased(related_model, name=f"sort_export_{i}_{rel_name}")
+                            base_query = base_query.outerjoin(rel_alias, rel_attr)
+                            sort_col = getattr(rel_alias, field_name, None)
+                        except: pass
+            
+            # Caso 2: Atributo direto do modelo
+            if sort_col is None and hasattr(model, sb):
+                sort_col = getattr(model, sb)
+                
+                # Se for uma Foreign Key, tenta ordenar pelo campo de display do relacionado automaticamente
+                mapper = inspect(model)
+                column = model.__table__.columns.get(sb)
+                if column is not None and column.foreign_keys:
+                    rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                    if rel:
+                        related_model = rel.mapper.class_
+                        PREFERRED_DISPLAY_FIELDS = [
+                            "nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"
+                        ]
+                        display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
+                        if display_field:
+                            rel_alias = aliased(related_model, name=f"sort_export_auto_{i}_{rel.key}")
+                            base_query = base_query.outerjoin(rel_alias, getattr(model, rel.key))
+                            sort_col = getattr(rel_alias, display_field)
+
+            if sort_col is not None:
+                # Identifica o tipo da coluna para decidir a estratégia de ordenação
+                is_text_field = False
+                if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
+                    is_text_field = True
+
+                needs_numeric_sort = any(kw in sb.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
+                
+                # Define a expressão de ordenação conforme o tipo do campo
+                if needs_numeric_sort:
+                    sort_expressions = [func.length(cast(sort_col, String)), sort_col]
+                elif is_text_field:
+                    sort_expressions = [func.unaccent(func.lower(sort_col))]
+                else:
+                    sort_expressions = [sort_col]
+
+                for expr in sort_expressions:
+                    if so == "desc":
+                        order_by_clauses.append(expr.desc().nulls_last())
+                    else:
+                        order_by_clauses.append(expr.asc().nulls_last())
+
+        if order_by_clauses:
+            base_query = base_query.order_by(*order_by_clauses)
         else:
-            if needs_numeric_sort:
-                base_query = base_query.order_by(func.length(cast(sort_col, String)).asc().nulls_last(), sort_col.asc().nulls_last())
-            else:
-                base_query = base_query.order_by(sort_col.asc().nulls_last())
+            base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
     else:
         base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
 
@@ -2592,66 +2648,23 @@ def update_item(
                 except Exception as e:
                     print(f"Erro ao gerar financeiro automático: {e}")
             
-            # 🎯 LÓGICA ESPECÍFICA: Gerar Estorno Financeiro ao Cancelar Pedido
+            # 🎯 LÓGICA ESPECÍFICA: Cancelar contas financeiras ao cancelar pedido
             if old_situacao != item.situacao and item.situacao == models.PedidoSituacaoEnum.cancelado:
                 try:
                     desc_conta = f"Pedido de Venda #{item.id}"
-                    existing_estorno = db.query(models.Conta).filter(
+                    # Busca contas a receber geradas para este pedido
+                    contas_relacionadas = db.query(models.Conta).filter(
                         models.Conta.id_empresa == current_user.id_empresa,
-                        models.Conta.descricao.contains(desc_conta),
-                        models.Conta.tipo_conta == models.ContaTipoEnum.a_pagar
-                    ).first()
+                        models.Conta.tipo_conta == models.ContaTipoEnum.a_receber,
+                        (models.Conta.numero_conta == str(item.id)) | (models.Conta.descricao.contains(desc_conta))
+                    ).all()
 
-                    if not existing_estorno:
-                        valor_final = item.total_desconto if (item.total_desconto and item.total_desconto > 0) else item.total
-                        
-                        if valor_final and valor_final > 0:
-                            cliente_nome = item.cliente.nome_razao if item.cliente else "Consumidor Final"
-                            cliente_id = item.id_cliente
-                            
-                            empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
-                            classificacao_id = empresa_obj.id_classificacao_contabil_cancelamento if empresa_obj else None
-                            
-                            if not classificacao_id:
-                                fallback_class = db.query(models.ClassificacaoContabil).filter(
-                                    models.ClassificacaoContabil.id_empresa == current_user.id_empresa,
-                                    models.ClassificacaoContabil.tipo.ilike('%despesa%')
-                                ).first() or db.query(models.ClassificacaoContabil).filter(
-                                    models.ClassificacaoContabil.id_empresa == current_user.id_empresa
-                                ).first()
-                                if fallback_class:
-                                    classificacao_id = fallback_class.id
-                                else:
-                                    nova_class = models.ClassificacaoContabil(
-                                        id_empresa=current_user.id_empresa,
-                                        grupo="Despesas",
-                                        descricao="Estorno de Vendas",
-                                        tipo="Despesa",
-                                        considerar=True
-                                    )
-                                    db.add(nova_class)
-                                    db.flush()
-                                    classificacao_id = nova_class.id
-                            
-                            nova_conta_estorno = models.Conta(
-                                id_empresa=current_user.id_empresa,
-                                tipo_conta=models.ContaTipoEnum.a_pagar,
-                                situacao=models.ContaSituacaoEnum.em_aberto,
-                                descricao=f"{desc_conta} - {cliente_nome}",
-                                numero_conta=str(item.id),
-                                id_fornecedor=cliente_id,
-                                valor=valor_final,
-                                data_emissao=datetime.now(TZ_BR).date(),
-                                data_vencimento=datetime.now(TZ_BR).date(),
-                                pagamento=item.pagamento,
-                                caixa_destino_origem=item.caixa_destino_origem,
-                                id_classificacao_contabil=classificacao_id,
-                                observacoes="Pedido cancelado"
-                            )
-                            db.add(nova_conta_estorno)
-                            db.commit()
+                    for conta in contas_relacionadas:
+                        conta.situacao = models.ContaSituacaoEnum.cancelado
+                    
+                    db.commit()
                 except Exception as e:
-                    print(f"Erro ao gerar financeiro de estorno: {e}")
+                    print(f"Erro ao cancelar contas relacionadas ao pedido: {e}")
 
             # 🎯 LÓGICA ESPECÍFICA: Disparo de E-mails por Trigger de Status
             if old_situacao != item.situacao:

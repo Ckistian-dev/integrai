@@ -443,6 +443,7 @@ class ContaUpdate(BaseModel):
 class Conta(ContaBase):  # RENOMEADO de ContaRead para Conta
     id: int
     id_empresa: int
+    id_classificacao_contabil: Optional[int] = None
     
     fornecedor: Optional["Cadastro"] = None # Atualizada a referência
     classificacao_contabil: Optional["ClassificacaoContabil"] = None
