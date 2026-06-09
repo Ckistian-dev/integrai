@@ -3,11 +3,12 @@ import Select from 'react-select';
 import { components } from 'react-select';
 import api from '../../api/axiosConfig';
 import { Plus, Trash2, Edit2, Check, X, Loader2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 // --- Componente Customizado de Opção (Inline Edit) ---
 const CustomOption = (props) => {
   const { data, selectProps } = props;
-  const { editingId, setEditingId, onUpdate, onDelete } = selectProps.customProps;
+  const { editingId, setEditingId, onUpdate, onDelete, isAdmin } = selectProps.customProps;
   const isEditing = editingId === data.id;
   const [editValue, setEditValue] = useState(data.label);
 
@@ -48,7 +49,7 @@ const CustomOption = (props) => {
   return (
     <components.Option {...props}>
       <div className="flex justify-between items-center h-8 group w-full">
-        {isEditing ? (
+        {isEditing && isAdmin ? (
           <div className="flex items-center flex-1 gap-2 w-full" onMouseDown={(e) => e.stopPropagation()}>
             <input
               type="text"
@@ -68,14 +69,16 @@ const CustomOption = (props) => {
         ) : (
           <>
             <span className="truncate pr-2 flex-1 text-sm">{data.label}</span>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={handleEditClick} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-50 rounded-md transition-colors" title="Editar">
-                <Edit2 size={14} />
-              </button>
-              <button onClick={handleDeleteClick} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="text-red-600 hover:text-red-800 p-1.5 hover:bg-red-50 rounded-md transition-colors" title="Excluir">
-                <Trash2 size={14} />
-              </button>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={handleEditClick} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-50 rounded-md transition-colors" title="Editar">
+                  <Edit2 size={14} />
+                </button>
+                <button onClick={handleDeleteClick} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="text-red-600 hover:text-red-800 p-1.5 hover:bg-red-50 rounded-md transition-colors" title="Excluir">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -86,7 +89,7 @@ const CustomOption = (props) => {
 // --- Componente Customizado de Menu (Footer Add) ---
 const CustomMenuList = (props) => {
   const { selectProps } = props;
-  const { isAdding, setIsAdding, onCreate } = selectProps.customProps;
+  const { isAdding, setIsAdding, onCreate, isAdmin } = selectProps.customProps;
   const [newValue, setNewValue] = useState("");
 
   const handleAddSubmit = async (e) => {
@@ -102,43 +105,48 @@ const CustomMenuList = (props) => {
   return (
     <components.MenuList {...props}>
       {props.children}
-      <div className="border-t border-gray-100 p-2 mt-1 bg-gray-50 rounded-b-md">
-        {isAdding ? (
-          <div className="flex items-center gap-2 animate-fade-in" onMouseDown={(e) => e.stopPropagation()}>
-            <input
-              type="text"
-              value={newValue}
-              onChange={(e) => setNewValue(e.target.value)}
-              placeholder="Digite a nova opção..."
-              className="flex-1 px-2 py-1.5 border border-blue-300 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
-              autoFocus
-              onKeyDown={(e) => { 
-                e.stopPropagation(); 
-                if(e.key === 'Enter') handleAddSubmit(e); 
-              }}
-            />
-            <button onClick={handleAddSubmit} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="bg-green-600 text-white p-1.5 rounded-md hover:bg-green-700 transition-colors shadow-sm" title="Confirmar">
-              <Check size={16} />
+      {isAdmin && (
+        <div className="border-t border-gray-100 p-2 mt-1 bg-gray-50 rounded-b-md">
+          {isAdding ? (
+            <div className="flex items-center gap-2 animate-fade-in" onMouseDown={(e) => e.stopPropagation()}>
+              <input
+                type="text"
+                value={newValue}
+                onChange={(e) => setNewValue(e.target.value)}
+                placeholder="Digite a nova opção..."
+                className="flex-1 px-2 py-1.5 border border-blue-300 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
+                autoFocus
+                onKeyDown={(e) => { 
+                  e.stopPropagation(); 
+                  if(e.key === 'Enter') handleAddSubmit(e); 
+                }}
+              />
+              <button onClick={handleAddSubmit} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="bg-green-600 text-white p-1.5 rounded-md hover:bg-green-700 transition-colors shadow-sm" title="Confirmar">
+                <Check size={16} />
+              </button>
+              <button onClick={() => setIsAdding(false)} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="bg-white border border-gray-300 text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-md transition-colors shadow-sm" title="Cancelar">
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsAdding(true); }}
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              className="flex items-center justify-center bg-green-600 text-white hover:bg-green-700 text-sm font-medium w-full px-3 py-2 rounded-md shadow-sm transition-all"
+            >
+              <Plus size={16} className="mr-2" /> Adicionar nova opção
             </button>
-            <button onClick={() => setIsAdding(false)} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="bg-white border border-gray-300 text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-md transition-colors shadow-sm" title="Cancelar">
-              <X size={16} />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsAdding(true); }}
-            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            className="flex items-center justify-center bg-green-600 text-white hover:bg-green-700 text-sm font-medium w-full px-3 py-2 rounded-md shadow-sm transition-all"
-          >
-            <Plus size={16} className="mr-2" /> Adicionar nova opção
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </components.MenuList>
   );
 };
 
 export const CreatableSelectInput = ({ field, value, onChange, error, modelName, ...props }) => {
+  const { user } = useAuth();
+  const isAdmin = user?.perfil === 'admin' || user?.perfil === 'Admin';
+
   const [options, setOptions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -287,7 +295,7 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
         onChange={handleChange}
         options={options}
         value={selectedOption}
-        placeholder={field.placeholder || "Selecione ou digite para criar..."}
+        placeholder={field.placeholder || (isAdmin ? "Selecione ou digite para criar..." : "Selecione...")}
         classNamePrefix="react-select"
         menuPortalTarget={document.body}
         styles={customStyles}
@@ -304,10 +312,11 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
           editingId,
           setEditingId,
           isAdding,
-          setIsAdding
+          setIsAdding,
+          isAdmin
         }}
         {...props}
-        noOptionsMessage={() => "Digite para buscar ou criar..."}
+        noOptionsMessage={() => isAdmin ? "Digite para buscar ou criar..." : "Nenhum resultado encontrado"}
       />
       
       {error && <p className="text-red-500 text-xs italic mt-1">{error}</p>}

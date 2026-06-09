@@ -1409,11 +1409,12 @@ def get_distinct_values(
                 results = query.all()
                 return [{"value": str(r[0]), "label": str(r[1]) if r[1] else str(r[0])} for r in results]
 
-    query = db.query(distinct(column)).filter(
+    unaccent_col = func.unaccent(cast(column, String))
+    query = db.query(column, unaccent_col).filter(
         model.id_empresa == current_user.id_empresa,
         column.isnot(None),
         cast(column, String) != ""
-    ).order_by(func.unaccent(cast(column, String)).asc())
+    ).distinct().order_by(unaccent_col.asc())
     
     results = query.all()
     return [r[0] for r in results]
@@ -2758,6 +2759,13 @@ def create_field_option(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Cria uma nova opção para um campo."""
+    # Apenas o perfil admin pode criar novas opções para dropdowns editáveis
+    if not current_user.perfil or current_user.perfil.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem criar novas opções para o dropdown."
+        )
+
     # Lógica para compartilhar opções de 'caixa_destino_origem' entre Pedidos e Contas
     target_model = option.model_name
     target_field = option.field_name
@@ -2798,6 +2806,13 @@ def update_field_option(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Atualiza uma opção existente."""
+    # Apenas o perfil admin pode editar opções de dropdowns editáveis
+    if not current_user.perfil or current_user.perfil.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem editar opções do dropdown."
+        )
+
     db_obj = db.query(models.OpcaoCampo).filter(models.OpcaoCampo.id == option_id, models.OpcaoCampo.id_empresa == current_user.id_empresa).first()
     if not db_obj:
         raise HTTPException(status_code=404, detail="Opção não encontrada")
@@ -2813,6 +2828,13 @@ def delete_field_option(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Remove uma opção."""
+    # Apenas o perfil admin pode excluir opções de dropdowns editáveis
+    if not current_user.perfil or current_user.perfil.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem excluir opções do dropdown."
+        )
+
     db.query(models.OpcaoCampo).filter(models.OpcaoCampo.id == option_id, models.OpcaoCampo.id_empresa == current_user.id_empresa).delete()
     db.commit()
     return {"ok": True}
