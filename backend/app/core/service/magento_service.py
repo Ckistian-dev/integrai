@@ -586,3 +586,73 @@ class MagentoService:
         self.db.refresh(novo_cliente)
         logger.info(f"Novo cliente criado com ID ERP: {novo_cliente.id}")
         return novo_cliente
+
+    def update_magento_order_status(self, pedido):
+        """
+        Atualiza a situação do pedido no Magento com base na mudança de status do ERP.
+        """
+        # Extrai o ID do Magento da observação do pedido
+        observacao = pedido.observacao or ""
+        match = re.search(r"ID Magento:\s*(\d+)", observacao)
+        if not match:
+            logger.info(f"Nenhum ID do Magento encontrado na observação do pedido ERP #{pedido.id}")
+            return False
+        magento_entity_id = int(match.group(1))
+
+        # Obter o valor da situação do ERP
+        erp_status = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao)
+        erp_status_lower = erp_status.lower()
+
+        # Mapeamento do status do ERP para o status do Magento
+        status_mapping = {
+            "orcamento": "pending",
+            "orçamento": "pending",
+            "aprovacao": "processing",
+            "aprovação": "processing",
+            "programacao": "processing",
+            "programação": "processing",
+            "producao": "em_producao",
+            "produção": "em_producao",
+            "embalagem": "processing",
+            "faturamento": "processing",
+            "expedicao": "processing",
+            "expedição": "processing",
+            "despachado": "complete",
+            "cancelado": "canceled"
+        }
+
+        new_magento_status = status_mapping.get(erp_status_lower)
+        if not new_magento_status:
+            logger.info(f"Nenhum status correspondente no Magento para o status ERP '{erp_status}'. Sincronização ignorada.")
+            return False
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            if new_magento_status == "canceled":
+                url = f"{self.api_base}/orders/{magento_entity_id}/cancel"
+                logger.info(f"Cancelando pedido Magento {magento_entity_id} via API")
+                resp = requests.post(url, auth=self._get_auth(), json={}, headers=headers, timeout=30.0)
+            else:
+                url = f"{self.api_base}/orders/{magento_entity_id}/comments"
+                payload = {
+                    "statusHistory": {
+                        "status": new_magento_status,
+                        "comment": f"Status atualizado pelo ERP para {erp_status}.",
+                        "is_customer_notified": 0,
+                        "is_visible_on_front": 0
+                    }
+                }
+                logger.info(f"Atualizando status do pedido Magento {magento_entity_id} para {new_magento_status} via API")
+                resp = requests.post(url, auth=self._get_auth(), json=payload, headers=headers, timeout=30.0)
+
+            logger.info(f"Resposta Magento para pedido {magento_entity_id}: Status {resp.status_code} - {resp.text[:200]}")
+            resp.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao atualizar status do pedido Magento {magento_entity_id}: {e}")
+            raise e

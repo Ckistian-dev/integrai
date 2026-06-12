@@ -2687,6 +2687,28 @@ def update_item(
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
 
+                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
+                if "Pedido ML:" in (item.observacao or ""):
+                    try:
+                        import asyncio
+                        from app.core.service.meli_service import MeliService
+                        
+                        meli_svc = MeliService(db, current_user.id_empresa)
+                        asyncio.run(meli_svc.update_meli_order_status(item))
+                    except Exception as e:
+                        import logging as _logging
+                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}")
+
+                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Magento
+                if "ID Magento:" in (item.observacao or ""):
+                    try:
+                        from app.core.service.magento_service import MagentoService
+                        magento_svc = MagentoService(db, current_user.id_empresa)
+                        magento_svc.update_magento_order_status(item)
+                    except Exception as e:
+                        import logging as _logging
+                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
+
     return registry["schema"].from_orm(item)
 
 # --- Endpoint de Deleção (DELETE) ---

@@ -24,6 +24,7 @@ const pedidoVazio = {
     desconto: 0,
     total_com_desconto: 0,
     observacao: '',
+    observacoes_nf: '',
     itens: '[]', // Alterado para corresponder ao schema do backend
     pagamento: '[]', // Alterado para corresponder ao schema do backend
 };
@@ -102,13 +103,44 @@ function CabecalhoEmpresa({ empresa }) {
     );
 }
 
+const calcularDiasUteis = (inicio, fim) => {
+    if (!inicio || !fim) return null;
+    const date1 = new Date(inicio + 'T00:00:00');
+    const date2 = new Date(fim + 'T00:00:00');
+    if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return null;
+    if (date1 > date2) return 0;
+    
+    let count = 0;
+    let curDate = new Date(date1.getTime());
+    while (curDate < date2) {
+        curDate.setDate(curDate.getDate() + 1);
+        const dayOfWeek = curDate.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+            count++;
+        }
+    }
+    return count;
+};
+
 function DetalhesGerais({ pedido }) {
+    const dataEmissaoValida = pedido.data_emissao || pedido.data_pedido || pedido.data_orcamento || (pedido.criado_em ? pedido.criado_em.split('T')[0] : null);
+    
+    const prazoExibido = useMemo(() => {
+        if (pedido.prazo_entrega) return `${pedido.prazo_entrega} dias úteis`;
+        
+        const dias = calcularDiasUteis(dataEmissaoValida, pedido.data_entrega);
+        if (dias !== null) {
+            return `${dias} dias úteis`;
+        }
+        return "Não informado";
+    }, [pedido.prazo_entrega, pedido.data_entrega, dataEmissaoValida]);
+
     return (
         <section className="mt-4 text-xs">
             <div className="grid grid-cols-4 gap-x-4 gap-y-2">
                 <div className="col-span-1">
                     <span className="text-gray-500">Emissão:</span>
-                    <p className="font-semibold text-gray-800">{formatarData(pedido.data_emissao)}</p>
+                    <p className="font-semibold text-gray-800">{formatarData(dataEmissaoValida)}</p>
                 </div>
                 <div className="col-span-1">
                     <span className="text-gray-500">Vendedor:</span>
@@ -120,7 +152,7 @@ function DetalhesGerais({ pedido }) {
                 </div>
                 <div className="col-span-1">
                     <span className="text-gray-500">Prazo Entrega:</span>
-                    <p className="font-semibold text-gray-800">{pedido.prazo_entrega ? `${pedido.prazo_entrega} dias úteis` : "Não informado"}</p>
+                    <p className="font-semibold text-gray-800">{prazoExibido}</p>
                 </div>
                 {pedido.transportadora_nome && (
                     <div className="col-span-4">
@@ -412,7 +444,7 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
                             <SecaoCliente cliente={pedido.cliente} nomeFallback={pedido.cliente_nome} />
                             <TabelaItens itens={itensEnriquecidosECalculados} />
                             <TotaisOrcamento pedido={pedido} totalItensRecalculado={totalItensRecalculado} totalIpi={totalIpi} />
-                            <InformacoesAdicionais observacao={pedido.observacao} />
+                            <InformacoesAdicionais observacao={pedido.observacoes_nf} />
                         </>
                     )}
                 </div>

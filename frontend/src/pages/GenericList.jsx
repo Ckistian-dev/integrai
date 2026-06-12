@@ -3513,6 +3513,28 @@ const GenericList = () => {
                           }
                         }
 
+                        if (colName === 'data_entrega' && modelName === 'pedidos') {
+                          if (!value) return "Não informado";
+                          const dataInicioStr = item.data_pedido || item.data_orcamento || (item.criado_em ? item.criado_em.split('T')[0] : null);
+                          if (!dataInicioStr) return "Não informado";
+                          
+                          const date1 = new Date(dataInicioStr + 'T00:00:00');
+                          const date2 = new Date(value + 'T00:00:00');
+                          if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return "Não informado";
+                          if (date1 > date2) return "0 dias úteis";
+                          
+                          let count = 0;
+                          let curDate = new Date(date1.getTime());
+                          while (curDate < date2) {
+                            curDate.setDate(curDate.getDate() + 1);
+                            const dayOfWeek = curDate.getDay();
+                            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                              count++;
+                            }
+                          }
+                          return `${count} dias úteis`;
+                        }
+
                         // 3. Formatações por tipo de campo
                         if (field?.type === 'boolean') return <BooleanDisplay value={value} />;
                         if (field?.format_mask === 'currency') return <span className="font-medium text-gray-900">{formatCurrency(value)}</span>;

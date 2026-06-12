@@ -396,55 +396,39 @@ class MeliService:
         return novo_produto
 
     def _find_or_create_carrier(self, shipment_details: dict) -> models.Cadastro:
-        """Busca ou cria transportadora com lógica avançada para ME1 (Rodonaves, etc)"""
-        
-        # 1. LOG RADICAL: Vamos ver tudo o que tem dentro do envio para não perder nada
-        try:
-            logger.info(f"DEBUG FULL SHIPMENT: {json.dumps(shipment_details, default=str)}")
-        except:
-            pass
+        """Busca ou cria transportadora com lógica avançada de assemelhação para ME1 e ME2"""
+        if not shipment_details:
+            return None
 
-        # Extração de campos
+        # Extração de campos nativos do ML
         logistic_type = shipment_details.get('logistic_type')
         tracking_method = shipment_details.get('tracking_method')
         mode = shipment_details.get('mode')
         carrier_info = shipment_details.get('carrier_info')
         shipping_option = shipment_details.get('shipping_option') or {}
-        service_id = shipment_details.get('service_id')
 
         carrier_name = None
 
-        # --- ESTRATÉGIA DE DESCOBERTA DE NOME ---
-
-        # 1. Prioridade Absoluta: carrier_info preenchido
+        # 1. Prioridade: carrier_info estruturado
         if carrier_info:
             if isinstance(carrier_info, str):
                 carrier_name = carrier_info
             elif isinstance(carrier_info, dict):
                 carrier_name = carrier_info.get('description') or carrier_info.get('new_description')
 
-        # 2. Se for ME1 (Logística do Vendedor), o nome costuma estar no tracking_method
-        # Ex: tracking_method: "Rodonaves", "Jadlog", "Azul Cargo"
+        # 2. Se for ME1 (Logística Própria), valida pelo método de rastreio
         if not carrier_name and mode == 'me1':
             if tracking_method and tracking_method not in ['common_carrier', 'custom']:
-                # O ML às vezes manda "rodonaves" minúsculo, vamos formatar
                 carrier_name = tracking_method.title() 
 
-        # 3. Tenta pelo nome do Serviço (shipping_option -> name)
-        # Vendedores configuram tabelas de frete com nomes tipo "Rodonaves - SP"
+        # 3. Tenta pelo nome da opção selecionada pelo comprador
         if not carrier_name and shipping_option:
             opt_name = shipping_option.get('name', '')
-            # Ignora nomes genéricos do ML
             termos_genericos = ['normal', 'expresso', 'express', 'standard', 'grátis', 'super expresso']
             if opt_name and opt_name.lower() not in termos_genericos:
                 carrier_name = opt_name
 
-        # 4. Fallback para nomes conhecidos baseados no service_id (Casos raros)
-        if not carrier_name and service_id:
-            # Aqui você pode mapear IDs específicos se descobrir padrões
-            pass
-
-        # 5. Definições Padrão ML (Se nada acima funcionou)
+        # 4. Fallbacks baseados no tipo de logística interna do ML
         if not carrier_name:
             if logistic_type == 'fulfillment':
                 carrier_name = "Mercado Livre Full"
@@ -455,41 +439,66 @@ class MeliService:
             elif mode == 'me2':
                 carrier_name = "Mercado Envíos"
             else:
-                # Se não achou nada, coloca "A Definir" ou o método genérico para não quebrar
                 carrier_name = "Transportadora Padrão"
 
-        logger.info(f"Transportadora Identificada: '{carrier_name}' (Mode: {mode} | Method: {tracking_method})")
-
-        if not carrier_name:
-            return None
-
         carrier_name = str(carrier_name).strip()
+        
+        # --- ESTRATÉGIA DE ASSEMLHAÇÃO / NORMALIZAÇÃO ---
+        normalized_lower = carrier_name.lower()
+        search_terms = [carrier_name] # Lista de variações aceitáveis para o banco
 
-        # --- BUSCA NO BANCO DE DADOS (CASE INSENSITIVE) ---
+        # Se for qualquer variação de logística oficial do ML, mira nos termos core do seu ERP
+        if any(x in normalized_lower for x in ["mercado livre", "mercado envios", "meli"]):
+            search_terms.extend(["Mercado Envios", "Mercado Livre", "MercadoLivre"])
+        
+        # Se for Correios
+        elif "correios" in normalized_lower or "ect" in normalized_lower:
+            search_terms.extend(["Correios", "ECT", "Empresa Brasileira de Correios"])
+            
+        # Para transportadoras ME1 de terceiros (ex: remove " - SP" de "Rodonaves - SP")
+        else:
+            clean_name = re.sub(r'\s*-\s*.*', '', carrier_name).strip()
+            if clean_name and clean_name != carrier_name:
+                search_terms.append(clean_name)
+
+        # --- CONSULTA DINÂMICA COM OR NO BANCO ---
+        from sqlalchemy import or_
+        
+        # Monta os filtros de aproximação baseados nos termos mapeados
+        or_conditions = []
+        for term in search_terms:
+            or_conditions.append(models.Cadastro.nome_razao.ilike(f"%{term}%"))
+            or_conditions.append(models.Cadastro.fantasia.ilike(f"%{term}%"))
+
         carrier = self.db.query(models.Cadastro).filter(
-            models.Cadastro.nome_razao.ilike(carrier_name),
             models.Cadastro.tipo_cadastro == CadastroTipoCadastroEnum.transportadora,
-            models.Cadastro.id_empresa == self.id_empresa
+            models.Cadastro.id_empresa == self.id_empresa,
+            models.Cadastro.situacao == True,
+            or_(*or_conditions)
         ).first()
 
         if carrier:
+            logger.info(f"Transportadora vinculada com sucesso no ERP: '{carrier.nome_razao}' para o envio do ML '{carrier_name}'")
             return carrier
 
-        # --- CRIAÇÃO AUTOMÁTICA ---
-        logger.info(f"Criando transportadora '{carrier_name}' para empresa {self.id_empresa}")
+        # --- FALLBACK: CRIA SE NÃO EXISTIR ---
+        # Garante o fluxo criando uma entidade limpa baseada no termo core principal encontrado
+        display_name = "MERCADO ENVIOS" if "Mercado Envios" in search_terms else carrier_name.upper()
+        
+        logger.warning(f"Nenhuma transportadora compatível encontrada no ERP para '{carrier_name}'. Criando registro virtual.")
         new_carrier = models.Cadastro(
             id_empresa=self.id_empresa,
-            cpf_cnpj='00000000000000', # Dummy
-            nome_razao=carrier_name,
-            fantasia=carrier_name,
+            cpf_cnpj='00000000000000',  # Dummy fiscal padrão para e-commerce
+            nome_razao=display_name,
+            fantasia=display_name,
             tipo_cadastro=CadastroTipoCadastroEnum.transportadora,
             tipo_pessoa=CadastroTipoPessoaEnum.juridica,
             situacao=True,
             cep="00000-000",
-            logradouro="Endereço Virtual ML",
+            logradouro="Endereço Virtual Logística ML",
             numero="S/N",
             cidade="Indefinida",
-            estado="SP"
+            estado=models.EstadoEnum.SP
         )
         self.db.add(new_carrier)
         self.db.commit()
@@ -731,8 +740,8 @@ class MeliService:
                 pass
 
         # Transportadora
-        # Alterado: Não buscar/criar transportadora para deixar campos vazios
-        transportadora_id = None
+        carrier_erp = self._find_or_create_carrier(shipment_details)
+        transportadora_id = carrier_erp.id if carrier_erp else None
             
         # --- Preenchimento de Campos de Volumes (Logística) ---
         tracking_number = shipment_details.get('tracking_number')
@@ -1020,3 +1029,128 @@ class MeliService:
         except Exception as e:
             logger.exception(f"Erro fatal no upload_xml: {e}")
             return {"status": "error", "message": f"Erro inesperado na integração ML: {str(e)}"}
+
+    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None):
+        """
+        Atualiza o status do envio no Mercado Livre com base no status do ERP.
+        Mapeamento de status:
+        - despachado -> shipped (Envio próprio / custom)
+        - entregue / finalizado -> delivered
+        """
+        logger.info(f"Tentando atualizar status do pedido ML {order_id_ml} (Status ERP: {erp_status})")
+        
+        try:
+            async with await self.get_client() as client:
+                # 1. Busca dados do pedido para encontrar o shipment_id
+                order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
+                if order_resp.status_code != 200:
+                    logger.error(f"Erro ao buscar pedido ML {order_id_ml}: {order_resp.status_code} - {order_resp.text}")
+                    return False
+                    
+                order_data = order_resp.json()
+                shipping_data = order_data.get('shipping') or {}
+                shipment_id = shipping_data.get('id')
+                
+                if not shipment_id:
+                    logger.warning(f"Pedido ML {order_id_ml} não possui shipment_id associado.")
+                    return False
+                    
+                # 2. Busca dados do envio para verificar a modalidade logística
+                ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
+                if ship_resp.status_code != 200:
+                    logger.error(f"Erro ao buscar envio {shipment_id}: {ship_resp.status_code} - {ship_resp.text}")
+                    return False
+                    
+                shipment_details = ship_resp.json()
+                logistic_mode = shipment_details.get('logistic_type') or shipment_details.get('mode')
+                current_status = shipment_details.get('status')
+                
+                logger.info(f"Envio {shipment_id} - Modalidade: {logistic_mode} | Status ML Atual: {current_status}")
+                
+                # Se for Mercado Envios 2 (me2, fulfillment, etc.), o status é gerenciado automaticamente e não pode ser alterado manualmente.
+                is_manual_mode = logistic_mode in ['custom', 'not_specified', 'me1'] or not logistic_mode
+                
+                if not is_manual_mode:
+                    logger.info(f"Envio {shipment_id} utiliza logística automatizada ({logistic_mode}). Status é controlado pelo Mercado Livre.")
+                    return False
+                    
+                # Mapeamento e atualização
+                new_ml_status = None
+                erp_status_lower = erp_status.lower()
+                if erp_status_lower == 'despachado':
+                    new_ml_status = 'shipped'
+                elif erp_status_lower in ['faturamento', 'expedicao', 'embalagem', 'produção', 'producao']:
+                    # No Mercado Livre, o status intermediário pode ser handling
+                    if current_status in ['pending', 'handling']:
+                        new_ml_status = 'handling'
+                elif erp_status_lower in ['finalizado', 'entregue']:
+                    new_ml_status = 'delivered'
+                        
+                if not new_ml_status:
+                    logger.debug(f"Nenhum status correspondente para atualizar no ML para o status ERP {erp_status}.")
+                    return False
+                    
+                if current_status == new_ml_status:
+                    logger.info(f"Envio {shipment_id} já está no status {new_ml_status}.")
+                    return True
+                    
+                # 3. Executa a atualização do status do envio
+                payload = {"status": new_ml_status}
+                if tracking_number:
+                    payload["tracking_number"] = tracking_number
+                    
+                logger.info(f"Enviando atualização para envio {shipment_id}: {payload}")
+                url = f"{self.base_url}/shipments/{shipment_id}"
+                resp = await client.put(url, json=payload)
+                
+                if resp.status_code in [200, 201]:
+                    logger.info(f"Status do envio {shipment_id} atualizado com sucesso para {new_ml_status}!")
+                    return True
+                else:
+                    logger.error(f"Erro ao atualizar status do envio {shipment_id}: {resp.status_code} - {resp.text}")
+                    return False
+                    
+        except Exception as e:
+            logger.exception(f"Erro ao atualizar status de envio no Mercado Livre: {e}")
+            return False
+
+    async def update_meli_order_status(self, pedido):
+        """
+        Atualiza o status dos envios no Mercado Livre associados a um pedido do ERP.
+        """
+        # Extrai os IDs do Mercado Livre da observação do pedido
+        observacao = pedido.observacao or ""
+        ids = set()
+        match_pack = re.search(r"Pedido ML:\s*(\d+)", observacao)
+        if match_pack:
+            ids.add(match_pack.group(1))
+            
+        match_id = re.search(r"ID:\s*([\d,\s]+)", observacao)
+        if match_id:
+            raw_ids = match_id.group(1)
+            for part in raw_ids.split(','):
+                clean_part = part.strip()
+                if clean_part.isdigit():
+                    ids.add(clean_part)
+                    
+        ml_order_ids = list(ids)
+        if not ml_order_ids:
+            logger.info(f"Nenhum ID do Mercado Livre encontrado na observação do pedido {pedido.id}")
+            return False
+            
+        situacao_para_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao)
+        
+        # Pega o código de rastreamento se houver na observação
+        tracking_number = None
+        match_track = re.search(r"Rastreio:\s*(\w+)", observacao)
+        if match_track:
+            tracking_number = match_track.group(1)
+            
+        logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str}) -> IDs ML: {ml_order_ids}")
+        
+        success = True
+        for ml_order_id in ml_order_ids:
+            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number)
+            if not res:
+                success = False
+        return success
