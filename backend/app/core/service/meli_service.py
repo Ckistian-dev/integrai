@@ -196,6 +196,7 @@ class MeliService:
             raise HTTPException(status_code=resp.status_code, detail=f"Erro ao buscar pedidos ML: {resp.text}")
             
         data = resp.json()
+        logger.info(f"Resultado da pesquisa de pedidos da API do Mercado Livre: {json.dumps(data, default=str)}")
         results = data.get("results", [])
         total = data.get("paging", {}).get("total", 0)
         
@@ -328,11 +329,47 @@ class MeliService:
         shipping_addr = shipment_details.get('receiver_address', {})
         
         # --- NOVA LÓGICA: DADOS DO COMPRADOR ---
-        nome = ml_order.get('buyer', {}).get('first_name')
-        sobrenome = ml_order.get('buyer', {}).get('last_name')
-        nome_completo = f"{nome or ''} {sobrenome or ''}".strip()
+        nome_completo = None
+
+        # 1. Tenta obter o nome/razão social a partir do billing_info (adicional ou principal)
+        if billing_info:
+            # 1a. Verifica additional_info
+            add_info = billing_info.get('additional_info') or []
+            if isinstance(add_info, list):
+                # Procura por BUSINESS_NAME (Razão Social / Nome da empresa)
+                bus_name = next((x.get('value') for x in add_info if x.get('type') == 'BUSINESS_NAME'), None)
+                if bus_name:
+                    nome_completo = bus_name
+                else:
+                    first = next((x.get('value') for x in add_info if x.get('type') == 'FIRST_NAME'), '')
+                    last = next((x.get('value') for x in add_info if x.get('type') == 'LAST_NAME'), '')
+                    full = f"{first} {last}".strip()
+                    if full:
+                        nome_completo = full
+
+            # 1b. Fallback para campos principais do billing_info
+            if not nome_completo:
+                b_name = billing_info.get('name')
+                b_last = billing_info.get('last_name')
+                if b_name:
+                    nome_completo = f"{b_name} {b_last or ''}".strip()
+
+        # 2. Fallback para os dados de billing dentro do objeto do comprador no pedido
         if not nome_completo:
-            nome_completo = ml_order.get('buyer', {}).get('nickname')
+            buyer_billing = ml_order.get('buyer', {}).get('billing_info', {})
+            if buyer_billing:
+                b_name = buyer_billing.get('name')
+                b_last = buyer_billing.get('last_name')
+                if b_name:
+                    nome_completo = f"{b_name} {b_last or ''}".strip()
+
+        # 3. Fallback final para os dados gerais do comprador (first_name, last_name ou nickname)
+        if not nome_completo:
+            nome = ml_order.get('buyer', {}).get('first_name')
+            sobrenome = ml_order.get('buyer', {}).get('last_name')
+            nome_completo = f"{nome or ''} {sobrenome or ''}".strip()
+            if not nome_completo:
+                nome_completo = ml_order.get('buyer', {}).get('nickname')
 
         # Determina tipo de pessoa
         tipo_pessoa = CadastroTipoPessoaEnum.fisica
@@ -607,6 +644,7 @@ class MeliService:
             order_resp = await client_http.get(f"{self.base_url}/orders/{order_id_ml}")
             order_resp.raise_for_status()
             ml_order = order_resp.json()
+            logger.info(f"Resultado da busca do pedido {order_id_ml} na API do Mercado Livre: {json.dumps(ml_order, default=str)}")
             
             shipping_data = ml_order.get('shipping') or {}
             ship_id = shipping_data.get('id')
