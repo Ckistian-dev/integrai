@@ -170,13 +170,25 @@ class NFeService:
     def _limpar_formatacao(self, valor: str) -> str:
         if not valor:
             return ""
-        return "".join(filter(str.isdigit, valor))
+        return "".join(c for c in str(valor) if c.isalnum()).upper()
 
     def _limpar_texto(self, valor: str) -> str:
         if not valor:
             return ""
-        # Remove espaços duplos e espaços nas pontas
-        return re.sub(r'\s+', ' ', str(valor)).strip()
+        
+        # Converte para string
+        valor = str(valor)
+        
+        # Normalização de pontuações comuns fora do range latin1/ASCII
+        valor = valor.replace("–", "-").replace("—", "-")
+        valor = valor.replace("“", '"').replace("”", '"')
+        valor = valor.replace("‘", "'").replace("’", "'")
+        
+        # Filtra mantendo apenas caracteres no range da SEFAZ (espaço a ÿ)
+        valor_filtrado = "".join(c for c in valor if "\x20" <= c <= "\xff")
+        
+        # Substitui múltiplos espaços (inclusive quebras de linha/abas) por um único espaço e limpa as pontas
+        return re.sub(r'\s+', ' ', valor_filtrado).strip()
 
     def _gerar_danfe(self, xml_nfe, nProt: str, dhRecbto: str, chNFe: str, c=None, is_cancelada: bool = False) -> str:
         """
@@ -1180,15 +1192,17 @@ class NFeService:
                         
                         # Se houver DIFAL, insere o texto legal
                         if v_icms_uf_dest_tot > 0:
-                            str_difal = (
-                                f"ICMS DIFAL a não contribuinte consumidor final, disposto na EC 87/2015. "
-                                f"Valor ICMS para UF destino: R${format_currency(v_icms_uf_dest_tot)}. "
-                                f"Valor FCP para o destino: R${format_currency(v_fcp_uf_dest_tot)}."
-                            )
-                            textos_sistema.append(str_difal)
-                            
-                            # Adiciona Regime Especial (Geralmente associado a operações interestaduais/específicas)
-                            textos_sistema.append("Procedimento autorizado pelo Regime Especial nº 8.092/2024")
+                            inf_cpl_upper = str(inf_cpl).upper()
+                            if "EC 87/2015" not in inf_cpl_upper and "DIFAL" not in inf_cpl_upper:
+                                str_difal = (
+                                    f"ICMS DIFAL a não contribuinte consumidor final, disposto na EC 87/2015. "
+                                    f"Valor ICMS para UF destino: R${format_currency(v_icms_uf_dest_tot)}. "
+                                    f"Valor FCP para o destino: R${format_currency(v_fcp_uf_dest_tot)}."
+                                )
+                                textos_sistema.append(str_difal)
+                                
+                                # Adiciona Regime Especial (Geralmente associado a operações interestaduais/específicas)
+                                textos_sistema.append("Procedimento autorizado pelo Regime Especial nº 8.092/2024")
                     except:
                         pass
 
@@ -1687,7 +1701,7 @@ class NFeService:
             
             # Define UF do Cliente (prioridade para o endereço do pedido)
             uf_cliente_obj = pedido.endereco_estado or cli_db.estado
-            uf_cliente = (uf_cliente_obj.value if hasattr(uf_cliente_obj, 'value') else uf_cliente_obj).upper()
+            uf_cliente = (uf_cliente_obj.value if hasattr(uf_cliente_obj, 'value') else uf_cliente_obj or "").upper()
             
             tipo_doc = 'CPF' if len(self._limpar_formatacao(cli_db.cpf_cnpj)) == 11 else 'CNPJ'
             
@@ -1701,30 +1715,59 @@ class NFeService:
                 except:
                     ind_ie = 9
 
-
             # Em homologação, a Razão Social do destinatário deve ser fixa (Regra SEFAZ)
             razao_social_cli = cli_db.nome_razao
             if ambiente_homologacao:
                 razao_social_cli = 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
 
+            # --- PRÉ-VALIDAÇÃO E SANITIZAÇÃO DO CLIENTE (DESTINATÁRIO) ---
+            razao_social_clean = self._limpar_texto(razao_social_cli)
+            logradouro_clean = self._limpar_texto(pedido.endereco_logradouro or cli_db.logradouro)
+            numero_clean = self._limpar_texto(pedido.endereco_numero or cli_db.numero)
+            complemento_clean = self._limpar_texto(pedido.endereco_complemento or cli_db.complemento or '')[:60]
+            bairro_clean = self._limpar_texto(pedido.endereco_bairro or cli_db.bairro)
+            municipio_clean = self._limpar_texto(pedido.endereco_cidade or cli_db.cidade)
+            cep_clean = self._limpar_formatacao(pedido.endereco_cep or cli_db.cep)
+            telefone_clean = self._limpar_formatacao(cli_db.telefone or cli_db.celular)
+            
+            erros_cliente = []
+            if not razao_social_clean:
+                erros_cliente.append("Nome/Razão Social")
+            if not logradouro_clean:
+                erros_cliente.append("Logradouro (Rua/Avenida)")
+            if not numero_clean:
+                erros_cliente.append("Número (se não houver, preencha como 'S/N')")
+            if not bairro_clean:
+                erros_cliente.append("Bairro")
+            if not municipio_clean:
+                erros_cliente.append("Município/Cidade")
+            if not uf_cliente:
+                erros_cliente.append("Estado (UF)")
+            if not cep_clean or len(cep_clean) != 8:
+                erros_cliente.append("CEP válido (8 dígitos)")
+                
+            if erros_cliente:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Erro ao emitir NFe: O cadastro do destinatário ou o endereço de entrega do pedido está incompleto. Por favor, preencha os seguintes campos obrigatórios: {', '.join(erros_cliente)}."
+                )
+
             cliente = Cliente(
-                razao_social=self._limpar_texto(razao_social_cli),
+                razao_social=razao_social_clean,
                 tipo_documento=tipo_doc,
                 email=self._limpar_texto(cli_db.email or ''),
                 numero_documento=self._limpar_formatacao(cli_db.cpf_cnpj),
                 indicador_ie=ind_ie,
                 inscricao_estadual=self._limpar_formatacao(cli_db.inscricao_estadual),
-                
-                # --- AQUI ESTÁ A ALTERAÇÃO: Prioridade para o endereço do Pedido ---
-                endereco_logradouro=self._limpar_texto(pedido.endereco_logradouro or cli_db.logradouro),
-                endereco_numero=self._limpar_texto(pedido.endereco_numero or cli_db.numero),
-                endereco_complemento=self._limpar_texto(pedido.endereco_complemento or cli_db.complemento or '')[:60],
-                endereco_bairro=self._limpar_texto(pedido.endereco_bairro or cli_db.bairro),
-                endereco_municipio=self._limpar_texto(pedido.endereco_cidade or cli_db.cidade),
+                endereco_logradouro=logradouro_clean,
+                endereco_numero=numero_clean,
+                endereco_complemento=complemento_clean,
+                endereco_bairro=bairro_clean,
+                endereco_municipio=municipio_clean,
                 endereco_uf=uf_cliente,
-                endereco_cep=self._limpar_formatacao(pedido.endereco_cep or cli_db.cep),
+                endereco_cep=cep_clean,
                 endereco_pais=CODIGO_BRASIL,
-                endereco_telefone=self._limpar_formatacao(cli_db.telefone or cli_db.celular)
+                endereco_telefone=telefone_clean
             )
 
             # --- NOTA FISCAL (CABEÇALHO) ---
@@ -1875,20 +1918,55 @@ class NFeService:
             }
             crt_val = crt_map.get(self.empresa.crt, '1')
             
+            # --- PRÉ-VALIDAÇÃO E SANITIZAÇÃO DO EMITENTE (EMPRESA) ---
+            emp_razao_clean = self._limpar_texto(self.empresa.razao)
+            emp_fantasia_clean = self._limpar_texto(self.empresa.fantasia or self.empresa.razao)
+            emp_logradouro_clean = self._limpar_texto(self.empresa.logradouro)
+            emp_numero_clean = self._limpar_texto(self.empresa.numero)
+            emp_bairro_clean = self._limpar_texto(self.empresa.bairro)
+            emp_municipio_clean = self._limpar_texto(self.empresa.cidade)
+            emp_cep_clean = self._limpar_formatacao(self.empresa.cep)
+            emp_cnpj_clean = self._limpar_formatacao(self.empresa.cnpj)
+            emp_ie_clean = self._limpar_formatacao(self.empresa.inscricao_estadual)
+            
+            erros_emitente = []
+            if not emp_razao_clean:
+                erros_emitente.append("Razão Social")
+            if not emp_cnpj_clean:
+                erros_emitente.append("CNPJ")
+            if not emp_ie_clean:
+                erros_emitente.append("Inscrição Estadual")
+            if not emp_logradouro_clean:
+                erros_emitente.append("Logradouro (Rua/Avenida)")
+            if not emp_numero_clean:
+                erros_emitente.append("Número")
+            if not emp_bairro_clean:
+                erros_emitente.append("Bairro")
+            if not emp_municipio_clean:
+                erros_emitente.append("Município/Cidade")
+            if not emp_cep_clean or len(emp_cep_clean) != 8:
+                erros_emitente.append("CEP válido (8 dígitos)")
+                
+            if erros_emitente:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Erro ao emitir NFe: Os dados da sua Empresa (Emitente) estão incompletos nas configurações. Por favor, preencha: {', '.join(erros_emitente)}."
+                )
+
             emitente = Emitente(
-                razao_social=self._limpar_texto(self.empresa.razao),
-                nome_fantasia=self._limpar_texto(self.empresa.fantasia or self.empresa.razao),
-                cnpj=self._limpar_formatacao(self.empresa.cnpj),
+                razao_social=emp_razao_clean,
+                nome_fantasia=emp_fantasia_clean,
+                cnpj=emp_cnpj_clean,
                 codigo_de_regime_tributario=crt_val,
-                inscricao_estadual=self._limpar_formatacao(self.empresa.inscricao_estadual),
+                inscricao_estadual=emp_ie_clean,
                 inscricao_municipal=self._limpar_formatacao(self.empresa.inscricao_municipal),
                 cnae_fiscal=self._limpar_formatacao(self.empresa.cnae),
-                endereco_logradouro=self._limpar_texto(self.empresa.logradouro),
-                endereco_numero=self._limpar_texto(self.empresa.numero),
-                endereco_bairro=self._limpar_texto(self.empresa.bairro),
-                endereco_municipio=self._limpar_texto(self.empresa.cidade),
+                endereco_logradouro=emp_logradouro_clean,
+                endereco_numero=emp_numero_clean,
+                endereco_bairro=emp_bairro_clean,
+                endereco_municipio=emp_municipio_clean,
                 endereco_uf=uf_empresa,
-                endereco_cep=self._limpar_formatacao(self.empresa.cep),
+                endereco_cep=emp_cep_clean,
                 endereco_pais=CODIGO_BRASIL,
                 inscricao_estadual_subst_tributaria=iest_especifico,
                 endereco_telefone=self._limpar_formatacao(self.empresa.telefone)
@@ -1944,38 +2022,57 @@ class NFeService:
             if pedido.transportadora:
                 transp_db = pedido.transportadora
                 
+                # --- PRÉ-VALIDAÇÃO E SANITIZAÇÃO DA TRANSPORTADORA ---
+                transp_razao_clean = self._limpar_texto(transp_db.nome_razao)[:60]
+                transp_cnpj_cpf_clean = self._limpar_formatacao(transp_db.cpf_cnpj)
+                transp_logradouro_clean = self._limpar_texto(transp_db.logradouro)[:60]
+                transp_municipio_clean = self._limpar_texto(transp_db.cidade)[:60]
+                transp_uf = (transp_db.estado.value if hasattr(transp_db.estado, 'value') else transp_db.estado or "").upper()
+                
+                erros_transp = []
+                if not transp_razao_clean:
+                    erros_transp.append("Razão Social")
+                if not transp_cnpj_cpf_clean:
+                    erros_transp.append("CNPJ/CPF")
+                
+                # Se o endereço começar a ser preenchido, valida as partes obrigatórias do endereço da transportadora
+                if transp_logradouro_clean or transp_municipio_clean or transp_uf:
+                    if not transp_logradouro_clean:
+                        erros_transp.append("Logradouro (Rua/Avenida)")
+                    if not transp_municipio_clean:
+                        erros_transp.append("Município/Cidade")
+                    if not transp_uf:
+                        erros_transp.append("Estado (UF)")
+                
+                if erros_transp:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Erro ao emitir NFe: Os dados da Transportadora selecionada estão incompletos. Por favor, preencha os seguintes campos obrigatórios: {', '.join(erros_transp)}."
+                    )
+
                 # 1. PREPARAÇÃO DOS DADOS
-                raw_doc = transp_db.cpf_cnpj
-                doc_transp = self._limpar_formatacao(raw_doc)
+                doc_transp = transp_cnpj_cpf_clean
                 
                 # Tratamento da Inscrição Estadual
                 ie_transp = self._limpar_formatacao(transp_db.inscricao_estadual)
                 if not ie_transp:
-                    ie_transp = None # Ou string vazia, dependendo de como o PyNFE trata IE isento nessa versão
+                    ie_transp = None
                 
-                # 2. DEFINIÇÃO DO TIPO DE DOCUMENTO (Baseado na classe que você enviou)
-                tipo_doc = "CNPJ" # Valor padrão
+                # 2. DEFINIÇÃO DO TIPO DE DOCUMENTO
+                tipo_doc = "CNPJ"
                 num_doc = doc_transp
-                
                 if len(doc_transp) == 11:
                     tipo_doc = "CPF"
                 
-                # 3. CRIAÇÃO DO OBJETO (Usando os nomes exatos da classe)
+                # 3. CRIAÇÃO DO OBJETO
                 transportadora_nfe = Transportadora(
-                    razao_social=self._limpar_texto(transp_db.nome_razao)[:60],
-                    
-                    # AQUI ESTÁ O SEGREDO:
-                    tipo_documento=tipo_doc,      # "CPF" ou "CNPJ"
-                    numero_documento=num_doc,     # O número em si
-                    
+                    razao_social=transp_razao_clean,
+                    tipo_documento=tipo_doc,
+                    numero_documento=num_doc,
                     inscricao_estadual=ie_transp,
-                    
-                    endereco_logradouro=self._limpar_texto(transp_db.logradouro)[:60],
-                    endereco_municipio=self._limpar_texto(transp_db.cidade)[:60],
-                    endereco_uf=transp_db.estado.value if hasattr(transp_db.estado, 'value') else transp_db.estado,
-                    # Nota: A classe que você mandou NÃO tem 'endereco_bairro' listado, 
-                    # mas se herdar de Entidade pode ser que aceite. 
-                    # Se der erro, remova a linha abaixo.
+                    endereco_logradouro=transp_logradouro_clean or None,
+                    endereco_municipio=transp_municipio_clean or None,
+                    endereco_uf=transp_uf or None,
                     endereco_bairro=self._limpar_texto(transp_db.bairro)[:60] if transp_db.bairro else None
                 )
 
@@ -2703,6 +2800,35 @@ class NFeService:
                 nota_fiscal.totais_icms_inter_remetente = tot_vICMSUFRemet
                 
                 print(f"DEBUG: Totais definidos no objeto -> Dest: {tot_vICMSUFDest} | FCP: {tot_vFCPUFDest}")
+
+                # Injeta texto legal do DIFAL nas informações complementares (rodapé)
+                difal_parts = []
+                tot_vBCUFDest = sum(d['vBCUFDest'] for d in difal_data_injection.values())
+                
+                if tot_vBCUFDest > 0:
+                    difal_parts.append(f"Base de Calculo: R$ {f'{tot_vBCUFDest:.2f}'.replace('.', ',')}")
+                if tot_vICMSUFDest > 0:
+                    difal_parts.append(f"DIFAL UF Destino: R$ {f'{tot_vICMSUFDest:.2f}'.replace('.', ',')}")
+                if tot_vFCPUFDest > 0:
+                    difal_parts.append(f"FCP: R$ {f'{tot_vFCPUFDest:.2f}'.replace('.', ',')}")
+                if tot_vICMSUFRemet > 0:
+                    difal_parts.append(f"DIFAL UF Origem: R$ {f'{tot_vICMSUFRemet:.2f}'.replace('.', ',')}")
+                
+                if difal_parts:
+                    difal_text = "ICMS DIFAL a nao contribuinte consumidor final, disposto na EC 87/2015. " + " | ".join(difal_parts) + "."
+                    difal_text += " Procedimento autorizado pelo Regime Especial n 8.092/2024."
+                    
+                    difal_text = self._limpar_texto(difal_text)
+                    
+                    current_inf = nota_fiscal.informacoes_complementares or ""
+                    if current_inf:
+                        # Previne duplicação caso essa função seja rodada de novo
+                        if "EC 87/2015" not in current_inf:
+                            nota_fiscal.informacoes_complementares = (
+                                current_inf.strip() + " - " + difal_text
+                            )
+                    else:
+                        nota_fiscal.informacoes_complementares = difal_text
 
             # --- RESPONSÁVEL TÉCNICO (Obrigatório no PR) ---
             # Dados carregados do .env via settings
@@ -3658,7 +3784,9 @@ class NFeService:
                 is_mercado_envios = True
 
         if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
-            if settings.ENVIRONMENT != "production":
+            if pedido.intelipost_criado:
+                intelipost_res = {"success": True, "message": "Ordem de envio já criada na Intelipost."}
+            elif settings.ENVIRONMENT != "production":
                 intelipost_res = {"success": True, "message": "Simulado: Ordem de envio criada na Intelipost (Ambiente de Testes)"}
                 pedido.intelipost_criado = True
             else:

@@ -12,8 +12,26 @@ export const MASKS = {
   'cep': '00000-000',
   'ncm': '0000.00.00',
   // Adicione 'cnpj' apontando para a mesma estrutura do 'cnpj_cpf' para garantir
-  'cnpj': [{ mask: '000.000.000-00' }, { mask: '00.000.000/0000-00' }],
-  'cnpj_cpf': [{ mask: '000.000.000-00' }, { mask: '00.000.000/0000-00' }],
+  'cnpj': [
+    { mask: '000.000.000-00' },
+    {
+      mask: 'XX.XXX.XXX/XXXX-00',
+      definitions: {
+        'X': /[0-9a-zA-Z]/
+      },
+      prepareChar: (str) => str.toUpperCase()
+    }
+  ],
+  'cnpj_cpf': [
+    { mask: '000.000.000-00' },
+    {
+      mask: 'XX.XXX.XXX/XXXX-00',
+      definitions: {
+        'X': /[0-9a-zA-Z]/
+      },
+      prepareChar: (str) => str.toUpperCase()
+    }
+  ],
   'phone': [
     { mask: '(00) 0000-0000' },
     { mask: '(00) 0 0000-0000' },
@@ -470,7 +488,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
   
   const loadOptions = (inputValue, callback) => {
     api.get(`/generic/produtos`, {
-      params: { search_term: inputValue, limit: 20, situacao: 'true' }
+      params: { search_term: inputValue, limit: 1000, situacao: 'true' }
     }).then(response => {
       const options = response.data.items.map(item => ({
         value: item.id,
@@ -827,7 +845,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
 
     const params = {
       search_term: inputValue,
-      limit: 20
+      limit: 1000
     };
 
     if (filters.length > 0) {

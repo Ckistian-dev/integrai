@@ -30,7 +30,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
   
   const loadOptions = (inputValue, callback) => {
     api.get(`/generic/produtos`, {
-      params: { search_term: inputValue, limit: 20, situacao: 'true' }
+      params: { search_term: inputValue, limit: 1000, situacao: 'true' }
     }).then(response => {
       const options = response.data.items.map(item => ({
         value: item.id,
@@ -81,7 +81,7 @@ const AsyncPlanoContaSelect = ({ value, onChange }) => {
 
   const loadOptions = (inputValue, callback) => {
     api.get(`/generic/classificacao_contabil`, {
-      params: { search_term: inputValue, limit: 20 }
+      params: { search_term: inputValue, limit: 1000 }
     }).then(response => {
       const options = response.data.items.map(item => ({
         value: item.id,
@@ -132,7 +132,7 @@ const AsyncCaixaSelect = ({ value, onChange }) => {
 
   const loadOptions = (inputValue, callback) => {
     api.get(`/generic/opcoes_campos`, {
-      params: { search_term: inputValue, model_name: 'contas', field_name: 'caixa_destino_origem', limit: 20 }
+      params: { search_term: inputValue, model_name: 'contas', field_name: 'caixa_destino_origem', limit: 1000 }
     }).then(response => {
       const options = response.data.items.map(item => ({
         value: item.valor,

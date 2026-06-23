@@ -530,7 +530,7 @@ class MagentoService:
         cliente = None
         if taxvat:
             # Remove pontuação
-            clean_doc = "".join(filter(str.isdigit, taxvat))
+            clean_doc = "".join(c for c in taxvat if c.isalnum()).upper()
             cliente = self.db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == clean_doc,
                 models.Cadastro.id_empresa == self.id_empresa
@@ -564,12 +564,13 @@ class MagentoService:
         else:
             bairro = street_lines[2] if len(street_lines) > 2 else ''
 
+        clean_doc_create = "".join(c for c in taxvat if c.isalnum()).upper() if taxvat else '00000000000'
         novo_cliente = models.Cadastro(
             id_empresa=self.id_empresa,
-            cpf_cnpj=taxvat or '00000000000', # Fallback
+            cpf_cnpj=clean_doc_create,
             nome_razao=f"{address_source.get('firstname')} {address_source.get('lastname')}".upper(),
             tipo_cadastro=CadastroTipoCadastroEnum.cliente,
-            tipo_pessoa=CadastroTipoPessoaEnum.fisica, # Lógica simples
+            tipo_pessoa=CadastroTipoPessoaEnum.juridica if len(clean_doc_create) > 11 else CadastroTipoPessoaEnum.fisica,
             email=email,
             telefone="".join(filter(str.isdigit, str(address_source.get('telephone') or '')))[:20],
             cep="".join(filter(str.isdigit, str(address_source.get('postcode') or '')))[:9],

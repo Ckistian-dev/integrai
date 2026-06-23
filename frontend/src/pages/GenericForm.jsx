@@ -378,7 +378,7 @@ const GenericForm = ({ modelName: propModelName }) => {
 
   // --- INTEGRAÇÃO BRASIL API (CNPJ) ---
   const fetchCnpjData = useCallback(async (cnpjValue) => {
-    const cnpj = String(cnpjValue).replace(/\D/g, '');
+    const cnpj = String(cnpjValue).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     if (cnpj.length !== 14) return;
 
     try {
@@ -478,7 +478,7 @@ const GenericForm = ({ modelName: propModelName }) => {
 
     // Dispara busca de CNPJ se for o campo 'cpf_cnpj' e tiver 14 dígitos
     if (name === 'cpf_cnpj') {
-      const cleanVal = String(val).replace(/\D/g, '');
+      const cleanVal = String(val).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       if (cleanVal.length === 14) {
         setFormData(prev => ({ ...prev, tipo_pessoa: 'juridica' }));
         fetchCnpjData(val);

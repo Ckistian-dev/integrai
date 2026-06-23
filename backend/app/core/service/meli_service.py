@@ -314,6 +314,8 @@ class MeliService:
             # 3. Fallback Final: ID do Comprador
             doc_number = f"ML{ml_order['buyer']['id']}" # Fallback
             logger.debug(f"Documento não encontrado nos dados do comprador. Usando fallback ID: {doc_number}")
+        else:
+            doc_number = "".join(c for c in str(doc_number) if c.isalnum()).upper()
         
         # 2. Verifica se cliente existe
         cliente = self.db.query(models.Cadastro).filter(
@@ -375,7 +377,7 @@ class MeliService:
         tipo_pessoa = CadastroTipoPessoaEnum.fisica
         if doc_type == 'CNPJ':
             tipo_pessoa = CadastroTipoPessoaEnum.juridica
-        elif len(str(doc_number)) > 11 and str(doc_number).isdigit():
+        elif len(str(doc_number)) > 11:
              tipo_pessoa = CadastroTipoPessoaEnum.juridica
 
         logger.info(f"Criando novo cliente {doc_number} ({nome_completo}) para empresa {self.id_empresa}")

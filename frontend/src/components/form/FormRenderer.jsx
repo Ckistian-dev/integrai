@@ -71,8 +71,8 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
           finalValue = null;
         }
       } else if (typeof maskProps === 'string' || Array.isArray(maskProps)) {
-        // Se for CPF/CNPJ, limpa tudo e deixa só números
-        if (finalValue) finalValue = finalValue.replace(/\D/g, ''); 
+        // Se for CPF/CNPJ, limpa tudo e deixa só caracteres alfanuméricos
+        if (finalValue) finalValue = finalValue.replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); 
         if (finalValue === '') finalValue = null;
       }
 

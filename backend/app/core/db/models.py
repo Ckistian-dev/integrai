@@ -594,7 +594,7 @@ class Cadastro(Base):
     
     # --- Aba: Dados Gerais ---
     cpf_cnpj = Column(String(18), nullable=False, index=True, 
-                      info={'format_mask': 'cnpj_cpf', 'tab': 'Dados Gerais', 'label': 'CPF/CNPJ', 'placeholder': 'Digite apenas números'})
+                      info={'format_mask': 'cnpj_cpf', 'tab': 'Dados Gerais', 'label': 'CPF/CNPJ', 'placeholder': 'Digite CPF ou CNPJ'})
     nome_razao = Column(String, nullable=False, index=True, 
                         info={'tab': 'Dados Gerais', 'label': 'Nome / Razão Social', 'placeholder': 'Ex: João Silva ou Empresa X Ltda'})
     fantasia = Column(String, 
