@@ -1583,7 +1583,7 @@ class NFeService:
             id_transportadora=pedido_origem.id_transportadora,
             origem_venda=pedido_origem.origem_venda,
             situacao=PedidoSituacaoEnum.faturamento, # Vai para Faturamento para conferência antes de emitir
-            data_orcamento=datetime.now(TZ_BR).date(),
+            data_orcamento=datetime.now(TZ_BR).date() if 'TZ_BR' in globals() else datetime.now().date(),
             
             # Copia exata dos dados financeiros e itens
             itens=itens_copia,
@@ -1592,10 +1592,23 @@ class NFeService:
             total_desconto=pedido_origem.total_desconto,
             pagamento=pedido_origem.pagamento,
             pagamento_descricao=pedido_origem.pagamento_descricao,
+            caixa_destino_origem=pedido_origem.caixa_destino_origem,
+            ordem_finalizacao=pedido_origem.ordem_finalizacao,
+            
+            # Endereço de Entrega
+            endereco_cep=pedido_origem.endereco_cep,
+            endereco_estado=pedido_origem.endereco_estado,
+            endereco_cidade=pedido_origem.endereco_cidade,
+            endereco_bairro=pedido_origem.endereco_bairro,
+            endereco_logradouro=pedido_origem.endereco_logradouro,
+            endereco_numero=pedido_origem.endereco_numero,
+            endereco_complemento=pedido_origem.endereco_complemento,
             
             # Dados de Frete e Logística
             modalidade_frete=pedido_origem.modalidade_frete,
             valor_frete=pedido_origem.valor_frete,
+            ipi_frete=pedido_origem.ipi_frete,
+            total_frete=pedido_origem.total_frete,
             volumes_quantidade=pedido_origem.volumes_quantidade,
             volumes_especie=pedido_origem.volumes_especie,
             volumes_marca=pedido_origem.volumes_marca,
@@ -1608,8 +1621,15 @@ class NFeService:
             veiculo_uf=pedido_origem.veiculo_uf,
             veiculo_antt=pedido_origem.veiculo_antt,
             
-            # Outros
+            # Outros e Integrações
             indicador_presenca=pedido_origem.indicador_presenca,
+            modelo_fiscal=pedido_origem.modelo_fiscal,
+            delivery_method_id_intelipost=pedido_origem.delivery_method_id_intelipost,
+            quote_id=pedido_origem.quote_id,
+            intelipost_id=pedido_origem.intelipost_id,
+            meli_xml_enviado=pedido_origem.meli_xml_enviado,
+            intelipost_criado=pedido_origem.intelipost_criado,
+            email_enviado=pedido_origem.email_enviado,
 
             # Alterações para Devolução
             tipo_operacao=RegraTipoOperacaoEnum.devolucao_entrada,
@@ -1625,6 +1645,98 @@ class NFeService:
         return {
             "success": True, 
             "message": f"Pedido de devolução #{novo_pedido.id} gerado com sucesso! Encontra-se em Faturamento.",
+            "id": novo_pedido.id
+        }
+
+    def gerar_complemento(self, pedido_id: int):
+        """
+        Duplica um pedido existente com finalidade complementar e o coloca em Faturamento.
+        """
+        # 1. Busca pedido original
+        pedido_origem = self.db.query(models.Pedido).filter(
+            models.Pedido.id == pedido_id,
+            models.Pedido.id_empresa == self.id_empresa
+        ).first()
+
+        if not pedido_origem:
+            raise HTTPException(status_code=404, detail="Pedido original não encontrado.")
+        
+        if not pedido_origem.chave_acesso:
+            raise HTTPException(status_code=400, detail="Pedido original não possui NFe autorizada para referenciar.")
+
+        # 2. Cria novo pedido (Duplicação)
+        itens_copia = [item.copy() for item in pedido_origem.itens] if pedido_origem.itens else []
+
+        novo_pedido = models.Pedido(
+            id_empresa=self.id_empresa,
+            id_cliente=pedido_origem.id_cliente,
+            id_vendedor=pedido_origem.id_vendedor,
+            id_transportadora=pedido_origem.id_transportadora,
+            origem_venda=pedido_origem.origem_venda,
+            situacao=PedidoSituacaoEnum.faturamento, # Vai para Faturamento para conferência antes de emitir
+            data_orcamento=datetime.now(TZ_BR).date() if 'TZ_BR' in globals() else datetime.now().date(),
+            
+            # Copia exata dos dados financeiros e itens
+            itens=itens_copia,
+            total=pedido_origem.total,
+            desconto=pedido_origem.desconto,
+            total_desconto=pedido_origem.total_desconto,
+            pagamento=pedido_origem.pagamento,
+            pagamento_descricao=pedido_origem.pagamento_descricao,
+            caixa_destino_origem=pedido_origem.caixa_destino_origem,
+            ordem_finalizacao=pedido_origem.ordem_finalizacao,
+            
+            # Endereço de Entrega
+            endereco_cep=pedido_origem.endereco_cep,
+            endereco_estado=pedido_origem.endereco_estado,
+            endereco_cidade=pedido_origem.endereco_cidade,
+            endereco_bairro=pedido_origem.endereco_bairro,
+            endereco_logradouro=pedido_origem.endereco_logradouro,
+            endereco_numero=pedido_origem.endereco_numero,
+            endereco_complemento=pedido_origem.endereco_complemento,
+            
+            # Dados de Frete e Logística
+            modalidade_frete=pedido_origem.modalidade_frete,
+            valor_frete=pedido_origem.valor_frete,
+            ipi_frete=pedido_origem.ipi_frete,
+            total_frete=pedido_origem.total_frete,
+            volumes_quantidade=pedido_origem.volumes_quantidade,
+            volumes_especie=pedido_origem.volumes_especie,
+            volumes_marca=pedido_origem.volumes_marca,
+            volumes_numeracao=pedido_origem.volumes_numeracao,
+            volumes_peso_bruto=pedido_origem.volumes_peso_bruto,
+            volumes_peso_liquido=pedido_origem.volumes_peso_liquido,
+            
+            # Dados de Veículo
+            veiculo_placa=pedido_origem.veiculo_placa,
+            veiculo_uf=pedido_origem.veiculo_uf,
+            veiculo_antt=pedido_origem.veiculo_antt,
+            
+            # Outros e Integrações
+            indicador_presenca=pedido_origem.indicador_presenca,
+            modelo_fiscal=pedido_origem.modelo_fiscal,
+            delivery_method_id_intelipost=pedido_origem.delivery_method_id_intelipost,
+            quote_id=pedido_origem.quote_id,
+            intelipost_id=pedido_origem.intelipost_id,
+            meli_xml_enviado=pedido_origem.meli_xml_enviado,
+            intelipost_criado=pedido_origem.intelipost_criado,
+            email_enviado=pedido_origem.email_enviado,
+
+            # Alterações para Complemento
+            tipo_operacao=RegraTipoOperacaoEnum.complemento,
+            chave_nfe_referencia=pedido_origem.chave_acesso,
+            observacao=f"{pedido_origem.observacao} | Complemento referente ao pedido #{pedido_origem.id}" if pedido_origem.observacao else f"Complemento referente ao pedido #{pedido_origem.id}",
+            observacoes_nf=f"Nota Fiscal Complementar referente a NF-e chave {pedido_origem.chave_acesso}"
+        )
+
+        self.db.add(novo_pedido)
+        self.db.commit()
+        self.db.refresh(novo_pedido)
+
+        # 3. Retorna sucesso sem emitir NFe (agora vai para Faturamento)
+        return {
+            "success": True, 
+            "message": f"Pedido de complemento #{novo_pedido.id} gerado com sucesso! Encontra-se em Faturamento.",
             "id": novo_pedido.id
         }
 
@@ -1829,7 +1941,7 @@ class NFeService:
                 normalized = unicodedata.normalize('NFKD', raw_val).encode('ASCII', 'ignore').decode('ASCII')
                 nat_op = normalized.upper()
 
-            # Determina Finalidade (1=Normal, 4=Devolução)
+            # Determina Finalidade (1=Normal, 2=Complementar, 4=Devolução)
             fin_nfe = 1
             tp_nf = 1 # 1=Saída (Padrão)
             
@@ -1841,18 +1953,22 @@ class NFeService:
                 fin_nfe = 4
                 nat_op = 'DEVOLUCAO - SAIDA'
                 tp_nf = 1 # 1=Saída
+            elif tipo_op_enum == RegraTipoOperacaoEnum.complemento:
+                fin_nfe = 2
+                nat_op = 'COMPLEMENTO'
+                tp_nf = 1 # 1=Saída
 
             # Lógica de Pagamento
             t_pag = '90' # Sem pagamento (default)
             ind_pag = 0  # Vista (default)
 
             # ==============================================================================
-            # CORREÇÃO ERRO 871: Devolução exige Meio de Pagamento = 90 (Sem Pagamento)
+            # CORREÇÃO ERRO 871: Devolução/Complementar exige Meio de Pagamento = 90 (Sem Pagamento)
             # ==============================================================================
-            if fin_nfe == 4 or fin_nfe == 3:
+            if fin_nfe in [2, 3, 4]:
                 t_pag = '90'
                 ind_pag = 0
-            # Se NÃO for devolução, segue a lógica normal do pedido
+            # Se NÃO for devolução/complementar, segue a lógica normal do pedido
             elif pedido.pagamento:
                 t_pag = pedido.pagamento.value
                 
@@ -2101,7 +2217,7 @@ class NFeService:
             
             # --- NOTA REFERENCIADA (Para Devolução) ---
             icms_referenciado_zero = False
-            if fin_nfe == 4 and pedido.chave_nfe_referencia:
+            if fin_nfe in [2, 4] and pedido.chave_nfe_referencia:
                 nota_fiscal.adicionar_nota_fiscal_referenciada(
                     chave_acesso=pedido.chave_nfe_referencia,
                     tipo='Nota Fiscal eletronica'  # Importante definir o tipo para cair no serializador correto
@@ -2229,6 +2345,131 @@ class NFeService:
                 valor_unit = Decimal(str(val_raw))
                 valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
                 total_produtos += valor_total
+
+                if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
+                    # Bypasses all standard tax rule and calculation logic for complementary invoices
+                    cfop = item.get('cfop') or '5102'
+                    ncm = self._limpar_formatacao(produto_db.ncm) or '00000000'
+                    unidade = produto_db.unidade.value if hasattr(produto_db.unidade, 'value') else 'UN'
+                    unidade = unidade.upper()
+                    
+                    icms_origem_val = '0' # default
+                    origem_db = produto_db.origem.value if hasattr(produto_db.origem, 'value') else str(produto_db.origem)
+                    mapa_origem = {
+                        "nacional": FiscalOrigemEnum.origem_0.value,
+                        "estrangeira_import_direta": FiscalOrigemEnum.origem_1.value,
+                        "estrangeira_adq_merc_interno": FiscalOrigemEnum.origem_2.value,
+                        "nacional_conteudo_import_40": FiscalOrigemEnum.origem_3.value,
+                        "nacional_producao_basica": FiscalOrigemEnum.origem_4.value,
+                        "nacional_conteudo_import_70": FiscalOrigemEnum.origem_8.value,
+                    }
+                    icms_origem_val = mapa_origem.get(origem_db, FiscalOrigemEnum.origem_0.value)
+                    
+                    icms_cst_val = item.get('icms_cst') or '00'
+                    base_icms = Decimal(str(item.get('icms_base') or 0)).quantize(Decimal('0.01'))
+                    aliquota_final_item = Decimal(str(item.get('icms_aliquota') or 0)).quantize(Decimal('0.01'))
+                    val_icms = Decimal(str(item.get('icms_valor') or 0)).quantize(Decimal('0.01'))
+                    val_fcp = Decimal('0.00')
+                    
+                    ipi_cst_val = item.get('ipi_cst') or '53'
+                    base_ipi = Decimal(str(item.get('ipi_base') or 0)).quantize(Decimal('0.01'))
+                    aliq_ipi = Decimal(str(item.get('ipi_aliquota') or 0)).quantize(Decimal('0.01'))
+                    val_ipi = Decimal(str(item.get('ipi_valor') or 0)).quantize(Decimal('0.01'))
+                    c_enq = item.get('ipi_c_enq') or '999'
+                    
+                    pis_cst_val = item.get('pis_cst') or '07'
+                    base_pis = Decimal(str(item.get('pis_base') or 0)).quantize(Decimal('0.01'))
+                    aliq_pis = Decimal(str(item.get('pis_aliquota') or 0)).quantize(Decimal('0.01'))
+                    val_pis = Decimal(str(item.get('pis_valor') or 0)).quantize(Decimal('0.01'))
+                    
+                    cofins_cst_val = item.get('cofins_cst') or '07'
+                    base_cofins = Decimal(str(item.get('cofins_base') or 0)).quantize(Decimal('0.01'))
+                    aliq_cofins = Decimal(str(item.get('cofins_aliquota') or 0)).quantize(Decimal('0.01'))
+                    val_cofins = Decimal(str(item.get('cofins_valor') or 0)).quantize(Decimal('0.01'))
+                    
+                    cbenef_val = item.get('cbenef') or None
+                    
+                    valor_frete_item = Decimal(str(item.get('valor_frete') or 0)).quantize(Decimal('0.01'))
+                    valor_desconto_item = Decimal(str(item.get('valor_desconto') or 0)).quantize(Decimal('0.01'))
+                    
+                    kwargs_tributos = {
+                        'icms_credito': Decimal('0.00'),
+                        'icms_aliquota_credito': Decimal('0.00')
+                    }
+                    
+                    # IPI
+                    kwargs_tributos.update({
+                        'ipi_codigo_enquadramento': ipi_cst_val,
+                        'ipi_classe_enquadramento': c_enq,
+                        'ipi_valor_ipi': val_ipi,
+                        'ipi_aliquota': aliq_ipi,
+                        'ipi_valor_base_calculo': base_ipi
+                    })
+                    
+                    # ICMS
+                    if crt_val == '1': # Simples Nacional
+                        kwargs_tributos.update({
+                            'icms_modalidade': icms_cst_val,
+                            'icms_csosn': icms_cst_val,
+                            'icms_origem': icms_origem_val,
+                            'icms_valor': val_icms,
+                            'icms_aliquota': aliquota_final_item,
+                            'icms_valor_base_calculo': base_icms
+                        })
+                    else: # Regime Normal
+                        kwargs_tributos.update({
+                            'icms_modalidade': icms_cst_val,
+                            'icms_modalidade_determinacao_bc': 3,
+                            'icms_origem': icms_origem_val,
+                            'icms_valor': val_icms,
+                            'icms_aliquota': aliquota_final_item,
+                            'icms_valor_base_calculo': base_icms
+                        })
+                        
+                    # PIS/COFINS
+                    kwargs_tributos.update({
+                        'pis_modalidade': pis_cst_val,
+                        'pis_valor': val_pis,
+                        'pis_aliquota_percentual': aliq_pis,
+                        'pis_valor_base_calculo': base_pis,
+                        'cofins_modalidade': cofins_cst_val,
+                        'cofins_valor': val_cofins,
+                        'cofins_aliquota_percentual': aliq_cofins,
+                        'cofins_valor_base_calculo': base_cofins
+                    })
+                    
+                    if cbenef_val:
+                        kwargs_tributos['cbenef'] = cbenef_val
+
+                    # Carga tributária aproximada
+                    valor_tributos_aprox = (val_icms + val_pis + val_cofins + val_ipi).quantize(Decimal('0.01'))
+                    total_tributos_aprox += valor_tributos_aprox
+                    
+                    # ADICIONAR PRODUTO
+                    gtin_val = produto_db.gtin if produto_db.gtin else 'SEM GTIN'
+                    
+                    nota_fiscal.adicionar_produto_servico(
+                        codigo=self._limpar_texto(str(produto_db.sku)),
+                        descricao=self._limpar_texto(produto_db.descricao),
+                        ncm=ncm,
+                        cfop=cfop,
+                        unidade_comercial=unidade,
+                        ean=gtin_val,
+                        ean_tributavel=gtin_val,
+                        quantidade_comercial=qtd,
+                        valor_unitario_comercial=valor_unit,
+                        valor_total_bruto=valor_total,
+                        unidade_tributavel=unidade,
+                        quantidade_tributavel=qtd,
+                        valor_unitario_tributavel=valor_unit,
+                        ind_total=1,
+                        valor_tributos_aprox=valor_tributos_aprox,
+                        informacoes_adicionais="",
+                        total_frete=valor_frete_item,
+                        desconto=valor_desconto_item,
+                        **kwargs_tributos
+                    )
+                    continue
 
                 # Rateio de Frete
                 valor_frete_item = Decimal('0.00')

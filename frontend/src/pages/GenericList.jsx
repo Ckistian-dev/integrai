@@ -281,6 +281,14 @@ const statusChangeActions = {
       buttonIcon: RotateCcw,
       buttonClasses: "bg-red-600 hover:bg-red-700",
       onClickHandler: 'devolucao'
+    },
+    {
+      currentStatus: "Nota Fiscal",
+      newStatus: "Despachado",
+      buttonLabel: "Complemento",
+      buttonIcon: Plus,
+      buttonClasses: "bg-teal-600 hover:bg-teal-700",
+      onClickHandler: 'complemento'
     }
   ]
 };
@@ -396,6 +404,39 @@ const GenericList = () => {
 
   // --- ESTADO PARA DEVOLUÇÃO ---
   const [isDevolucaoModalOpen, setIsDevolucaoModalOpen] = useState(false);
+
+  // --- ESTADO PARA COMPLEMENTO ---
+  const [isComplementoModalOpen, setIsComplementoModalOpen] = useState(false);
+  const [isFetchingComplementoDetails, setIsFetchingComplementoDetails] = useState(false);
+  const [complementoData, setComplementoData] = useState({
+    tipo_complemento: 'preco',
+    itens: [],
+    observacoes_nf: ''
+  });
+  const [activeTaxTabs, setActiveTaxTabs] = useState({});
+  const [pedidoOriginal, setPedidoOriginal] = useState(null);
+
+  const totalComplemento = useMemo(() => {
+    let totalItens = 0;
+    let totalIcms = 0;
+    let totalIpi = 0;
+    let totalPis = 0;
+    let totalCofins = 0;
+
+    const itens = Array.isArray(complementoData.itens) ? complementoData.itens : [];
+    itens.forEach(item => {
+      const targetSubtotal = (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0);
+      const originalSubtotal = (item.quantidade_original || 0) * (item.valor_unitario_original || 0);
+      totalItens += Math.max(0, targetSubtotal - originalSubtotal);
+
+      totalIcms += Math.max(0, (Number(item.icms_valor) || 0) - (item.icms_valor_original || 0));
+      totalIpi += Math.max(0, (Number(item.ipi_valor) || 0) - (item.ipi_valor_original || 0));
+      totalPis += Math.max(0, (Number(item.pis_valor) || 0) - (item.pis_valor_original || 0));
+      totalCofins += Math.max(0, (Number(item.cofins_valor) || 0) - (item.cofins_valor_original || 0));
+    });
+
+    return { totalItens, totalIcms, totalIpi, totalPis, totalCofins };
+  }, [complementoData.itens]);
 
   // --- ESTADO PARA INVENTÁRIO ---
   const [isInventarioModalOpen, setIsInventarioModalOpen] = useState(false);
@@ -1542,6 +1583,28 @@ const GenericList = () => {
     }
   };
 
+  const handleOpenComplementoModal = () => {
+    if (!selectedRowId) return;
+    setIsComplementoModalOpen(true);
+  };
+
+  const handleConfirmComplemento = async () => {
+    if (!selectedRowId) return;
+    setIsFetchingData(true);
+    try {
+      const res = await api.post(`/nfe/complemento/${selectedRowId}`);
+      toast.success(res.data.message || "Pedido de complemento gerado com sucesso! Verifique o novo pedido na lista.");
+      setIsComplementoModalOpen(false);
+      setRefreshTrigger(prev => prev + 1);
+      setSelectedRowIds([]);
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Erro ao gerar pedido de complemento.";
+      toast.error(msg);
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
   /**
    * 3. (Será passada para o modal) Salva os dados do formulário.
    * @param {object} payload - O objeto vindo do modal (com situacao, itens, etc)
@@ -2499,18 +2562,18 @@ const GenericList = () => {
                                   const vals = filterVal.value ? String(filterVal.value).split(',') : [];
                                   const isSelected = vals.includes(String(opt.value));
                                   return (
-                                    <div 
-                                      onClick={(e) => { 
-                                          e.preventDefault(); 
-                                          e.stopPropagation(); 
-                                          let newVals = [...vals];
-                                          if (isSelected) {
-                                              newVals = newVals.filter(v => String(v) !== String(opt.value));
-                                          } else {
-                                              newVals.push(String(opt.value));
-                                          }
-                                          handleQuickFilterChange(uniqueKey, { ...filterVal, value: newVals.join(',') }); 
-                                      }} 
+                                    <div
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        let newVals = [...vals];
+                                        if (isSelected) {
+                                          newVals = newVals.filter(v => String(v) !== String(opt.value));
+                                        } else {
+                                          newVals.push(String(opt.value));
+                                        }
+                                        handleQuickFilterChange(uniqueKey, { ...filterVal, value: newVals.join(',') });
+                                      }}
                                       className={`${active ? 'bg-gray-100 text-gray-900 cursor-pointer' : 'text-gray-700 cursor-pointer'} ${isSelected ? 'bg-blue-50 text-blue-700 font-bold' : ''} group flex w-full items-center justify-between rounded-md px-2 py-2 text-sm`}
                                     >
                                       <span>{opt.label}</span>
@@ -3039,8 +3102,8 @@ const GenericList = () => {
                   onClick={() => handleGenerateReport(selectedRowId, 'xml')}
                   disabled={!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'}
                   className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'
-                      ? 'cursor-not-allowed'
-                      : 'hover:bg-green-700'
+                    ? 'cursor-not-allowed'
+                    : 'hover:bg-green-700'
                     }`}
                   title="Exportar XMLs (apenas Pedidos)"
                 >
@@ -3203,6 +3266,8 @@ const GenericList = () => {
                   onClickAction = handleOpenCCeModal;
                 } else if (action.onClickHandler === 'devolucao') {
                   onClickAction = handleOpenDevolucaoModal;
+                } else if (action.onClickHandler === 'complemento') {
+                  onClickAction = handleOpenComplementoModal;
                 } else {
                   // O padrão genérico
                   onClickAction = () => handleStatusChangeClick(action);
@@ -3215,11 +3280,11 @@ const GenericList = () => {
                     key={`${action.newStatus}-${index}`}
                     onClick={onClickAction} // <-- USA A AÇÃO CORRETA
                     // Desabilita se estiver buscando detalhes para o modal complexo
-                    disabled={!selectedRowId || isFetchingData || isFetchingDetails}
+                    disabled={!selectedRowId || isFetchingData || isFetchingDetails || isFetchingComplementoDetails}
                     className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium disabled:cursor-not-allowed ${action.buttonClasses}`}
                   >
                     {/* 7. MOSTRAR LOADING SE ESTIVER BUSCANDO DETALHES */}
-                    {(isFetchingDetails && action.onClickHandler === 'programar') ? (
+                    {((isFetchingDetails && action.onClickHandler === 'programar') || (isFetchingComplementoDetails && action.onClickHandler === 'complemento')) ? (
                       <Loader2 size={16} className="mr-2 animate-spin" />
                     ) : (
                       <Icon size={16} className="mr-2" />
@@ -3456,9 +3521,8 @@ const GenericList = () => {
                             <div className="flex items-center gap-1.5">
                               {parts.map((p, idx) => (
                                 <React.Fragment key={idx}>
-                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-tight ${
-                                    idx === 0 ? 'bg-gray-100 text-gray-600' : 'bg-teal-100 text-teal-700'
-                                  }`}>
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-tight ${idx === 0 ? 'bg-gray-100 text-gray-600' : 'bg-teal-100 text-teal-700'
+                                    }`}>
                                     {p.trim()}
                                   </span>
                                   {idx < parts.length - 1 && <span className="text-gray-300 font-bold">→</span>}
@@ -3517,12 +3581,12 @@ const GenericList = () => {
                           if (!value) return "Não informado";
                           const dataInicioStr = item.data_pedido || item.data_orcamento || (item.criado_em ? item.criado_em.split('T')[0] : null);
                           if (!dataInicioStr) return "Não informado";
-                          
+
                           const date1 = new Date(dataInicioStr + 'T00:00:00');
                           const date2 = new Date(value + 'T00:00:00');
                           if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return "Não informado";
                           if (date1 > date2) return "0 dias úteis";
-                          
+
                           let count = 0;
                           let curDate = new Date(date1.getTime());
                           while (curDate < date2) {
@@ -3564,8 +3628,8 @@ const GenericList = () => {
                             }
                           }}
                           className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
-                              ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
-                              : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
+                            ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
+                            : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
                             }`}
                         >
                           {columnsToDisplay.map((colName) => (
@@ -3893,6 +3957,18 @@ const GenericList = () => {
           confirmText="Sim, Gerar Devolução"
         >
           Deseja gerar uma nota de devolução para este pedido? Isso duplicará o pedido e emitirá uma nova NFe.
+        </Modal>
+
+        {/* MODAL DE COMPLEMENTO */}
+        <Modal
+          isOpen={isComplementoModalOpen}
+          onClose={() => setIsComplementoModalOpen(false)}
+          onConfirm={handleConfirmComplemento}
+          title="Gerar Nota Complementar"
+          variant="info"
+          confirmText="Sim, Gerar Complemento"
+        >
+          Deseja gerar uma nota complementar para este pedido? Isso duplicará o pedido na situação Faturamento com o tipo de operação alterado para Complementar e a chave original referenciada.
         </Modal>
 
         {/* MODAL DE BAIXA EM LOTE */}

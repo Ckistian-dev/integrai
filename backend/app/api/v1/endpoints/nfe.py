@@ -50,6 +50,18 @@ def gerar_devolucao(
     service = NFeService(db, current_user.id_empresa)
     return service.gerar_devolucao(pedido_id)
 
+@router.post("/nfe/complemento/{pedido_id}")
+def emitir_complemento(
+    pedido_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Gera um pedido complementar duplicado na situação Faturamento.
+    """
+    service = NFeService(db, current_user.id_empresa)
+    return service.gerar_complemento(pedido_id)
+
 @router.post("/nfe/cancelar/{pedido_id}")
 def cancelar_nfe(
     pedido_id: int,

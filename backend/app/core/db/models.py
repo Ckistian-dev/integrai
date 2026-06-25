@@ -173,6 +173,7 @@ class RegraTipoOperacaoEnum(str, enum.Enum):
     retorno_conserto = "Retorno de Conserto"
     transferencia = "Transferência"
     bonificacao = "Bonificação"
+    complemento = "Complementar"
     outras = "Outras"
 
 class RegraTipoClienteEnum(str, enum.Enum):
