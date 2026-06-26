@@ -581,10 +581,21 @@ const GenericForm = ({ modelName: propModelName }) => {
         }
       }
     }
+    // Validação específica para Pedidos Complementares: deve ter pelo menos um item
+    if (modelName === 'pedidos' && (formData.tipo_operacao === 'complemento' || formData.tipo_operacao === 'Complementar')) {
+      const items = formData.itens || [];
+      if (items.length === 0) {
+        errors.itens = "Uma Nota Fiscal Complementar deve possuir pelo menos um item (mesmo que com quantidade e valor zerados).";
+      }
+    }
 
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
-      toast.error('Verifique os campos obrigatórios.');
+      if (errors.itens) {
+        toast.error(errors.itens);
+      } else {
+        toast.error('Verifique os campos obrigatórios.');
+      }
       setIsSaving(false);
       return;
     }

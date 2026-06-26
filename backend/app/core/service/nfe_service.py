@@ -1752,6 +1752,18 @@ class NFeService:
         }
 
     def emitir_nfe(self, pedido_id: int, id_regra_tributaria: int = None):
+        def safe_decimal(val, default="0.00") -> Decimal:
+            if val is None:
+                return Decimal(default)
+            val_str = str(val).strip()
+            if val_str == "" or val_str.lower() == "none":
+                return Decimal(default)
+            try:
+                val_str = val_str.replace(",", ".").replace("R$", "").strip()
+                return Decimal(val_str)
+            except Exception:
+                return Decimal(default)
+
         # 1. Busca Dados do Pedido
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id == pedido_id,
@@ -2255,9 +2267,7 @@ class NFeService:
                 
                 # Função auxiliar para garantir Decimal ou 0.00
                 def sanitizar_peso(valor):
-                    if valor is None:
-                        return Decimal('0.000')
-                    return Decimal(str(valor)).quantize(Decimal('0.000'))
+                    return safe_decimal(valor, "0.000")
 
                 # --- FALLBACK DE PESO (Cálculo automático se zerado) ---
                 peso_liquido_final = sanitizar_peso(pedido.volumes_peso_liquido)
@@ -2271,13 +2281,12 @@ class NFeService:
                         try:
                             p_id = item_dict.get('id_produto') or item_dict.get('produto_id')
                             qtd_val = item_dict.get('quantidade', 0)
-                            if qtd_val is None: qtd_val = 0
-                            qtd = Decimal(str(qtd_val))
+                            qtd = safe_decimal(qtd_val)
                             
                             if p_id and qtd > 0:
                                 prod_peso = self.db.query(models.Produto.peso).filter(models.Produto.id == p_id).scalar()
                                 if prod_peso:
-                                    peso_total_calc += (Decimal(str(prod_peso)) * qtd)
+                                    peso_total_calc += (safe_decimal(prod_peso) * qtd)
                         except Exception as e:
                             print(f"Erro ao calcular peso fallback item: {e}")
 
@@ -2319,10 +2328,23 @@ class NFeService:
                 raise HTTPException(status_code=400, detail="O pedido não possui itens. Impossível emitir NFe.")
 
             # Pré-cálculo do total dos produtos para rateio de frete
-            total_produtos_pedido = sum(
-                Decimal(str(item.get('quantidade', 0))) * Decimal(str(item.get('valor_unitario', 0)))
-                for item in lista_itens
-            )
+            total_produtos_pedido = Decimal('0.00')
+            for item in lista_itens:
+                qtd = safe_decimal(item.get('quantidade', 0))
+                valor_unit = safe_decimal(item.get('valor_unitario', 0))
+                subtotal = safe_decimal(item.get('subtotal'))
+                total_com_ipi = safe_decimal(item.get('total_com_ipi'))
+                
+                if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
+                    if subtotal > 0:
+                        v_item = subtotal
+                    elif total_com_ipi > 0:
+                        v_item = total_com_ipi
+                    else:
+                        v_item = (qtd * valor_unit).quantize(Decimal('0.01'))
+                else:
+                    v_item = (qtd * valor_unit).quantize(Decimal('0.01'))
+                total_produtos_pedido += v_item
 
             total_produtos = Decimal('0.00')
             total_tributos_aprox = Decimal('0.00')
@@ -2346,15 +2368,26 @@ class NFeService:
 
                 itens_adicionados_count += 1
 
-                # CORREÇÃO (Proteção contra None)
+                # CORREÇÃO (Proteção contra None/empty e suporte a complemento)
                 qtd_raw = item.get('quantidade')
-                if qtd_raw is None: qtd_raw = 0
-                qtd = Decimal(str(qtd_raw))
+                qtd = safe_decimal(qtd_raw)
 
                 val_raw = item.get('valor_unitario')
-                if val_raw is None: val_raw = 0
-                valor_unit = Decimal(str(val_raw))
-                valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
+                valor_unit = safe_decimal(val_raw)
+                
+                subtotal = safe_decimal(item.get('subtotal'))
+                total_com_ipi = safe_decimal(item.get('total_com_ipi'))
+
+                if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
+                    if subtotal > 0:
+                        valor_total = subtotal
+                    elif total_com_ipi > 0:
+                        valor_total = total_com_ipi
+                    else:
+                        valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
+                else:
+                    valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
+                
                 total_produtos += valor_total
 
                 # Rateio de Frete
@@ -2408,7 +2441,7 @@ class NFeService:
                     icms_origem_val = regra.origem_produto.value
                 
                 # Valores padrão (Fallback)
-                icms_cst_val = '00'
+                icms_cst_val = '400' if crt_val == '1' else '41'
                 pis_cst_val = '07'
                 cofins_cst_val = '07'
                 ipi_cst_val = '53' # Não tributado
@@ -2442,18 +2475,18 @@ class NFeService:
                     if excecao_aplicada:
                         if excecao_aplicada.get('cst'): icms_cst_val = excecao_aplicada['cst']
                         if excecao_aplicada.get('cfop'): cfop = self._limpar_formatacao(excecao_aplicada['cfop'])
-                        if excecao_aplicada.get('aliq_intra'): aliq_intra = Decimal(str(excecao_aplicada['aliq_intra']))
+                        if excecao_aplicada.get('aliq_intra'): aliq_intra = safe_decimal(excecao_aplicada['aliq_intra'])
                         # Se tiver alíquota interestadual específica na exceção
-                        if excecao_aplicada.get('aliq_inter'): aliq_inter = Decimal(str(excecao_aplicada['aliq_inter']))
+                        if excecao_aplicada.get('aliq_inter'): aliq_inter = safe_decimal(excecao_aplicada['aliq_inter'])
                         if excecao_aplicada.get('cbenef'): cbenef_val = excecao_aplicada['cbenef']
 
                     # 1.2 Busca Padrão UF (Se não achou na exceção)
                     if aliq_intra == 0:
                         dados_uf = padrao_uf.get(uf_cliente, {})
                         if dados_uf:
-                            if dados_uf.get('aliq_intra'): aliq_intra = Decimal(str(dados_uf['aliq_intra']))
-                            if dados_uf.get('fcp'): fcp_final = Decimal(str(dados_uf['fcp']))
-                            if dados_uf.get('aliq_inter'): aliq_inter = Decimal(str(dados_uf['aliq_inter']))
+                            if dados_uf.get('aliq_intra'): aliq_intra = safe_decimal(dados_uf['aliq_intra'])
+                            if dados_uf.get('fcp'): fcp_final = safe_decimal(dados_uf['fcp'])
+                            if dados_uf.get('aliq_inter'): aliq_inter = safe_decimal(dados_uf['aliq_inter'])
 
                 # Fallback: Se o JSON não definiu a interestadual, usa a regra padrão (4/7/12)
                 if aliq_inter == 0:
@@ -2512,9 +2545,9 @@ class NFeService:
                         
                         # Prioriza a alíquota salva no item do pedido, fallback para o cadastro do produto
                         aliq_ipi_val = item.get('ipi_aliquota')
-                        if aliq_ipi_val is None:
+                        if aliq_ipi_val is None or str(aliq_ipi_val).strip() == "":
                             aliq_ipi_val = produto_db.ipi_aliquota or Decimal('0.00')
-                        aliq_ipi = Decimal(str(aliq_ipi_val))
+                        aliq_ipi = safe_decimal(aliq_ipi_val)
                         
                         # Base de Cálculo do IPI = Valor Produto + Frete
                         base_ipi = valor_total + valor_frete_item
