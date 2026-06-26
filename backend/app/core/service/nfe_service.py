@@ -190,6 +190,17 @@ class NFeService:
         # Substitui múltiplos espaços (inclusive quebras de linha/abas) por um único espaço e limpa as pontas
         return re.sub(r'\s+', ' ', valor_filtrado).strip()
 
+    def _to_decimal(self, val) -> Decimal:
+        if val is None:
+            return Decimal('0.00')
+        val_str = str(val).strip().replace(',', '.')
+        if not val_str or val_str == 'None':
+            return Decimal('0.00')
+        try:
+            return Decimal(val_str)
+        except:
+            return Decimal('0.00')
+
     def _gerar_danfe(self, xml_nfe, nProt: str, dhRecbto: str, chNFe: str, c=None, is_cancelada: bool = False) -> str:
         """
         Gera DANFE Final: Layout ajustado, textos contidos e espaçamentos corrigidos.
@@ -2346,131 +2357,6 @@ class NFeService:
                 valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
                 total_produtos += valor_total
 
-                if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
-                    # Bypasses all standard tax rule and calculation logic for complementary invoices
-                    cfop = item.get('cfop') or '5102'
-                    ncm = self._limpar_formatacao(produto_db.ncm) or '00000000'
-                    unidade = produto_db.unidade.value if hasattr(produto_db.unidade, 'value') else 'UN'
-                    unidade = unidade.upper()
-                    
-                    icms_origem_val = '0' # default
-                    origem_db = produto_db.origem.value if hasattr(produto_db.origem, 'value') else str(produto_db.origem)
-                    mapa_origem = {
-                        "nacional": FiscalOrigemEnum.origem_0.value,
-                        "estrangeira_import_direta": FiscalOrigemEnum.origem_1.value,
-                        "estrangeira_adq_merc_interno": FiscalOrigemEnum.origem_2.value,
-                        "nacional_conteudo_import_40": FiscalOrigemEnum.origem_3.value,
-                        "nacional_producao_basica": FiscalOrigemEnum.origem_4.value,
-                        "nacional_conteudo_import_70": FiscalOrigemEnum.origem_8.value,
-                    }
-                    icms_origem_val = mapa_origem.get(origem_db, FiscalOrigemEnum.origem_0.value)
-                    
-                    icms_cst_val = item.get('icms_cst') or '00'
-                    base_icms = Decimal(str(item.get('icms_base') or 0)).quantize(Decimal('0.01'))
-                    aliquota_final_item = Decimal(str(item.get('icms_aliquota') or 0)).quantize(Decimal('0.01'))
-                    val_icms = Decimal(str(item.get('icms_valor') or 0)).quantize(Decimal('0.01'))
-                    val_fcp = Decimal('0.00')
-                    
-                    ipi_cst_val = item.get('ipi_cst') or '53'
-                    base_ipi = Decimal(str(item.get('ipi_base') or 0)).quantize(Decimal('0.01'))
-                    aliq_ipi = Decimal(str(item.get('ipi_aliquota') or 0)).quantize(Decimal('0.01'))
-                    val_ipi = Decimal(str(item.get('ipi_valor') or 0)).quantize(Decimal('0.01'))
-                    c_enq = item.get('ipi_c_enq') or '999'
-                    
-                    pis_cst_val = item.get('pis_cst') or '07'
-                    base_pis = Decimal(str(item.get('pis_base') or 0)).quantize(Decimal('0.01'))
-                    aliq_pis = Decimal(str(item.get('pis_aliquota') or 0)).quantize(Decimal('0.01'))
-                    val_pis = Decimal(str(item.get('pis_valor') or 0)).quantize(Decimal('0.01'))
-                    
-                    cofins_cst_val = item.get('cofins_cst') or '07'
-                    base_cofins = Decimal(str(item.get('cofins_base') or 0)).quantize(Decimal('0.01'))
-                    aliq_cofins = Decimal(str(item.get('cofins_aliquota') or 0)).quantize(Decimal('0.01'))
-                    val_cofins = Decimal(str(item.get('cofins_valor') or 0)).quantize(Decimal('0.01'))
-                    
-                    cbenef_val = item.get('cbenef') or None
-                    
-                    valor_frete_item = Decimal(str(item.get('valor_frete') or 0)).quantize(Decimal('0.01'))
-                    valor_desconto_item = Decimal(str(item.get('valor_desconto') or 0)).quantize(Decimal('0.01'))
-                    
-                    kwargs_tributos = {
-                        'icms_credito': Decimal('0.00'),
-                        'icms_aliquota_credito': Decimal('0.00')
-                    }
-                    
-                    # IPI
-                    kwargs_tributos.update({
-                        'ipi_codigo_enquadramento': ipi_cst_val,
-                        'ipi_classe_enquadramento': c_enq,
-                        'ipi_valor_ipi': val_ipi,
-                        'ipi_aliquota': aliq_ipi,
-                        'ipi_valor_base_calculo': base_ipi
-                    })
-                    
-                    # ICMS
-                    if crt_val == '1': # Simples Nacional
-                        kwargs_tributos.update({
-                            'icms_modalidade': icms_cst_val,
-                            'icms_csosn': icms_cst_val,
-                            'icms_origem': icms_origem_val,
-                            'icms_valor': val_icms,
-                            'icms_aliquota': aliquota_final_item,
-                            'icms_valor_base_calculo': base_icms
-                        })
-                    else: # Regime Normal
-                        kwargs_tributos.update({
-                            'icms_modalidade': icms_cst_val,
-                            'icms_modalidade_determinacao_bc': 3,
-                            'icms_origem': icms_origem_val,
-                            'icms_valor': val_icms,
-                            'icms_aliquota': aliquota_final_item,
-                            'icms_valor_base_calculo': base_icms
-                        })
-                        
-                    # PIS/COFINS
-                    kwargs_tributos.update({
-                        'pis_modalidade': pis_cst_val,
-                        'pis_valor': val_pis,
-                        'pis_aliquota_percentual': aliq_pis,
-                        'pis_valor_base_calculo': base_pis,
-                        'cofins_modalidade': cofins_cst_val,
-                        'cofins_valor': val_cofins,
-                        'cofins_aliquota_percentual': aliq_cofins,
-                        'cofins_valor_base_calculo': base_cofins
-                    })
-                    
-                    if cbenef_val:
-                        kwargs_tributos['cbenef'] = cbenef_val
-
-                    # Carga tributária aproximada
-                    valor_tributos_aprox = (val_icms + val_pis + val_cofins + val_ipi).quantize(Decimal('0.01'))
-                    total_tributos_aprox += valor_tributos_aprox
-                    
-                    # ADICIONAR PRODUTO
-                    gtin_val = produto_db.gtin if produto_db.gtin else 'SEM GTIN'
-                    
-                    nota_fiscal.adicionar_produto_servico(
-                        codigo=self._limpar_texto(str(produto_db.sku)),
-                        descricao=self._limpar_texto(produto_db.descricao),
-                        ncm=ncm,
-                        cfop=cfop,
-                        unidade_comercial=unidade,
-                        ean=gtin_val,
-                        ean_tributavel=gtin_val,
-                        quantidade_comercial=qtd,
-                        valor_unitario_comercial=valor_unit,
-                        valor_total_bruto=valor_total,
-                        unidade_tributavel=unidade,
-                        quantidade_tributavel=qtd,
-                        valor_unitario_tributavel=valor_unit,
-                        ind_total=1,
-                        valor_tributos_aprox=valor_tributos_aprox,
-                        informacoes_adicionais="",
-                        total_frete=valor_frete_item,
-                        desconto=valor_desconto_item,
-                        **kwargs_tributos
-                    )
-                    continue
-
                 # Rateio de Frete
                 valor_frete_item = Decimal('0.00')
                 if pedido.valor_frete and total_produtos_pedido > 0:
@@ -2511,10 +2397,10 @@ class NFeService:
                 if not regra:
                     regra = self._encontrar_regra_tributaria(produto_db, cli_db, tipo_op_enum)
                     
-                    # FALLBACK DEVOLUÇÃO: Se não encontrar regra específica de devolução,
+                    # FALLBACK DEVOLUÇÃO E COMPLEMENTO: Se não encontrar regra específica de devolução ou complemento,
                     # tenta aplicar a regra de Venda para manter a tributação (destaque de ICMS/IBS/CBS)
-                    if not regra and tipo_op_enum in [RegraTipoOperacaoEnum.devolucao_entrada, RegraTipoOperacaoEnum.devolucao_saida]:
-                        print(f"DEBUG: Fallback Devolução - Buscando regra de Venda para produto {produto_db.sku}")
+                    if not regra and tipo_op_enum in [RegraTipoOperacaoEnum.devolucao_entrada, RegraTipoOperacaoEnum.devolucao_saida, RegraTipoOperacaoEnum.complemento]:
+                        print(f"DEBUG: Fallback - Buscando regra de Venda para produto {produto_db.sku}")
                         regra = self._encontrar_regra_tributaria(produto_db, cli_db, RegraTipoOperacaoEnum.venda_mercadoria)
                 
                 # Se a regra tributária tiver uma origem forçada, ela prevalece

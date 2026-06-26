@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download } from 'lucide-react';
+import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info } from 'lucide-react';
 import AsyncSelect from 'react-select/async';
 import Select from 'react-select';
 import api from '../../api/axiosConfig';
@@ -129,7 +129,7 @@ export const TextInput = React.forwardRef(({
   // Captura todas as outras props (inclui value, onChange, onAccept, onComplete, etc.)
   ...inputProps
 }, ref) => {
-  
+
   // Props específicas dos metadados
   const { label, name, type, required, placeholder, format_mask } = field;
 
@@ -143,7 +143,7 @@ export const TextInput = React.forwardRef(({
   // ************ CORREÇÃO PARA ATRIBUTOS INVÁLIDOS E WARNINGS ************
   // Lista de props do IMask e outras customizadas que NÃO devem ir para o DOM <input>
   const invalidDomProps = [
-    'modelName', 'unmaskedValue', 'mask', 'radix', 'thousandsSeparator', 
+    'modelName', 'unmaskedValue', 'mask', 'radix', 'thousandsSeparator',
     'mapToRadix', 'scale', 'padFractionalZeros', 'normalizeZeros', 'typedValue',
     'lazy', 'suffix', 'blocks', 'autofix', 'definitions', 'overwrite'
   ];
@@ -293,49 +293,62 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, ...prop
  * Componente para gerenciar itens de pedido (Produto + Quantidade)
  * Armazena como JSON: [{ id_produto: 1, quantidade: 10 }, ...]
  */
-export const OrderItemsInput = ({ field, value, onChange, error }) => {
+export const OrderItemsInput = ({ field, value, onChange, error, formData }) => {
   const { label, name, required } = field;
   // Garante que items seja um array
   const items = Array.isArray(value) ? value : [];
-  
+
+  const isComplemento = formData?.tipo_operacao === 'complemento' || formData?.tipo_operacao === 'Complementar';
+
+  const [expandedItems, setExpandedItems] = useState({});
+  const toggleExpand = (index) => {
+    setExpandedItems(prev => ({ ...prev, [index]: !prev[index] }));
+  };
+
   const calculateTotals = (item) => {
+    if (isComplemento) {
+      return item;
+    }
     const qtd = Number(item.quantidade || 0);
     const unitPrice = Number(item.valor_unitario || 0);
     const ipiRate = Number(item.ipi_aliquota || 0);
-    
+
     const subtotal = qtd * unitPrice;
     const ipiValue = subtotal * (ipiRate / 100);
-    
+
     return {
-        ...item,
-        valor_ipi: parseFloat(ipiValue.toFixed(2)),
-        total_com_ipi: parseFloat((subtotal + ipiValue).toFixed(2))
+      ...item,
+      valor_ipi: parseFloat(ipiValue.toFixed(2)),
+      total_com_ipi: parseFloat((subtotal + ipiValue).toFixed(2))
     };
   };
-  
+
   const calculateFromTotal = (item) => {
+    if (isComplemento) {
+      return item;
+    }
     const totalWithIpi = Number(item.total_com_ipi || 0);
     const qtd = Number(item.quantidade || 0);
     const ipiRate = Number(item.ipi_aliquota || 0);
-    
+
     if (qtd <= 0) return item;
 
     const factor = 1 + (ipiRate / 100);
     let unitPrice = totalWithIpi / (qtd * factor);
-    
+
     // Arredonda para 2 casas para manter consistência
     unitPrice = parseFloat(unitPrice.toFixed(2));
-    
+
     // Recalcula para frente para garantir consistência contábil (Unit * Qtd = Total)
     const subtotal = qtd * unitPrice;
     const ipiValue = subtotal * (ipiRate / 100);
     const newTotal = subtotal + ipiValue;
 
     return {
-        ...item,
-        valor_unitario: unitPrice,
-        valor_ipi: parseFloat(ipiValue.toFixed(2)),
-        total_com_ipi: parseFloat(newTotal.toFixed(2))
+      ...item,
+      valor_unitario: unitPrice,
+      valor_ipi: parseFloat(ipiValue.toFixed(2)),
+      total_com_ipi: parseFloat(newTotal.toFixed(2))
     };
   };
 
@@ -353,13 +366,13 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
   const handleItemChange = (index, key, val) => {
     const newItems = [...items];
     let item = { ...newItems[index], [key]: val };
-    
+
     if (key === 'total_com_ipi') {
-        item = calculateFromTotal(item);
+      item = calculateFromTotal(item);
     } else {
-        item = calculateTotals(item);
+      item = calculateTotals(item);
     }
-    
+
     newItems[index] = item;
     triggerChange(newItems);
   };
@@ -367,9 +380,9 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
   const handleProductChange = (index, option) => {
     const newItems = [...items];
     const product = option ? option.original : null;
-    
-    let item = { 
-      ...newItems[index], 
+
+    let item = {
+      ...newItems[index],
       id_produto: option ? option.value : null,
       sku: product ? product.sku : '',
       descricao: product ? product.descricao : '',
@@ -377,7 +390,7 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
       peso: product ? Number(product.peso) : 0,
       ipi_aliquota: product ? Number(product.ipi_aliquota) : 0
     };
-    
+
     item = calculateTotals(item);
     newItems[index] = item;
     triggerChange(newItems);
@@ -397,27 +410,56 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
       <label className="text-sm font-medium text-gray-700">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
-      
-      <div className="space-y-2">
+
+      {isComplemento && (
+        <div className="bg-teal-50 border-l-4 border-teal-600 p-4 rounded-r-lg shadow-sm space-y-2 mb-2 animate-fade-in">
+          <div className="flex items-center gap-2 text-teal-800 font-bold text-sm">
+            <Info className="w-5 h-5 text-teal-600 shrink-0" />
+            <span>Guia Rápido: Nota Fiscal Complementar (NFe)</span>
+          </div>
+          <div className="text-teal-950 text-xs leading-relaxed space-y-1.5">
+            <p>
+              Esta é uma <strong>Nota Fiscal Complementar (Finalidade 2)</strong>. Ela serve unicamente para acrescentar valores, quantidades ou tributos que foram declarados a menor na nota original.
+            </p>
+            <ul className="list-disc list-inside space-y-1.5 pl-1 pt-1 font-medium text-teal-850">
+              <li>
+                <strong className="text-teal-950">Apenas os itens complementados:</strong>
+                Remova os produtos que não sofreram nenhuma alteração clicando na lixeira vermelha (<Trash2 className="w-3.5 h-3.5 inline text-red-500" />). A nota <strong>não</strong> deve duplicar a original inteira, sob risco de duplicar as vendas e impostos!
+              </li>
+              <li>
+                <strong className="text-teal-950">Diferença de Preço ou Quantidade:</strong>
+                Se o preço ou quantidade estavam menores na nota original, informe apenas a <strong>diferença</strong> neste rascunho.
+              </li>
+              <li>
+                <strong className="text-teal-950">Cálculo Automático de Impostos:</strong>
+                Os impostos (ICMS, IPI, PIS, COFINS) serão calculados automaticamente pelo sistema com base nas regras cadastradas na tabela de **Regras Tributárias** para a operação "Complementar".
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-4">
         {items.map((item, index) => (
-          <div key={index} className="flex flex-col md:flex-row gap-2 items-start md:items-center bg-gray-50 p-2 rounded-md md:bg-transparent md:p-0">
-            <div className="flex-grow w-full md:w-auto">
-               <AsyncProductSelect 
-                 value={item.id_produto}
-                 onChange={(opt) => handleProductChange(index, opt)}
-                 error={!item.id_produto && error} // Visual simples de erro
-               />
-            </div>
-            
-            <div className="flex gap-2 w-full md:w-auto">
+          <div key={index} className="border border-gray-200 rounded-lg p-3 bg-white space-y-3 shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex flex-col md:flex-row gap-2 items-start md:items-center">
+              <div className="flex-grow w-full md:w-auto">
+                <AsyncProductSelect
+                  value={item.id_produto}
+                  onChange={(opt) => handleProductChange(index, opt)}
+                  error={!item.id_produto && error} // Visual simples de erro
+                />
+              </div>
+
+              <div className="flex gap-2 w-full md:w-auto">
                 <div className="w-1/2 md:w-20">
                   <input
                     type="number"
                     value={item.quantidade}
-                    onChange={(e) => handleItemChange(index, 'quantidade', Number(e.target.value))}
+                    onChange={(e) => handleItemChange(index, 'quantidade', e.target.value === '' ? '' : Number(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-center"
                     placeholder="Qtd"
-                    min="1"
+                    min={isComplemento ? "0" : "1"}
                   />
                 </div>
                 <div className="w-1/2 md:w-28">
@@ -434,37 +476,40 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
                     placeholder="Valor Unit."
                   />
                 </div>
-            </div>
+              </div>
 
-            <div className="flex gap-2 w-full md:w-auto items-center justify-between md:justify-end">
+              <div className="flex gap-2 w-full md:w-auto items-center justify-between md:justify-end">
                 <div className="w-1/2 md:w-24 px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-right text-sm text-gray-700" title={`Alíquota: ${item.ipi_aliquota || 0}%`}>
-                    <span className="text-xs text-gray-500 mr-2">IPI:</span>
-                    {Number(item.valor_ipi || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  <span className="text-xs text-gray-500 mr-2">IPI:</span>
+                  {Number(item.valor_ipi || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                 </div>
                 <div className="w-1/2 md:w-28">
-                    <IMaskInput
-                        mask={MASKS['currency'].mask}
-                        blocks={{
-                          num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
-                        }}
-                        lazy={MASKS['currency'].lazy}
-                        value={String(item.total_com_ipi ?? '')}
-                        unmask={true}
-                        onAccept={(value, mask) => handleItemChange(index, 'total_com_ipi', mask.unmaskedValue)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-right font-semibold text-gray-800"
-                        placeholder="Total"
-                    />
+                  <IMaskInput
+                    mask={MASKS['currency'].mask}
+                    blocks={{
+                      num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                    }}
+                    lazy={MASKS['currency'].lazy}
+                    value={String(item.total_com_ipi ?? '')}
+                    unmask={true}
+                    onAccept={(value, mask) => handleItemChange(index, 'total_com_ipi', mask.unmaskedValue)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-right font-semibold text-gray-800"
+                    placeholder="Total"
+                  />
                 </div>
-            </div>
+              </div>
 
-            <button 
-              type="button" 
-              onClick={() => handleRemoveItem(index)}
-              className="p-2 text-red-500 hover:text-red-700 self-end md:self-center"
-              title="Remover item"
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
+              <div className="flex gap-1.5 self-end md:self-center">
+                <button
+                  type="button"
+                  onClick={() => handleRemoveItem(index)}
+                  className="p-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md border border-red-100 transition-colors"
+                  title="Remover item"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -472,20 +517,19 @@ export const OrderItemsInput = ({ field, value, onChange, error }) => {
       <button
         type="button"
         onClick={handleAddItem}
-        className="flex items-center justify-center px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md border border-blue-200 dashed"
+        className="flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md border-2 border-blue-200 border-dashed transition-colors duration-150"
       >
         + Adicionar Item
       </button>
-      
+
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
 
-// Componente auxiliar interno para busca de produtos
 const AsyncProductSelect = ({ value, onChange }) => {
   const [selectedOption, setSelectedOption] = useState(null);
-  
+
   const loadOptions = (inputValue, callback) => {
     api.get(`/generic/produtos`, {
       params: { search_term: inputValue, limit: 1000, situacao: 'true' }
@@ -503,12 +547,12 @@ const AsyncProductSelect = ({ value, onChange }) => {
     if (value && (!selectedOption || selectedOption.value !== value)) {
       api.get(`/generic/produtos/${value}`)
         .then(response => {
-            const item = response.data;
-            setSelectedOption({ value: item.id, label: item.descricao, original: item });
+          const item = response.data;
+          setSelectedOption({ value: item.id, label: item.descricao, original: item });
         })
         .catch(() => setSelectedOption({ value, label: `ID ${value}` }));
     } else if (!value) {
-        setSelectedOption(null);
+      setSelectedOption(null);
     }
   }, [value]);
 
@@ -519,8 +563,8 @@ const AsyncProductSelect = ({ value, onChange }) => {
       loadOptions={loadOptions}
       value={selectedOption}
       onChange={(opt) => {
-          setSelectedOption(opt);
-          onChange(opt);
+        setSelectedOption(opt);
+        onChange(opt);
       }}
       autoComplete="off"
       placeholder="Buscar produto..."
@@ -590,7 +634,7 @@ export const MultiSelectInput = ({ field, value, onChange, error, options = [], 
   const handleChange = (selected) => {
     // selected é um array de objetos [{label, value}, ...] ou null
     const newValues = selected ? selected.map(opt => opt.value) : [];
-    
+
     onChange({
       target: {
         name: name,
@@ -794,7 +838,7 @@ export const DefaultFiltersInput = ({ field, value: activeFilters = [], onChange
 /** * Componente de Select Assíncrono com busca (para Foreign Keys) * Usa react-select/async */
 export const AsyncSelectInput = ({ field, value, onChange, error, modelName, formData, ...props }) => {
   const { label, name, required, foreign_key_model, foreign_key_label_field } = field;
-  
+
   // Estado para o objeto de seleção { value, label } e para o carregamento inicial
   const [selectedOption, setSelectedOption] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1003,7 +1047,7 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, ...pro
 /** * Componente para Data (calendário) e Data/Hora * Usa o input nativo do HTML5 (<input type="date" />) * que abre um pop-up de calendário. */
 export const DateInput = ({ field, value, onChange, error, disabled, modelName, ...props }) => {
   const { label, name, required } = field;
-  
+
   // O tipo vindo do backend é 'date' or 'datetime'.
   // O tipo do input HTML é 'date' or 'datetime-local'.
   const inputType = field.type === 'datetime' ? 'datetime-local' : 'date';
@@ -1018,35 +1062,35 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
    */
   const formatValueForInput = (val) => {
     if (!val) return '';
-    
+
     let dateStr = val;
-    
+
     // FIX: Se o input for do tipo 'date' e o valor já estiver no formato 'YYYY-MM-DD',
     // retornamos diretamente. Isso evita que o new Date() processe o valor enquanto
     // o usuário digita, o que causava o bug de impedir a digitação manual.
     if (inputType === 'date' && typeof dateStr === 'string' && dateStr.length === 10 && !dateStr.includes('T')) {
       return dateStr;
     }
-    
+
     // 1. Corrige o bug do JS Date() que trata "YYYY-MM-DD" como UTC.
     // Se for SÓ a data, adiciona a hora local para forçar o fuso correto.
     if (dateStr.length === 10 && !dateStr.includes('T')) {
-        dateStr = `${dateStr}T00:00:00`; 
+      dateStr = `${dateStr}T00:00:00`;
     }
 
     const dateObj = new Date(dateStr);
-    
+
     // Se a data for inválida, retorna vazio
     if (isNaN(dateObj.getTime())) {
-        console.warn(`Valor de data inválido recebido: ${val}`);
-        return '';
+      console.warn(`Valor de data inválido recebido: ${val}`);
+      return '';
     }
-    
+
     // 2. Extrai componentes LOCAIS (não UTC)
     const year = dateObj.getFullYear();
     const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
     const day = dateObj.getDate().toString().padStart(2, '0');
-    
+
     if (inputType === 'date') {
       // Formato YYYY-MM-DD
       return `${year}-${month}-${day}`;
@@ -1147,14 +1191,14 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     }
 
     const link = document.createElement('a');
-    
+
     if (isBase64) {
-        const cleanValue = value.replace(/^data:.*;base64,/, '');
-        link.href = `data:${mimeType};base64,${cleanValue}`;
+      const cleanValue = value.replace(/^data:.*;base64,/, '');
+      link.href = `data:${mimeType};base64,${cleanValue}`;
     } else {
-        link.href = `data:${mimeType};charset=utf-8,${encodeURIComponent(value)}`;
+      link.href = `data:${mimeType};charset=utf-8,${encodeURIComponent(value)}`;
     }
-    
+
     link.download = `${name}_${new Date().getTime()}.${extension}`;
     document.body.appendChild(link);
     link.click();
@@ -1169,7 +1213,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
       <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
-      
+
       <div className="relative">
         <input
           type="file"
@@ -1180,8 +1224,8 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
           onChange={handleFileChange}
           className="hidden"
         />
-        
-        <div 
+
+        <div
           onClick={handleTriggerClick}
           className={`w-full px-3 py-2 pr-20 border border-gray-300 rounded-md shadow-sm 
                       cursor-pointer bg-white flex items-center min-h-[42px]
@@ -1199,20 +1243,20 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
           <span className={`truncate ${!displayText ? 'text-gray-400' : 'text-gray-700'}`}>
             {displayText || placeholder || "Clique para selecionar..."}
           </span>
-          
+
           <div className="absolute inset-y-0 right-0 flex items-center pr-2 space-x-1">
             {value && (
-                <button
-                    type="button"
-                    onClick={handleDownload}
-                    className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-full transition-colors z-10"
-                    title="Baixar arquivo"
-                >
-                    <Download className="w-5 h-5" />
-                </button>
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-full transition-colors z-10"
+                title="Baixar arquivo"
+              >
+                <Download className="w-5 h-5" />
+              </button>
             )}
             <div className="p-1.5 pointer-events-none text-gray-500">
-                <Upload className="w-5 h-5" />
+              <Upload className="w-5 h-5" />
             </div>
           </div>
         </div>

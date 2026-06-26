@@ -89,6 +89,37 @@ def update_dashboard_preferences(
     db.commit()
     return {"message": "Dashboard atualizado com sucesso"}
 
+def resolve_model_field(model, field_path: str, joined_rels: dict, db_query):
+    """
+    Resolve um caminho de campo (ex: 'id_cliente' ou 'cliente.nome_razao')
+    retornando a coluna SQLAlchemy correspondente e a query com os joins necessários.
+    """
+    if not field_path:
+        return None, db_query
+
+    if "." in field_path:
+        rel_name, col_name = field_path.split(".", 1)
+        mapper = inspect(model)
+        rel = mapper.relationships.get(rel_name)
+        if rel:
+            related_model = rel.mapper.class_
+            if hasattr(related_model, col_name):
+                if rel_name not in joined_rels:
+                    rel_alias = aliased(related_model, name=f"join_{rel_name}")
+                    db_query = db_query.outerjoin(rel_alias, getattr(model, rel_name))
+                    joined_rels[rel_name] = rel_alias
+                else:
+                    rel_alias = joined_rels[rel_name]
+                return getattr(rel_alias, col_name), db_query
+            else:
+                return None, db_query
+        else:
+            return None, db_query
+    else:
+        if hasattr(model, field_path):
+            return getattr(model, field_path), db_query
+        return None, db_query
+
 @router.post("/dashboard/custom/data")
 def get_dynamic_card_data(
     query: DynamicCardQuery,
@@ -105,12 +136,6 @@ def get_dynamic_card_data(
         
     model = registry["model"]
     
-    # Validação Básica de Colunas
-    if not hasattr(model, query.campo):
-        raise HTTPException(status_code=400, detail=f"A coluna '{query.campo}' não existe no modelo '{query.modelo}'.")
-    if query.agrupar_por and not hasattr(model, query.agrupar_por):
-        raise HTTPException(status_code=400, detail=f"A coluna de agrupamento '{query.agrupar_por}' não existe.")
-
     # Inicia a Query base isolando o tenant (empresa)
     db_query = db.query(model).filter(model.id_empresa == current_user.id_empresa)
     
@@ -118,6 +143,17 @@ def get_dynamic_card_data(
     sort_by = 'id'
     sort_order = 'desc'
     joined_rels = {}
+
+    # Validação e Resolução do Campo Alvo Principal
+    target_col, db_query = resolve_model_field(model, query.campo, joined_rels, db_query)
+    if target_col is None:
+        raise HTTPException(status_code=400, detail=f"A coluna '{query.campo}' não existe no modelo '{query.modelo}' ou em seus relacionamentos.")
+        
+    if query.agrupar_por:
+        # Validação do campo de agrupamento (sem modificar a query principal ainda)
+        temp_group_col, _ = resolve_model_field(model, query.agrupar_por, {}, db_query)
+        if temp_group_col is None:
+            raise HTTPException(status_code=400, detail=f"A coluna de agrupamento '{query.agrupar_por}' não existe no modelo '{query.modelo}' ou em seus relacionamentos.")
 
     # --- Aplicação de Filtros (Opcional, similar ao Relatórios/GenericList) ---
     if query.filtros:
@@ -138,29 +174,10 @@ def get_dynamic_card_data(
             if not field_name:
                 continue
 
-            attr = None
-            if "." in field_name:
-                rel_name, col_name = field_name.split(".", 1)
-                mapper = inspect(model)
-                rel = mapper.relationships.get(rel_name)
-                if rel:
-                    related_model = rel.mapper.class_
-                    if hasattr(related_model, col_name):
-                        if rel_name not in joined_rels:
-                            rel_alias = aliased(related_model, name=f"filter_{rel_name}")
-                            db_query = db_query.outerjoin(rel_alias, getattr(model, rel_name))
-                            joined_rels[rel_name] = rel_alias
-                        else:
-                            rel_alias = joined_rels[rel_name]
-                        attr = getattr(rel_alias, col_name)
-            else:
-                if hasattr(model, field_name):
-                    attr = getattr(model, field_name)
-            
+            attr, db_query = resolve_model_field(model, field_name, joined_rels, db_query)
             if attr is None:
                 continue
                 
-            
             if operator == "equals":
                 if isinstance(value, str) and "," in value:
                     vals = [v.strip() for v in value.split(",")]
@@ -194,9 +211,6 @@ def get_dynamic_card_data(
     if search_term:
         db_query = apply_search_filter(db_query, model, search_term)
 
-    # Prepara a Coluna Alvo
-    target_col = getattr(model, query.campo)
-    
     # --- LÓGICA: CARD DE VALOR ÚNICO (Metric) ---
     if query.tipo == "metrica":
         if query.operacao == "sum":
@@ -215,26 +229,35 @@ def get_dynamic_card_data(
         if not query.agrupar_por:
             raise HTTPException(status_code=400, detail="Gráficos exigem a definição de um campo 'agrupar_por'.")
              
-        group_col = getattr(model, query.agrupar_por)
+        group_col, db_query = resolve_model_field(model, query.agrupar_por, joined_rels, db_query)
         
         # --- Lógica para substituir FK pelo nome de exibição ---
-        mapper = inspect(model)
-        column = model.__table__.columns.get(query.agrupar_por)
-        if column is not None and column.foreign_keys:
-            rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
-            if rel:
-                related_model = rel.mapper.class_
-                PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
-                display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
-                
-                if display_field:
-                    rel_name = rel.key
-                    rel_alias = aliased(related_model, name=f"fk_group_{rel_name}")
-                    db_query = db_query.outerjoin(rel_alias, getattr(model, rel_name))
-                    group_col = getattr(rel_alias, display_field)
-        elif column is not None and isinstance(column.type, DateTime):
-            # Converte DateTime para Date para que o banco agrupe por dia e some todos os registros da data
-            group_col = cast(group_col, Date)
+        if "." not in query.agrupar_por:
+            mapper = inspect(model)
+            column = model.__table__.columns.get(query.agrupar_por)
+            if column is not None and column.foreign_keys:
+                rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                if rel:
+                    related_model = rel.mapper.class_
+                    PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
+                    display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
+                    
+                    if display_field:
+                        rel_name = rel.key
+                        if rel_name not in joined_rels:
+                            rel_alias = aliased(related_model, name=f"fk_group_{rel_name}")
+                            db_query = db_query.outerjoin(rel_alias, getattr(model, rel_name))
+                            joined_rels[rel_name] = rel_alias
+                        else:
+                            rel_alias = joined_rels[rel_name]
+                        group_col = getattr(rel_alias, display_field)
+        
+        # Se for uma coluna do tipo DateTime (direto ou via relacionamento), converte para Date
+        try:
+            if hasattr(group_col, 'type') and isinstance(group_col.type, DateTime):
+                group_col = cast(group_col, Date)
+        except:
+            pass
         
         agg_funcs = []
         series_ids = []
@@ -244,17 +267,20 @@ def get_dynamic_card_data(
             for s in query.series:
                 if s.is_meta:
                     continue # Metas fixas não entram na query SQL
-                if not s.campo or not hasattr(model, s.campo):
+                if not s.campo:
                     continue
                 
-                t_col = getattr(model, s.campo)
+                s_col, db_query = resolve_model_field(model, s.campo, joined_rels, db_query)
+                if s_col is None:
+                    continue
+                
                 op = s.operacao
                 if op == 'cumulative_sum':
                     op = 'sum' # Acumulação feita pelo frontend
                     
-                if op == "sum": agg_funcs.append(func.sum(t_col).label(s.id))
-                elif op == "avg": agg_funcs.append(func.avg(t_col).label(s.id))
-                else: agg_funcs.append(func.count(t_col).label(s.id))
+                if op == "sum": agg_funcs.append(func.sum(s_col).label(s.id))
+                elif op == "avg": agg_funcs.append(func.avg(s_col).label(s.id))
+                else: agg_funcs.append(func.count(s_col).label(s.id))
                 
                 series_ids.append(s.id)
         else:
@@ -262,7 +288,9 @@ def get_dynamic_card_data(
             target_cols = []
             if getattr(query, 'colunas', None) and len(query.colunas) > 0:
                 for c in query.colunas:
-                    if hasattr(model, c): target_cols.append(getattr(model, c))
+                    c_col, db_query = resolve_model_field(model, c, joined_rels, db_query)
+                    if c_col is not None:
+                        target_cols.append(c_col)
             if not target_cols: target_cols = [target_col]
                 
             for i, t_col in enumerate(target_cols):
