@@ -162,8 +162,8 @@ const GenericForm = ({ modelName: propModelName }) => {
           // Adiciona o campo na aba correta (pelo índice salvo)
           const tabIndex = tabNameMap[tabName];
           
-          // Se for admin e o campo for data_emissao, garante que não seja read_only para o FormRenderer
-          const fieldToPush = (field.name === 'data_emissao' && isAdmin) 
+          // Se for admin e o campo for data_emissao, ou se for total/total_desconto do pedido, garante que não seja read_only para o FormRenderer
+          const fieldToPush = (field.name === 'data_emissao' && isAdmin) || (modelName === 'pedidos' && (field.name === 'total' || field.name === 'total_desconto'))
             ? { ...field, read_only: false } 
             : field;
 
@@ -261,8 +261,15 @@ const GenericForm = ({ modelName: propModelName }) => {
       newIpiFreteValor = parseFloat(newIpiFreteValor.toFixed(2));
       newTotalFrete = parseFloat(newTotalFrete.toFixed(2));
 
-      const totalComDesconto = parseFloat(Math.max(0, totalItens - desconto + newValorFrete + newIpiFreteValor).toFixed(2));
-      const total = parseFloat(Math.max(0, totalItens + newValorFrete + newIpiFreteValor).toFixed(2));
+      const isComplemento = formData.tipo_operacao === 'complemento' || formData.tipo_operacao === 'Complementar';
+
+      const totalComDesconto = (isComplemento || lastEditedField.current === 'total_desconto')
+        ? (Number(formData.total_desconto) || 0)
+        : parseFloat(Math.max(0, totalItens - desconto + newValorFrete + newIpiFreteValor).toFixed(2));
+
+      const total = (isComplemento || lastEditedField.current === 'total')
+        ? (Number(formData.total) || 0)
+        : parseFloat(Math.max(0, totalItens + newValorFrete + newIpiFreteValor).toFixed(2));
 
       const currentTotal = Number(formData.total) || 0;
       const currentTotalDesconto = Number(formData.total_desconto) || 0;
