@@ -1266,3 +1266,190 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     </div>
   );
 };
+
+/** * Componente de Upload de Imagem ou Link Direto (URL) */
+export const ImageUploadOrUrlInput = ({ field, value, onChange, error, disabled, ...props }) => {
+  const { label, name, required, placeholder } = field;
+  const [tab, setTab] = useState(() => {
+    if (value && String(value).startsWith('data:')) {
+      return 'file';
+    }
+    if (value && (String(value).startsWith('http://') || String(value).startsWith('https://'))) {
+      return 'url';
+    }
+    return 'file'; // default tab
+  });
+
+  const fileInputRef = React.useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        onChange({
+          target: {
+            name: name,
+            value: reader.result,
+          },
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUrlChange = (e) => {
+    onChange({
+      target: {
+        name: name,
+        value: e.target.value,
+      },
+    });
+  };
+
+  const handleRemove = () => {
+    onChange({
+      target: {
+        name: name,
+        value: '',
+      },
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleTriggerClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const isBase64 = value && String(value).startsWith('data:');
+  const isUrl = value && (String(value).startsWith('http://') || String(value).startsWith('https://'));
+
+  return (
+    <div className="flex flex-col space-y-2">
+      <label className="text-sm font-medium text-gray-700">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+
+      {/* Tabs */}
+      <div className="flex space-x-1 p-0.5 bg-gray-100 rounded-lg w-fit">
+        <button
+          type="button"
+          onClick={() => setTab('file')}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+            tab === 'file'
+              ? 'bg-white text-gray-800 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          disabled={disabled}
+        >
+          Carregar Arquivo
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('url')}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+            tab === 'url'
+              ? 'bg-white text-gray-800 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          disabled={disabled}
+        >
+          Link da Imagem
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="relative">
+        {tab === 'file' ? (
+          <div>
+            <input
+              type="file"
+              id={name}
+              name={name}
+              accept="image/*"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              className="hidden"
+              disabled={disabled}
+            />
+            <div
+              onClick={disabled ? undefined : handleTriggerClick}
+              className={`w-full px-4 py-3 border border-gray-300 rounded-md shadow-sm 
+                          bg-white flex flex-col items-center justify-center min-h-[90px] border-dashed
+                          ${disabled ? 'bg-gray-50 cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-blue-500 hover:bg-blue-50/10'}`}
+              tabIndex={disabled ? -1 : 0}
+              onKeyDown={(e) => {
+                if (disabled) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleTriggerClick();
+                }
+              }}
+            >
+              <Upload className="w-6 h-6 text-gray-400 mb-1" />
+              <span className="text-sm font-medium text-gray-600">
+                {isBase64 ? "Imagem carregada" : placeholder || "Clique para carregar imagem..."}
+              </span>
+              <span className="text-xs text-gray-400 mt-0.5">
+                Formatos suportados: PNG, JPG, JPEG, GIF
+              </span>
+            </div>
+          </div>
+        ) : (
+          <input
+            type="text"
+            id={name}
+            name={name}
+            value={isUrl ? value : ''}
+            onChange={handleUrlChange}
+            placeholder="Cole o link direto da imagem (https://...)"
+            disabled={disabled}
+            className={`w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 
+                        focus:outline-none focus:ring-blue-500 focus:border-blue-500
+                        ${error ? 'border-red-500' : ''}
+                        ${disabled ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+            {...props}
+          />
+        )}
+      </div>
+
+      {/* Preview and Remove Button */}
+      {value && (
+        <div className="flex items-center space-x-4 mt-2 p-2 bg-gray-50 border border-gray-100 rounded-lg animate-fade-in">
+          <div className="w-16 h-16 bg-white border border-gray-200 rounded flex items-center justify-center overflow-hidden p-1 shadow-sm">
+            <img
+              src={value}
+              alt="Pré-visualização do Logo"
+              className="max-w-full max-h-full object-contain"
+              onError={(e) => {
+                e.target.style.display = 'none';
+              }}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Visualização do Logo
+            </p>
+            <p className="text-xs text-gray-400 truncate mt-0.5">
+              {isBase64 ? "Arquivo Base64" : value}
+            </p>
+          </div>
+          {!disabled && (
+            <button
+              type="button"
+              onClick={handleRemove}
+              className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full transition-colors"
+              title="Remover logo"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
+    </div>
+  );
+};

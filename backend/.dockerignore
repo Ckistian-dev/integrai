@@ -32,3 +32,6 @@ tests/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Database data (large, should never be in image)
+postgres-data/

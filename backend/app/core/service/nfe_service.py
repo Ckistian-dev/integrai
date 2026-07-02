@@ -537,7 +537,18 @@ class NFeService:
                 # Tenta carregar logo
                 if self.empresa.url_logo:
                     try:
-                        logo_img = ImageReader(self.empresa.url_logo)
+                        logo_data = self.empresa.url_logo
+                        if logo_data.startswith("data:"):
+                            try:
+                                header, base64_data = logo_data.split(",", 1)
+                                decoded_bytes = base64.b64decode(base64_data)
+                                logo_img = ImageReader(io.BytesIO(decoded_bytes))
+                            except Exception as decode_err:
+                                print(f"Erro ao decodificar logo em base64: {decode_err}")
+                                logo_img = ImageReader(logo_data)
+                        else:
+                            logo_img = ImageReader(logo_data)
+                            
                         # Centraliza Logo Verticalmente na área disponível
                         logo_y = base_header_y + (h_header - img_h) / 2 - 1*mm
                         c.drawImage(logo_img, left_m + margin_logo, logo_y, width=img_w, height=img_h, mask='auto', preserveAspectRatio=True, anchor='c')
@@ -2324,6 +2335,17 @@ class NFeService:
                 'vCBS': Decimal('0.00')
             }
 
+            # Busca o pedido de origem (se for complemento) para servir de base para os impostos
+            origem_itens_map = {}
+            if tipo_op_enum == RegraTipoOperacaoEnum.complemento and ref_db and ref_db.itens:
+                for orig_item in ref_db.itens:
+                    orig_prod_id = orig_item.get('id_produto') or orig_item.get('produto_id')
+                    orig_sku = orig_item.get('sku')
+                    if orig_prod_id:
+                        origem_itens_map[f"id_{orig_prod_id}"] = orig_item
+                    if orig_sku:
+                        origem_itens_map[f"sku_{orig_sku}"] = orig_item
+
             if not lista_itens:
                 raise HTTPException(status_code=400, detail="O pedido não possui itens. Impossível emitir NFe.")
 
@@ -2334,6 +2356,7 @@ class NFeService:
                 valor_unit = safe_decimal(item.get('valor_unitario', 0))
                 subtotal = safe_decimal(item.get('subtotal'))
                 total_com_ipi = safe_decimal(item.get('total_com_ipi'))
+                prod_id = item.get('id_produto') or item.get('produto_id')
                 
                 if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
                     if subtotal > 0:
@@ -2341,7 +2364,27 @@ class NFeService:
                     elif total_com_ipi > 0:
                         v_item = total_com_ipi
                     else:
-                        v_item = (qtd * valor_unit).quantize(Decimal('0.01'))
+                        # Tenta buscar do item original
+                        orig_item = None
+                        sku = item.get('sku')
+                        if prod_id and f"id_{prod_id}" in origem_itens_map:
+                            orig_item = origem_itens_map[f"id_{prod_id}"]
+                        elif sku and f"sku_{sku}" in origem_itens_map:
+                            orig_item = origem_itens_map[f"sku_{sku}"]
+                        
+                        orig_subtotal = Decimal('0.00')
+                        if orig_item:
+                            orig_subtotal = safe_decimal(orig_item.get('subtotal') or orig_item.get('total_com_ipi'))
+                        
+                        if orig_subtotal > 0:
+                            v_item = orig_subtotal
+                        else:
+                            v_item = (qtd * valor_unit).quantize(Decimal('0.01'))
+                    
+                    # Fallback robusto: se o item resultou em 0, mas é o único item e o pedido tem total manual,
+                    # usamos o total do pedido como base para o cálculo dos impostos do item!
+                    if v_item == 0 and len(lista_itens) == 1 and pedido.total and pedido.total > 0:
+                        v_item = safe_decimal(pedido.total)
                 else:
                     v_item = (qtd * valor_unit).quantize(Decimal('0.01'))
                 total_produtos_pedido += v_item
@@ -2384,7 +2427,27 @@ class NFeService:
                     elif total_com_ipi > 0:
                         valor_total = total_com_ipi
                     else:
-                        valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
+                        # Tenta buscar do item original
+                        orig_item = None
+                        sku = item.get('sku')
+                        if prod_id and f"id_{prod_id}" in origem_itens_map:
+                            orig_item = origem_itens_map[f"id_{prod_id}"]
+                        elif sku and f"sku_{sku}" in origem_itens_map:
+                            orig_item = origem_itens_map[f"sku_{sku}"]
+                        
+                        orig_subtotal = Decimal('0.00')
+                        if orig_item:
+                            orig_subtotal = safe_decimal(orig_item.get('subtotal') or orig_item.get('total_com_ipi'))
+                        
+                        if orig_subtotal > 0:
+                            valor_total = orig_subtotal
+                        else:
+                            valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
+                    
+                    # Fallback robusto: se o item resultou em 0, mas é o único item e o pedido tem total manual,
+                    # usamos o total do pedido como base para o cálculo dos impostos do item!
+                    if valor_total == 0 and len(lista_itens) == 1 and pedido.total and pedido.total > 0:
+                        valor_total = safe_decimal(pedido.total)
                 else:
                     valor_total = (qtd * valor_unit).quantize(Decimal('0.01'))
                 
@@ -2394,11 +2457,19 @@ class NFeService:
                 valor_frete_item = Decimal('0.00')
                 if pedido.valor_frete and total_produtos_pedido > 0:
                     valor_frete_item = (pedido.valor_frete * (valor_total / total_produtos_pedido)).quantize(Decimal('0.01'))
+                # Sanitização: TDec_1302 não aceita valores negativos no XML
+                if valor_frete_item < Decimal('0.00'):
+                    print(f"AVISO: valor_frete_item negativo ({valor_frete_item}), convertendo para positivo.")
+                    valor_frete_item = abs(valor_frete_item)
 
                 # Rateio de Desconto
                 valor_desconto_item = Decimal('0.00')
                 if pedido.desconto and total_produtos_pedido > 0:
                     valor_desconto_item = (pedido.desconto * (valor_total / total_produtos_pedido)).quantize(Decimal('0.01'))
+                # Sanitização: TDec_1302 não aceita valores negativos no XML (ex: desconto negativo = acréscimo)
+                if valor_desconto_item < Decimal('0.00'):
+                    print(f"AVISO: valor_desconto_item negativo ({valor_desconto_item}), convertendo para positivo. pedido.desconto={pedido.desconto}")
+                    valor_desconto_item = abs(valor_desconto_item)
 
                 ncm = self._limpar_formatacao(produto_db.ncm) or '00000000'
                 cfop = None
@@ -2566,7 +2637,23 @@ class NFeService:
                         })
 
                     # --- CÁLCULO ICMS ---
-                    base_icms = valor_total + valor_frete_item + val_ipi - valor_desconto_item
+                    if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
+                        total_com_descontos = safe_decimal(pedido.total_desconto)
+                        if total_com_descontos == 0:
+                            total_com_descontos = safe_decimal(pedido.total) - safe_decimal(pedido.desconto)
+                        
+                        if total_com_descontos > 0:
+                            if len(lista_itens) == 1:
+                                base_icms = total_com_descontos
+                            elif total_produtos_pedido > 0:
+                                base_icms = (total_com_descontos * (valor_total / total_produtos_pedido)).quantize(Decimal('0.01'))
+                            else:
+                                base_icms = (total_com_descontos / Decimal(len(lista_itens))).quantize(Decimal('0.01'))
+                        else:
+                            base_icms = valor_total + valor_frete_item + val_ipi - valor_desconto_item
+                    else:
+                        base_icms = valor_total + valor_frete_item + val_ipi - valor_desconto_item
+
                     if base_icms < 0: base_icms = Decimal('0.00')
 
                     if regra.icms_reducao_bc_perc and regra.icms_reducao_bc_perc > 0:
@@ -2878,6 +2965,11 @@ class NFeService:
                 # ADICIONAR PRODUTO
                 gtin_val = produto_db.gtin if produto_db.gtin else 'SEM GTIN'
 
+                # Se for um complemento e a quantidade for zero, o valor do produto bruto no XML (vProd) deve ser 0.00
+                v_prod_xml = valor_total
+                if tipo_op_enum == RegraTipoOperacaoEnum.complemento and qtd == 0:
+                    v_prod_xml = Decimal('0.00')
+
                 nota_fiscal.adicionar_produto_servico(
                     codigo=self._limpar_texto(str(produto_db.sku)),
                     descricao=self._limpar_texto(produto_db.descricao),
@@ -2888,7 +2980,7 @@ class NFeService:
                     ean_tributavel=gtin_val,
                     quantidade_comercial=qtd,
                     valor_unitario_comercial=valor_unit,
-                    valor_total_bruto=valor_total,
+                    valor_total_bruto=v_prod_xml,
                     unidade_tributavel=unidade,
                     quantidade_tributavel=qtd,
                     valor_unitario_tributavel=valor_unit,

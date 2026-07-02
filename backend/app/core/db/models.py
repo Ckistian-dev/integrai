@@ -411,7 +411,7 @@ class Empresa(Base):
     fantasia = Column(String, 
                       info={'tab': 'Dados Gerais', 'label': 'Nome Fantasia', 'placeholder': 'Ex: Loja do Centro'})
     url_logo = Column(String, 
-                      info={'tab': 'Dados Gerais', 'label': 'URL do Logo', 'placeholder': 'https://...'})
+                      info={'tab': 'Dados Gerais', 'label': 'Logo da Empresa', 'placeholder': 'https://...', 'type': 'image_upload_or_url'})
     inscricao_estadual = Column(String, 
                                 info={'tab': 'Dados Gerais', 'label': 'Inscrição Estadual', 'placeholder': 'Ex: 123.456.789.111 (ou vazio para Isento)'})
     inscricao_municipal = Column(String, 

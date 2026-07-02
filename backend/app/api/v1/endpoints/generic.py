@@ -146,14 +146,24 @@ def generate_shipping_label(
 
     # --- NOVO: PRE-FETCH DO LOGO COM TIMEOUT ---
     logo_reader = None
-    if empresa_dados.get('url_logo'):
-        try:
-            req = urllib.request.Request(empresa_dados['url_logo'], headers={'User-Agent': 'Mozilla/5.0'})
-            # Timeout de 3 segundos para evitar travamento
-            with urllib.request.urlopen(req, timeout=3) as response:
-                logo_reader = ImageReader(io.BytesIO(response.read()))
-        except Exception as e:
-            print(f"Aviso: Erro ao baixar logo: {e}")
+    logo_url = empresa_dados.get('url_logo')
+    if logo_url:
+        if logo_url.startswith("data:"):
+            try:
+                import base64
+                header, base64_data = logo_url.split(",", 1)
+                decoded_bytes = base64.b64decode(base64_data)
+                logo_reader = ImageReader(io.BytesIO(decoded_bytes))
+            except Exception as e:
+                print(f"Aviso: Erro ao decodificar logo em base64: {e}")
+        else:
+            try:
+                req = urllib.request.Request(logo_url, headers={'User-Agent': 'Mozilla/5.0'})
+                # Timeout de 3 segundos para evitar travamento
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    logo_reader = ImageReader(io.BytesIO(response.read()))
+            except Exception as e:
+                print(f"Aviso: Erro ao baixar logo: {e}")
 
 
     # 2. Configuração do Canvas (TAMANHO CRÍTICO: 100x75mm)
@@ -398,13 +408,23 @@ def generate_batch_shipping_labels(
 
     # --- NOVO: PRE-FETCH DO LOGO COM TIMEOUT (PARA O LOTE) ---
     logo_reader = None
-    if empresa_dados.get('url_logo'):
-        try:
-            req = urllib.request.Request(empresa_dados['url_logo'], headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=3) as response:
-                logo_reader = ImageReader(io.BytesIO(response.read()))
-        except Exception as e:
-            print(f"Aviso: Erro ao baixar logo no lote: {e}")
+    logo_url = empresa_dados.get('url_logo')
+    if logo_url:
+        if logo_url.startswith("data:"):
+            try:
+                import base64
+                header, base64_data = logo_url.split(",", 1)
+                decoded_bytes = base64.b64decode(base64_data)
+                logo_reader = ImageReader(io.BytesIO(decoded_bytes))
+            except Exception as e:
+                print(f"Aviso: Erro ao decodificar logo em base64 no lote: {e}")
+        else:
+            try:
+                req = urllib.request.Request(logo_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    logo_reader = ImageReader(io.BytesIO(response.read()))
+            except Exception as e:
+                print(f"Aviso: Erro ao baixar logo no lote: {e}")
 
     for pid in pedido_ids:
         pedido = db.query(models.Pedido).filter(models.Pedido.id == pid, models.Pedido.id_empresa == current_user.id_empresa).first()
@@ -2066,9 +2086,16 @@ def generate_custom_report_pdf(
 
     if empresa.url_logo:
         try:
-            logo = Image(empresa.url_logo, width=35*mm, height=15*mm, kind='proportional')
+            if empresa.url_logo.startswith("data:"):
+                import base64
+                header, base64_data = empresa.url_logo.split(",", 1)
+                decoded_bytes = base64.b64decode(base64_data)
+                logo = Image(io.BytesIO(decoded_bytes), width=35*mm, height=15*mm, kind='proportional')
+            else:
+                logo = Image(empresa.url_logo, width=35*mm, height=15*mm, kind='proportional')
             elemento_esq = logo
-        except:
+        except Exception as e:
+            print(f"Erro ao carregar logo no relatorio: {e}")
             elemento_esq = Paragraph(f"<b>{nome_empresa}</b>", styles['Normal'])
     else:
         elemento_esq = Paragraph(f"<b>{nome_empresa}</b>", styles['Normal'])

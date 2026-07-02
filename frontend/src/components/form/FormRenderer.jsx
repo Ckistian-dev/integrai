@@ -12,7 +12,8 @@ import {
   FileInput,
   DefaultFiltersInput,
   MultiSelectInput,
-  TextAreaInput
+  TextAreaInput,
+  ImageUploadOrUrlInput
 } from '../ui/InputFields';
 import { RuleBuilderInput } from '../ui/RuleBuilderInput';
 import { CreatableSelectInput } from '../ui/CreatableSelectInput';
@@ -219,6 +220,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
 
     case 'boolean':
       return <BooleanInput {...props} value={value} />;
+
+    case 'image_upload_or_url':
+      return <ImageUploadOrUrlInput {...props} value={value} />;
 
     case 'file':
       return <FileInput {...props} value={value} fileName={field.filename_field ? formData[field.filename_field] : null} />;

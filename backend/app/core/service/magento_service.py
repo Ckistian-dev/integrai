@@ -509,22 +509,14 @@ class MagentoService:
         return novo_pedido, produtos_criados
 
     def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
-        """Busca cliente por email ou CPF (taxvat)"""
+        """Busca cliente por email ou CPF (taxvat) usando dados do endereço de COBRANÇA (billing_address)"""
         logger.info(f"Buscando ou criando cliente para o pedido Magento {order_data.get('increment_id')}")
 
-        # --- NOVA LÓGICA: PRIORIZA ENDEREÇO DE ENTREGA (SHIPPING) ---
-        shipping_address = {}
-        extension_attributes = order_data.get('extension_attributes', {})
-        shipping_assignments = extension_attributes.get('shipping_assignments', [])
-        if shipping_assignments:
-            shipping_address = shipping_assignments[0].get('shipping', {}).get('address', {})
-        
+        # --- DADOS DO CLIENTE: USA BILLING_ADDRESS (COBRANÇA) COMO FONTE PRINCIPAL ---
         billing = order_data.get('billing_address', {})
-        # O endereço base para o cadastro será o de entrega, com fallback para cobrança
-        address_source = shipping_address if shipping_address else billing
 
-        email = order_data.get('customer_email') or address_source.get('email')
-        taxvat = order_data.get('customer_taxvat') or address_source.get('vat_id') or billing.get('vat_id')
+        email = order_data.get('customer_email') or billing.get('email')
+        taxvat = order_data.get('customer_taxvat') or billing.get('vat_id')
 
         # Tenta buscar por CPF/CNPJ se existir
         cliente = None
@@ -547,9 +539,9 @@ class MagentoService:
             logger.info(f"Cliente {taxvat or email} já existe no ERP para empresa {self.id_empresa}")
             return cliente
 
-        # Cria novo
+        # Cria novo cliente com dados do billing_address (cobrança)
         logger.info(f"Criando novo cliente {taxvat or email} para empresa {self.id_empresa}")
-        street_lines = address_source.get('street', [])
+        street_lines = billing.get('street', [])
         rua = street_lines[0] if len(street_lines) > 0 else ''
         numero = street_lines[1] if len(street_lines) > 1 else 'S/N'
         
@@ -568,14 +560,14 @@ class MagentoService:
         novo_cliente = models.Cadastro(
             id_empresa=self.id_empresa,
             cpf_cnpj=clean_doc_create,
-            nome_razao=f"{address_source.get('firstname')} {address_source.get('lastname')}".upper(),
+            nome_razao=f"{billing.get('firstname', '')} {billing.get('lastname', '')}".strip().upper(),
             tipo_cadastro=CadastroTipoCadastroEnum.cliente,
             tipo_pessoa=CadastroTipoPessoaEnum.juridica if len(clean_doc_create) > 11 else CadastroTipoPessoaEnum.fisica,
             email=email,
-            telefone="".join(filter(str.isdigit, str(address_source.get('telephone') or '')))[:20],
-            cep="".join(filter(str.isdigit, str(address_source.get('postcode') or '')))[:9],
-            estado=address_source.get('region_code'),
-            cidade=address_source.get('city'),
+            telefone="".join(filter(str.isdigit, str(billing.get('telephone') or '')))[:20],
+            cep="".join(filter(str.isdigit, str(billing.get('postcode') or '')))[:9],
+            estado=billing.get('region_code'),
+            cidade=billing.get('city'),
             logradouro=rua,
             numero=numero,
             complemento=complemento,
