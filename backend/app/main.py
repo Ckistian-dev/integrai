@@ -5,6 +5,7 @@ from app.api.v1.api import api_router as v1_router
 from app.core.db.database import Base, engine
 from app.api.v1.endpoints import nfe, dfe # Importa os endpoints
 from fastapi.middleware.cors import CORSMiddleware
+from app.services.backup_service import start_backup_scheduler
 
 # Configuração de logging para exibir mensagens de DEBUG
 logging.basicConfig(
@@ -38,6 +39,7 @@ app.include_router(dfe.router, prefix="/api/v1/dfe", tags=["DF-e"])
 def on_startup():
     """Cria as tabelas do banco de dados na inicialização."""
     Base.metadata.create_all(bind=engine)
+    start_backup_scheduler()
 
 
 @app.get("/")

@@ -518,13 +518,14 @@ const GenericList = () => {
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
 
   // --- LÓGICA DE TOTAIS E LIMITE EFETIVO ---
-  // Se o modelo tem totais, reservamos a última linha da tabela para eles.
-  // Para isso, reduzimos o limite de dados por página em 1 e "passamos o dado para a próxima".
+  // A paginação deve ser baseada estritamente no limite selecionado pelo usuário
+  // para evitar problemas de deslocamento de offset, duplicação e linhas ocultas.
+  // A linha de totais (se existir) será renderizada como uma linha adicional no final da tabela.
   const hasTotalsField = useMemo(() => {
     return (modelName === 'pedidos' || modelName === 'contas') && Object.keys(totals || {}).length > 0;
   }, [modelName, totals]);
 
-  const effectiveLimit = hasTotalsField ? limit - 1 : limit;
+  const effectiveLimit = limit;
 
   // Estabiliza as dependências do useEffect para evitar loops infinitos
   const filtersJson = JSON.stringify(userPreferences.filters);

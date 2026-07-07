@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     RESP_TECNICO_ID_CSRT_PRODUCAO: Optional[str] = None
     RESP_TECNICO_CSRT_PRODUCAO: Optional[str] = None
 
+    # Google Drive Backup Settings
+    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None
+    GOOGLE_DRIVE_FOLDER_ID: str = "1dwN1APH1MviWCyJnUFGkE2rdIIq6ujUU"
+
     # Configuração para o Pydantic ler o arquivo .env (sintaxe Pydantic V2)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

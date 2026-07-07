@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3-dev \
     pkg-config \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # --- FIM DAS DEPENDÊNCIAS DO SISTEMA ---
