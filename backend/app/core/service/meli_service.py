@@ -987,21 +987,26 @@ class MeliService:
         client = await self.get_client()
 
         try:
-            # 1. Busca Pack ID (Obrigatório para Mercado Envios)
+            # 1. Busca Pack ID via /orders/{id}
+            # Se o ID passado for diretamente um pack_id, a rota /orders/ pode retornar 404.
+            # Nesse caso, tratamos o próprio ID como pack_id.
             order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
-            
-            if order_resp.status_code != 200:
-                logger.error(f"Erro ao buscar pack_id: {order_resp.text}")
-                return None
-            
-            order_data = order_resp.json()
-            pack_id = order_data.get('pack_id')
-            target_id = pack_id if pack_id else order_id_ml
 
-            if pack_id:
-                url = f"{self.base_url}/packs/{pack_id}/fiscal_documents"
+            if order_resp.status_code == 200:
+                order_data = order_resp.json()
+                pack_id = order_data.get('pack_id')
+                # Se o pedido tem pack_id, usa ele; senão usa o order_id como pack.
+                pack_id_to_use = pack_id if pack_id else order_id_ml
+                target_id = pack_id_to_use
+                logger.info(f"Pack ID resolvido via /orders/: {pack_id_to_use}")
             else:
-                url = f"{self.base_url}/orders/{order_id_ml}/fiscal_documents"
+                # 404 ou outro erro: o ID passado provavelmente JÁ É um pack_id.
+                # Tentamos usá-lo diretamente no endpoint de packs.
+                pack_id_to_use = order_id_ml
+                target_id = order_id_ml
+                logger.warning(f"Não foi possível buscar o pedido ML {order_id_ml} via /orders/ ({order_resp.status_code}). Tratando como pack_id direto.")
+
+            url = f"{self.base_url}/packs/{pack_id_to_use}/fiscal_documents"
 
             # 2. Tratamento do conteúdo do XML
             if isinstance(xml_content, str):
@@ -1048,7 +1053,7 @@ class MeliService:
                     msg = err_data.get('message', '') or err_data.get('error', '')
                     if "biller" in str(msg).lower():
                         logger.warning(f"Upload bloqueado pelo ML (Faturador Ativo): {msg}")
-                        return {"status": "error", "message": "Upload bloqueado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
+                        return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
                 except:
                     pass
                 logger.error(f"❌ Erro ML 403: {resp.text}")

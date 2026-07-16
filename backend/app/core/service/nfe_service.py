@@ -127,6 +127,18 @@ def log_xml_pretty(xml_content, level="ERROR"):
     except Exception as e:
         logger.error(f"Não foi possível formatar o XML: {e}")
 
+def safe_decimal(val, default="0.00") -> Decimal:
+    if val is None:
+        return Decimal(default)
+    val_str = str(val).strip()
+    if val_str == "" or val_str.lower() == "none":
+        return Decimal(default)
+    try:
+        val_str = val_str.replace(",", ".").replace("R$", "").strip()
+        return Decimal(val_str)
+    except Exception:
+        return Decimal(default)
+
 class NFeService:
     def __init__(self, db: Session, id_empresa: int):
         self.db = db
@@ -1763,18 +1775,6 @@ class NFeService:
         }
 
     def emitir_nfe(self, pedido_id: int, id_regra_tributaria: int = None):
-        def safe_decimal(val, default="0.00") -> Decimal:
-            if val is None:
-                return Decimal(default)
-            val_str = str(val).strip()
-            if val_str == "" or val_str.lower() == "none":
-                return Decimal(default)
-            try:
-                val_str = val_str.replace(",", ".").replace("R$", "").strip()
-                return Decimal(val_str)
-            except Exception:
-                return Decimal(default)
-
         # 1. Busca Dados do Pedido
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id == pedido_id,
@@ -3898,15 +3898,41 @@ class NFeService:
             ns_map = "http://www.portalfiscal.inf.br/nfe"
             
             # 1. Injetar cMunFGIBS no cabeçalho (grupo ide)
-            if municipio_fg:
+            # REGRA: cMunFGIBS só deve ser informado se indPres = 5 (Operação presencial, fora do estabelecimento)
+            ind_pres_nodes = root.xpath('//*[local-name()="ide"]//*[local-name()="indPres"]')
+            ind_pres_val = ind_pres_nodes[0].text if ind_pres_nodes else None
+            
+            if str(ind_pres_val) == '5' and municipio_fg:
                 ide_nodes = root.xpath('//*[local-name()="ide"]')
                 if ide_nodes:
                     ide_node = ide_nodes[0]
-                    cmunfg_nodes = ide_node.xpath('.//*[local-name()="cMunFG"]')
-                    if cmunfg_nodes and ide_node.find(f'{{{ns_map}}}cMunFGIBS') is None:
+                    if ide_node.find(f'{{{ns_map}}}cMunFGIBS') is None:
                         cmunfg_ibs = etree.Element(f'{{{ns_map}}}cMunFGIBS')
                         cmunfg_ibs.text = str(municipio_fg)
-                        cmunfg_nodes[0].addnext(cmunfg_ibs)
+                        ide_node.append(cmunfg_ibs)
+                        
+                        # Ordena os filhos de ide_node conforme a ordem do XSD
+                        ordem_ide = [
+                            'cUF', 'cNF', 'natOp', 'mod', 'serie', 'nNF', 'dhEmi', 'dhSaiEnt',
+                            'tpNF', 'idDest', 'cMunFG', 'tpImp', 'tpEmis', 'cDV', 'tpAmb',
+                            'finNFe', 'indFinal', 'indPres', 'procEmi', 'verProc', 'dhCont',
+                            'xJust', 'indIntermed', 'dPrevEntrega', 'cMunFGIBS', 'tpNFDebito',
+                            'tpNFCredito'
+                        ]
+                        
+                        def get_ide_sort_key(element):
+                            tag_name = etree.QName(element).localname
+                            if tag_name in ordem_ide:
+                                return ordem_ide.index(tag_name)
+                            return len(ordem_ide)
+                            
+                        children = list(ide_node)
+                        children.sort(key=get_ide_sort_key)
+                        
+                        for child in children:
+                            ide_node.remove(child)
+                        for child in children:
+                            ide_node.append(child)
             
             # 2. Injetar IBSCBS nos itens (grupo imposto)
             dets = root.xpath('//*[local-name()="det"]')
@@ -3943,6 +3969,27 @@ class NFeService:
                                 etree.SubElement(gCBS, f'{{{ns_map}}}vCBS').text = "{:.2f}".format(dados['vCBS'])
                             
                             imposto_node.append(ibscbs)
+                            
+                            # Ordena os filhos de imposto_node conforme a ordem do XSD
+                            ordem_imposto = [
+                                'vTotTrib', 'ICMS', 'ISSQN', 'IPI', 'II', 
+                                'PIS', 'PISST', 'COFINS', 'COFINSST', 
+                                'ICMSUFDest', 'IBSCBS'
+                            ]
+                            
+                            def get_imposto_sort_key(element):
+                                tag_name = etree.QName(element).localname
+                                if tag_name in ordem_imposto:
+                                    return ordem_imposto.index(tag_name)
+                                return len(ordem_imposto)
+                                
+                            children = list(imposto_node)
+                            children.sort(key=get_imposto_sort_key)
+                            
+                            for child in children:
+                                imposto_node.remove(child)
+                            for child in children:
+                                imposto_node.append(child)
 
             # 3. Injetar Totais (IBSCBSTot no grupo total)
             has_values = any(totais_ibscbs[k] > 0 for k in ['vBCIBSCBS', 'vIBS', 'vCBS'])
@@ -3981,6 +4028,24 @@ class NFeService:
                         
                         total_node.append(ibscbs_tot)
                         
+                        # Ordena os filhos de total_node conforme a ordem do XSD
+                        ordem_total = [
+                            'ICMSTot', 'ISSQNTot', 'retTrib', 'IBSCBSTot'
+                        ]
+                        
+                        def get_total_sort_key(element):
+                            tag_name = etree.QName(element).localname
+                            if tag_name in ordem_total:
+                                return ordem_total.index(tag_name)
+                            return len(ordem_total)
+                            
+                        children = list(total_node)
+                        children.sort(key=get_total_sort_key)
+                        
+                        for child in children:
+                            total_node.remove(child)
+                        for child in children:
+                            total_node.append(child)
         except Exception as e:
             print(f"Erro ao injetar IBSCBS: {e}")
 
@@ -3999,19 +4064,25 @@ class NFeService:
                 pedido.meli_xml_enviado = True
             else:
                 try:
-                    # Tenta obter o ID do pedido do Mercado Livre de forma inteligente (respeitando o novo formato com Pack_id)
-                    match_id = re.search(r"ID:\s*(\d+)", pedido.observacao or "")
-                    if match_id:
-                        order_id_ml = match_id.group(1)
+                    # IMPORTANTE: O campo "Pedido ML:" é o pack_id (nível de pacote), que é o
+                    # identificador correto para o endpoint /packs/{id}/fiscal_documents do ML.
+                    # O campo "ID:" é o sub-order ID individual e NÃO funciona no endpoint de fiscal_documents.
+                    match_pack = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
+                    if match_pack:
+                        order_id_ml = match_pack.group(1)
                     else:
-                        match = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
-                        order_id_ml = match.group(1) if match else None
+                        # Fallback: se não tem "Pedido ML:", usa "ID:" (pedido simples sem pack)
+                        match_id = re.search(r"ID:\s*(\d+)", pedido.observacao or "")
+                        order_id_ml = match_id.group(1) if match_id else None
 
                     if order_id_ml:
                         meli_service = MeliService(self.db, self.id_empresa)
                         res = asyncio.run(meli_service.upload_xml(order_id_ml, xml_str))
                         
-                        if res and not (isinstance(res, dict) and res.get('status') == 'error'):
+                        if res and isinstance(res, dict) and res.get('status') == 'warning':
+                            meli_res = {"success": True, "message": f"Aviso Mercado Livre: {res.get('message')}"}
+                            pedido.meli_xml_enviado = True
+                        elif res and not (isinstance(res, dict) and res.get('status') == 'error'):
                             meli_res = {"success": True, "message": "XML enviado com sucesso para o Mercado Livre!"}
                             pedido.meli_xml_enviado = True
                         else:

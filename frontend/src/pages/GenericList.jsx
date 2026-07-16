@@ -2296,7 +2296,12 @@ const GenericList = () => {
   };
 
   const moveColumn = (fromIdx, toIdx) => {
-    const newCols = [...(userPreferences.visibleColumns || [])];
+    if (isNaN(fromIdx) || isNaN(toIdx)) return;
+    const currentCols = userPreferences.visibleColumns && userPreferences.visibleColumns.length > 0
+      ? userPreferences.visibleColumns
+      : columnsToDisplay;
+    const newCols = [...currentCols];
+    if (fromIdx < 0 || fromIdx >= newCols.length || toIdx < 0 || toIdx >= newCols.length) return;
     const [removed] = newCols.splice(fromIdx, 1);
     newCols.splice(toIdx, 0, removed);
     handleSavePreferences({ ...userPreferences, visibleColumns: newCols });
@@ -3313,7 +3318,13 @@ const GenericList = () => {
             className="overflow-x-auto"
             onDragOver={handleDragOverContainer}
             onDragLeave={stopAutoScroll}
-            onDrop={stopAutoScroll}
+            onDrop={(e) => {
+              if (isEditMode) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+              stopAutoScroll();
+            }}
           >
             <table className="w-full min-w-max">
               {/* Cabeçalho da Tabela - Estilizado como na imagem */}
@@ -3336,6 +3347,8 @@ const GenericList = () => {
                         onDragOver={(e) => isEditMode && e.preventDefault()}
                         onDrop={(e) => {
                           if (!isEditMode) return;
+                          e.preventDefault();
+                          e.stopPropagation();
                           const fromIdx = e.dataTransfer.getData('colIndex');
                           moveColumn(parseInt(fromIdx), idx);
                         }}

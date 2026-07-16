@@ -209,7 +209,9 @@ export const ReportBuilderInput = ({ field, value, onChange, formData }) => {
   };
 
   const moveColumn = (dragIndex, hoverIndex) => {
+    if (isNaN(dragIndex) || isNaN(hoverIndex)) return;
     const newCols = [...config.columns];
+    if (dragIndex < 0 || dragIndex >= newCols.length || hoverIndex < 0 || hoverIndex >= newCols.length) return;
     const dragCol = newCols[dragIndex];
     newCols.splice(dragIndex, 1);
     newCols.splice(hoverIndex, 0, dragCol);
@@ -362,7 +364,11 @@ export const ReportBuilderInput = ({ field, value, onChange, formData }) => {
         className="overflow-auto border rounded-lg bg-white shadow-sm h-[500px] relative"
         onDragOver={handleDragOver}
         onDragLeave={stopAutoScroll}
-        onDrop={stopAutoScroll}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          stopAutoScroll();
+        }}
       >
         <table className="min-w-full min-h-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
           <thead className="bg-gray-50">
@@ -378,6 +384,8 @@ export const ReportBuilderInput = ({ field, value, onChange, formData }) => {
                     onDragStart={(e) => e.dataTransfer.setData('colIndex', idx)}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       const fromIdx = e.dataTransfer.getData('colIndex');
                       moveColumn(parseInt(fromIdx), idx);
                     }}

@@ -7,7 +7,7 @@ import shutil
 import glob
 from datetime import datetime, timedelta
 import pytz
-from app.services.google_drive_service import get_drive_service
+from app.core.service.google_drive_service import get_drive_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def perform_database_backup():
     if not drive_service or not drive_service.service:
         logger.warning("Backup: Serviço Google Drive não foi inicializado. Verifique a variável GOOGLE_SERVICE_ACCOUNT_JSON no .env.")
         return
-
+ 
     # 2. Obter a URL do banco e adaptar para o pg_dump (remover driver se houver)
     if not settings.DATABASE_URL:
         logger.error("Backup: DATABASE_URL não configurada.")

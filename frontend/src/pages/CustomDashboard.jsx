@@ -645,7 +645,9 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     };
 
     const moveColumn = (fromIdx, toIdx) => {
+      if (isNaN(fromIdx) || isNaN(toIdx)) return;
       const newCols = [...colunasRender];
+      if (fromIdx < 0 || fromIdx >= newCols.length || toIdx < 0 || toIdx >= newCols.length) return;
       const [removed] = newCols.splice(fromIdx, 1);
       newCols.splice(toIdx, 0, removed);
       onUpdateConfig({ ...config, colunas: newCols });
@@ -681,6 +683,8 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
                       onDragOver={(e) => isEditing && e.preventDefault()}
                       onDrop={(e) => {
                         if (!isEditing) return;
+                        e.preventDefault();
+                        e.stopPropagation();
                         const fromIdx = e.dataTransfer.getData('colIndex');
                         moveColumn(parseInt(fromIdx), idx);
                       }}
