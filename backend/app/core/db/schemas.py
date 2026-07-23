@@ -1004,6 +1004,37 @@ Elastic_email_configuracaoCreate = ElasticEmailConfiguracaoCreate
 Elastic_email_configuracaoUpdate = ElasticEmailConfiguracaoUpdate
 
 
+# --- Schemas de AtendaiConfiguracao ---
+
+class AtendaiConfiguracaoBase(BaseModel):
+    url_webhook: str
+    webhook_token: Optional[str] = None
+    ativo: bool = True
+
+class AtendaiConfiguracaoCreate(AtendaiConfiguracaoBase):
+    pass
+
+class AtendaiConfiguracaoUpdate(BaseModel):
+    url_webhook: Optional[str] = None
+    webhook_token: Optional[str] = None
+    ativo: Optional[bool] = None
+
+class AtendaiConfiguracao(AtendaiConfiguracaoBase):
+    id: int
+    id_empresa: int
+    criado_em: Optional[datetime] = None
+    atualizado_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+Atendai_configuracao = AtendaiConfiguracao
+Atendai_configuracoes = AtendaiConfiguracao
+Atendai_configuracaoCreate = AtendaiConfiguracaoCreate
+Atendai_configuracaoUpdate = AtendaiConfiguracaoUpdate
+
+
+
 # --- Schemas de EmailRegra ---
 
 class EmailRegraBase(BaseModel):
@@ -1136,6 +1167,7 @@ def update_all_forward_refs():
     UsuarioPreferencia.model_rebuild()
     Relatorio.model_rebuild()
     ElasticEmailConfiguracao.model_rebuild()
+    AtendaiConfiguracao.model_rebuild()
     NotaFiscalRecebida.model_rebuild()
     EmailRegra.model_rebuild()
     

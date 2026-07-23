@@ -2353,6 +2353,15 @@ def create_item(
                                 db.commit()
                     except Exception as e:
                         print(f"Erro ao gerar financeiro automático na criação: {e}")
+
+            # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI na criação de pedido
+            if model_name == "pedidos":
+                try:
+                    from app.core.service.atendai_service import AtendaiService
+                    atendai_svc = AtendaiService(db, current_user.id_empresa)
+                    atendai_svc.send_order_notification(item, event_type="pedido_criado")
+                except Exception as e:
+                    print(f"Erro ao notificar AtendAI na criação do pedido #{item.id}: {e}")
     except IntegrityError as e:
         db.rollback()
         error_info = str(e.orig) if e.orig else str(e)
@@ -2407,6 +2416,16 @@ def batch_update_items(
                 setattr(item, key, value)
                 
     db.commit()
+
+    if model_name == "pedidos":
+        try:
+            from app.core.service.atendai_service import AtendaiService
+            atendai_svc = AtendaiService(db, current_user.id_empresa)
+            for item in items:
+                atendai_svc.send_order_notification(item, event_type="pedido_atualizado")
+        except Exception as e:
+            print(f"Erro ao notificar AtendAI na atualização em lote de pedidos: {e}")
+
     return {"message": f"{len(items)} itens atualizados com sucesso."}
 
 # --- Endpoint de Detalhe (GET by ID) ---
@@ -2735,6 +2754,15 @@ def update_item(
                     except Exception as e:
                         import logging as _logging
                         _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
+
+        # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI em qualquer alteração de pedido
+        if model_name == "pedidos":
+            try:
+                from app.core.service.atendai_service import AtendaiService
+                atendai_svc = AtendaiService(db, current_user.id_empresa)
+                atendai_svc.send_order_notification(item, event_type="pedido_atualizado")
+            except Exception as e:
+                print(f"Erro ao notificar AtendAI na atualização do pedido #{item.id}: {e}")
 
     return registry["schema"].from_orm(item)
 

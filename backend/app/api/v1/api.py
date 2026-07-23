@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, generic, metadata, dashboard, intelipost, mercadolivre, magento, nfe, tiktok
+from app.api.v1.endpoints import auth, generic, metadata, dashboard, intelipost, mercadolivre, magento, nfe, tiktok, atendai
 
 api_router = APIRouter()
 
@@ -14,3 +14,4 @@ api_router.include_router(mercadolivre.router, tags=["Mercado Livre"])
 api_router.include_router(magento.router, tags=["Magento Commerce"])
 api_router.include_router(nfe.router, tags=["NFe / Faturamento"])
 api_router.include_router(tiktok.router, tags=["Tiktok Shop"])
+api_router.include_router(atendai.router, tags=["AtendAI"])

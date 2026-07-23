@@ -184,7 +184,7 @@ class NFeService:
             return ""
         return "".join(c for c in str(valor) if c.isalnum()).upper()
 
-    def _limpar_texto(self, valor: str) -> str:
+    def _limpar_texto(self, valor: str, max_len: int = None) -> str:
         if not valor:
             return ""
         
@@ -200,7 +200,12 @@ class NFeService:
         valor_filtrado = "".join(c for c in valor if "\x20" <= c <= "\xff")
         
         # Substitui múltiplos espaços (inclusive quebras de linha/abas) por um único espaço e limpa as pontas
-        return re.sub(r'\s+', ' ', valor_filtrado).strip()
+        cleaned = re.sub(r'\s+', ' ', valor_filtrado).strip()
+        
+        if max_len is not None:
+            cleaned = cleaned[:max_len].strip()
+            
+        return cleaned
 
     def _to_decimal(self, val) -> Decimal:
         if val is None:
@@ -1870,7 +1875,7 @@ class NFeService:
             razao_social_clean = self._limpar_texto(razao_social_cli)
             logradouro_clean = self._limpar_texto(pedido.endereco_logradouro or cli_db.logradouro)
             numero_clean = self._limpar_texto(pedido.endereco_numero or cli_db.numero)
-            complemento_clean = self._limpar_texto(pedido.endereco_complemento or cli_db.complemento or '')[:60]
+            complemento_clean = self._limpar_texto(pedido.endereco_complemento or cli_db.complemento or '', max_len=60) or None
             bairro_clean = self._limpar_texto(pedido.endereco_bairro or cli_db.bairro)
             municipio_clean = self._limpar_texto(pedido.endereco_cidade or cli_db.cidade)
             cep_clean = self._limpar_formatacao(pedido.endereco_cep or cli_db.cep)
@@ -2054,7 +2059,7 @@ class NFeService:
                 desc_limpa = unicodedata.normalize('NFKD', regra_para_header.descricao).encode('ASCII', 'ignore').decode('ASCII')
                 
                 # Joga para maiúsculo e limita a 60 caracteres (Limite SEFAZ)
-                nat_op = self._limpar_texto(desc_limpa.upper())[:60]
+                nat_op = self._limpar_texto(desc_limpa.upper(), max_len=60)
             # --------------------------------------------------------
 
             # --- EMITENTE ---
@@ -2173,10 +2178,10 @@ class NFeService:
                 transp_db = pedido.transportadora
                 
                 # --- PRÉ-VALIDAÇÃO E SANITIZAÇÃO DA TRANSPORTADORA ---
-                transp_razao_clean = self._limpar_texto(transp_db.nome_razao)[:60]
+                transp_razao_clean = self._limpar_texto(transp_db.nome_razao, max_len=60)
                 transp_cnpj_cpf_clean = self._limpar_formatacao(transp_db.cpf_cnpj)
-                transp_logradouro_clean = self._limpar_texto(transp_db.logradouro)[:60]
-                transp_municipio_clean = self._limpar_texto(transp_db.cidade)[:60]
+                transp_logradouro_clean = self._limpar_texto(transp_db.logradouro, max_len=60)
+                transp_municipio_clean = self._limpar_texto(transp_db.cidade, max_len=60)
                 transp_uf = (transp_db.estado.value if hasattr(transp_db.estado, 'value') else transp_db.estado or "").upper()
                 
                 erros_transp = []
@@ -2223,7 +2228,7 @@ class NFeService:
                     endereco_logradouro=transp_logradouro_clean or None,
                     endereco_municipio=transp_municipio_clean or None,
                     endereco_uf=transp_uf or None,
-                    endereco_bairro=self._limpar_texto(transp_db.bairro)[:60] if transp_db.bairro else None
+                    endereco_bairro=self._limpar_texto(transp_db.bairro, max_len=60) if transp_db.bairro else None
                 )
 
                 # VINCULA À NOTA
@@ -3019,7 +3024,7 @@ class NFeService:
                     t_pag=t_pag,
                     v_pag=valor_pagamento,
                     ind_pag=ind_pag,
-                    x_pag=desc_pagamento[:60] if t_pag == '99' else ""
+                    x_pag=desc_pagamento[:60].strip() if t_pag == '99' else ""
                 )
             else:
                 # Devolução (Fin=4): A lib gera o XML <pag> sozinha e corretamente.
@@ -4076,8 +4081,36 @@ class NFeService:
                         order_id_ml = match_id.group(1) if match_id else None
 
                     if order_id_ml:
+                        chave_acesso = pedido.chave_acesso
+                        numero_nf = pedido.numero_nf
+                        
+                        dh_emi_match = re.search(r"<dhEmi>([^<]+)</dhEmi>", xml_str)
+                        if dh_emi_match:
+                            dh_emi = dh_emi_match.group(1)
+                            if "." not in dh_emi:
+                                tz_match = re.search(r"([+-]\d{2}:\d{2}|Z)$", dh_emi)
+                                if tz_match:
+                                    tz = tz_match.group(1)
+                                    base_time = dh_emi[:-len(tz)]
+                                    data_emissao = f"{base_time}.000{tz}"
+                                else:
+                                    data_emissao = f"{dh_emi}.000"
+                            else:
+                                data_emissao = dh_emi
+                        else:
+                            if pedido.data_nf:
+                                data_emissao = f"{pedido.data_nf.isoformat()}T12:00:00.000-03:00"
+                            else:
+                                data_emissao = datetime.now(TZ_BR).isoformat()
+
                         meli_service = MeliService(self.db, self.id_empresa)
-                        res = asyncio.run(meli_service.upload_xml(order_id_ml, xml_str))
+                        res = asyncio.run(meli_service.upload_xml(
+                            order_id_ml=order_id_ml,
+                            xml_content=xml_str,
+                            chave_acesso=chave_acesso,
+                            numero_nf=numero_nf,
+                            data_emissao=data_emissao
+                        ))
                         
                         if res and isinstance(res, dict) and res.get('status') == 'warning':
                             meli_res = {"success": True, "message": f"Aviso Mercado Livre: {res.get('message')}"}

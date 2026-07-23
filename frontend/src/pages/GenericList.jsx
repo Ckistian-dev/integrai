@@ -932,6 +932,15 @@ const GenericList = () => {
         setTotalCount(dataRes.data.total_count);
         setTotals(dataRes.data.totals || {});
 
+        if (paramModelName === 'atendai_configuracoes') {
+          if (items && items.length > 0) {
+            navigate(`/atendai_configuracoes/edit/${items[0].id}`, { replace: true });
+          } else {
+            navigate(`/atendai_configuracoes/new`, { replace: true });
+          }
+          return;
+        }
+
         lastFetchedParamsRef.current = paramsKey;
         isInitialLoad.current = false;
       } catch (err) {

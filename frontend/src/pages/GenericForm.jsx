@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../api/axiosConfig';
 import FormRenderer from '../components/form/FormRenderer';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { Save, X, Loader2 } from 'lucide-react';
+import { Save, X, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 const GenericForm = ({ modelName: propModelName }) => {
@@ -35,7 +35,20 @@ const GenericForm = ({ modelName: propModelName }) => {
   const [loadingMetadata, setLoadingMetadata] = useState(true);
   const [loadingData, setLoadingData] = useState(false); // Apenas para modo de edição
   const [isSaving, setIsSaving] = useState(false); // Para o submit
+  const [isSyncing, setIsSyncing] = useState(false); // Para o sync AtendAI
   const [formErrors, setFormErrors] = useState({});
+
+  const handleSyncAtendai = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await api.post('/atendai/sync');
+      toast.success(res.data.message || 'Pedidos sincronizados com o AtendAI com sucesso!');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Erro ao sincronizar pedidos com o AtendAI.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Ref para rastrear qual campo foi editado por último (para cálculo bidirecional de frete)
   const lastEditedField = useRef(null);
@@ -843,6 +856,22 @@ const GenericForm = ({ modelName: propModelName }) => {
             </div>
 
             <div className="flex justify-end space-x-3 py-4 border-gray-200">
+
+              {modelName === 'atendai_configuracoes' && (
+                <button
+                  type="button"
+                  onClick={handleSyncAtendai}
+                  disabled={isSyncing || isSaving}
+                  className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed"
+                >
+                  {isSyncing ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                  )}
+                  {isSyncing ? 'Sincronizando...' : 'Sincronizar Pedidos'}
+                </button>
+              )}
 
               {/* Botão "Voltar" (Estilo cinza da imagem) */}
               <button

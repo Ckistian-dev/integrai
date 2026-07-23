@@ -28,6 +28,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
     'regras_tributarias': 'tributacoes',
     'relatorios': 'relatorios',
     'intelipost_configuracoes': 'integracoes',
+    'atendai_configuracoes': 'integracoes',
     'meli_configuracoes': 'integracoes',
     'magento_configuracoes': 'integracoes',
     'mercadolivre_pedidos': 'integracoes',

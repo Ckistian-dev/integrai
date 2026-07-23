@@ -1347,6 +1347,31 @@ Elastic_email_configuracao = ElasticEmailConfiguracao
 Elastic_email_configuracoes = ElasticEmailConfiguracao
 
 
+class AtendaiConfiguracao(Base):
+    """
+    Configurações para integração AtendAI (Webhook e Autenticação).
+    """
+    __tablename__ = "atendai_configuracoes"
+    __label__ = "Configuração AtendAI"
+    __label_plural__ = "Configurações AtendAI"
+
+    id = Column(Integer, primary_key=True, index=True)
+    url_webhook = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'URL do Webhook', 'placeholder': 'https://api.atendai.com/webhook'})
+    webhook_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Token de Autenticação (X-Webhook-Token)', 'placeholder': 'Cole o token X-Webhook-Token'})
+
+    ativo = Column(Boolean, default=True, info={'tab': 'Geral', 'label': 'Integração Ativa?'})
+
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa = relationship("Empresa", backref="atendai_config")
+
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+
+# Aliases para o dispatcher
+Atendai_configuracao = AtendaiConfiguracao
+Atendai_configuracoes = AtendaiConfiguracao
+
+
 class OutrasEmpresasConfiguracao(Base):
     __tablename__ = "outras_empresas_configuracoes"
     __label__ = "Configuração Outras Empresas"

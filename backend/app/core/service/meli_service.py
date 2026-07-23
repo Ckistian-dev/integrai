@@ -974,80 +974,142 @@ class MeliService:
         logger.info(f"Pedido {order_id_ml} importado com frete completo. ID ERP: {novo_pedido.id}")
         return novo_pedido
 
-    async def upload_xml(self, order_id_ml: str, xml_content: str):
+    async def _resolve_shipment_id(self, client, order_id_ml: str):
         """
-        Envia o XML da NFe para o Mercado Livre.
-        CORREÇÃO DEFINITIVA: Força MIME application/xml e adiciona cabeçalho XML.
+        Resolve o shipment_id a partir de um ID que pode ser de Pedido, Envio ou Pacote.
+        """
+        logger.info(f"Resolvendo shipment_id para o ID ML: {order_id_ml}")
+        
+        # 1. Tenta como Order ID
+        try:
+            order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
+            if order_resp.status_code == 200:
+                shipment_id = order_resp.json().get('shipping', {}).get('id')
+                if shipment_id:
+                    logger.info(f"Shipment ID {shipment_id} resolvido a partir da Order {order_id_ml}")
+                    return str(shipment_id)
+        except Exception as e:
+            logger.debug(f"Falha ao tentar resolver como Order ID: {e}")
+
+        # 2. Tenta como Shipment ID direto
+        try:
+            ship_resp = await client.get(f"{self.base_url}/shipments/{order_id_ml}")
+            if ship_resp.status_code == 200:
+                logger.info(f"ID {order_id_ml} já é um Shipment ID válido.")
+                return str(order_id_ml)
+        except Exception as e:
+            logger.debug(f"Falha ao tentar resolver como Shipment ID: {e}")
+
+        # 3. Tenta como Pack ID
+        try:
+            pack_resp = await client.get(f"{self.base_url}/packs/{order_id_ml}")
+            if pack_resp.status_code == 200:
+                pack_data = pack_resp.json()
+                orders = pack_data.get('orders', [])
+                if orders:
+                    first_order_id = orders[0].get('id')
+                    if first_order_id:
+                        order_resp = await client.get(f"{self.base_url}/orders/{first_order_id}")
+                        if order_resp.status_code == 200:
+                            shipment_id = order_resp.json().get('shipping', {}).get('id')
+                            if shipment_id:
+                                logger.info(f"Shipment ID {shipment_id} resolvido a partir do Pack {order_id_ml} via Order {first_order_id}")
+                                return str(shipment_id)
+        except Exception as e:
+            logger.debug(f"Falha ao tentar resolver como Pack ID: {e}")
+
+        logger.warning(f"Não foi possível resolver o shipment_id para o ID ML: {order_id_ml}")
+        return None
+
+    async def upload_xml(
+        self,
+        order_id_ml: str,
+        xml_content: str,
+        chave_acesso: str = None,
+        numero_nf: str = None,
+        data_emissao: str = None
+    ):
+        """
+        Envia o XML da NFe para o Mercado Livre via JSON no endpoint de Shipments.
         """
         if settings.ENVIRONMENT != "production":
             logger.info(f"Simulando upload de XML para pedido ML {order_id_ml} (Ambiente: {settings.ENVIRONMENT})")
-            return {"status": "success", "message": "Simulado: XML enviado (Ambient de Testes)"}
+            return {"status": "success", "message": "Simulado: XML enviado (Ambiente de Testes)"}
 
         logger.info(f"Iniciando upload de XML para pedido ML {order_id_ml}")
         client = await self.get_client()
 
+        # 1. Parse missing fields from XML content if not provided
+        if not chave_acesso or not numero_nf or not data_emissao:
+            try:
+                xml_str_temp = xml_content if isinstance(xml_content, str) else xml_content.decode('utf-8')
+                if not chave_acesso:
+                    ch_match = re.search(r"<chNFe>([^<]+)</chNFe>", xml_str_temp)
+                    if ch_match:
+                        chave_acesso = ch_match.group(1)
+                    else:
+                        id_match = re.search(r'infNFe\s+Id="NFe([^"]+)"', xml_str_temp)
+                        if id_match:
+                            chave_acesso = id_match.group(1)
+                
+                if not numero_nf:
+                    n_nf_match = re.search(r"<nNF>([^<]+)</nNF>", xml_str_temp)
+                    if n_nf_match:
+                        numero_nf = n_nf_match.group(1)
+                
+                if not data_emissao:
+                    dh_emi_match = re.search(r"<dhEmi>([^<]+)</dhEmi>", xml_str_temp)
+                    if dh_emi_match:
+                        dh_emi = dh_emi_match.group(1)
+                        if "." not in dh_emi:
+                            tz_match = re.search(r"([+-]\d{2}:\d{2}|Z)$", dh_emi)
+                            if tz_match:
+                                tz = tz_match.group(1)
+                                base_time = dh_emi[:-len(tz)]
+                                data_emissao = f"{base_time}.000{tz}"
+                            else:
+                                data_emissao = f"{dh_emi}.000"
+                        else:
+                            data_emissao = dh_emi
+                    else:
+                        data_emissao = datetime.now().isoformat()
+            except Exception as parse_err:
+                logger.warning(f"Erro ao extrair metadados do XML no upload_xml: {parse_err}")
+
         try:
-            # 1. Busca Pack ID via /orders/{id}
-            # Se o ID passado for diretamente um pack_id, a rota /orders/ pode retornar 404.
-            # Nesse caso, tratamos o próprio ID como pack_id.
-            order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
+            # 2. Busca o Shipment ID resoluto
+            shipment_id = await self._resolve_shipment_id(client, order_id_ml)
+            if not shipment_id:
+                return {"status": "error", "message": f"Não foi possível localizar o envio (shipment_id) para o ID {order_id_ml}."}
 
-            if order_resp.status_code == 200:
-                order_data = order_resp.json()
-                pack_id = order_data.get('pack_id')
-                # Se o pedido tem pack_id, usa ele; senão usa o order_id como pack.
-                pack_id_to_use = pack_id if pack_id else order_id_ml
-                target_id = pack_id_to_use
-                logger.info(f"Pack ID resolvido via /orders/: {pack_id_to_use}")
-            else:
-                # 404 ou outro erro: o ID passado provavelmente JÁ É um pack_id.
-                # Tentamos usá-lo diretamente no endpoint de packs.
-                pack_id_to_use = order_id_ml
-                target_id = order_id_ml
-                logger.warning(f"Não foi possível buscar o pedido ML {order_id_ml} via /orders/ ({order_resp.status_code}). Tratando como pack_id direto.")
+            url = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
 
-            url = f"{self.base_url}/packs/{pack_id_to_use}/fiscal_documents"
-
-            # 2. Tratamento do conteúdo do XML
-            if isinstance(xml_content, str):
-                xml_str = xml_content.strip()
-            else:
-                # Se vier bytes, decodifica para string para limpar e adicionar header
-                xml_str = xml_content.decode('utf-8').strip()
-
-            # Garante que o XML tenha a declaração padrão (boa prática para APIs java/legacy)
+            # 3. Tratamento da String do XML
+            xml_str = xml_content if isinstance(xml_content, str) else xml_content.decode('utf-8')
+            xml_str = xml_str.strip()
             if not xml_str.startswith('<?xml'):
                 xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + xml_str
 
-            # Converte de volta para bytes finais
+            # 4. Envia o XML como application/xml (raw body)
+            # O endpoint /shipments/{id}/invoice_data recusa JSON (415), aceita XML puro.
             xml_bytes = xml_str.encode('utf-8')
+            xml_headers = {"Content-Type": "application/xml"}
+            
+            logger.debug(f"Enviando XML (application/xml) para {url} | Chave: {chave_acesso} | NF: {numero_nf}")
 
-            # 3. Montagem do Multipart (A Chave da Solução)
-            # O 3º elemento da tupla DEVE ser 'application/xml'
-            files = {
-                'fiscal_document': (
-                    'nfe.xml',       
-                    xml_bytes,       
-                    'application/xml' # <--- O ML SÓ ACEITA ISSO. NÃO USE text/xml.
-                )
-            }
-            
-            logger.debug(f"Enviando POST Multipart para {url} | Content-Type: application/xml | Tamanho: {len(xml_bytes)} bytes")
-            
-            resp = await client.post(url, files=files)
+            params = {"siteId": "MLB", "site_id": "MLB"}
+            resp = await client.post(url, content=xml_bytes, headers=xml_headers, params=params)
 
             if resp.status_code in [200, 201]:
-                logger.info(f"✅ XML anexado com sucesso no ML para {target_id}!")
-                return resp.json()
+                logger.info(f"✅ XML anexado com sucesso no ML para shipment {shipment_id}!")
+                return {"status": "success"}
             elif resp.status_code == 400 and "nfe_already_generated" in resp.text:
-                logger.warning(f"XML já consta no ML para {target_id}.")
+                logger.warning(f"XML já consta no ML para shipment {shipment_id}.")
                 return {"status": "already_sent"}
             elif resp.status_code == 409:
-                # Erro 409 Conflict: Geralmente indica que o limite de arquivos foi atingido (XML já enviado)
                 logger.warning(f"Conflito no ML (XML já existente ou limite atingido): {resp.text}")
                 return {"status": "already_sent"}
             elif resp.status_code == 403:
-                # Tratamento específico para erro de Faturador do ML
                 try:
                     err_data = resp.json()
                     msg = err_data.get('message', '') or err_data.get('error', '')
@@ -1087,15 +1149,7 @@ class MeliService:
         try:
             async with await self.get_client() as client:
                 # 1. Busca dados do pedido para encontrar o shipment_id
-                order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
-                if order_resp.status_code != 200:
-                    logger.error(f"Erro ao buscar pedido ML {order_id_ml}: {order_resp.status_code} - {order_resp.text}")
-                    return False
-                    
-                order_data = order_resp.json()
-                shipping_data = order_data.get('shipping') or {}
-                shipment_id = shipping_data.get('id')
-                
+                shipment_id = await self._resolve_shipment_id(client, order_id_ml)
                 if not shipment_id:
                     logger.warning(f"Pedido ML {order_id_ml} não possui shipment_id associado.")
                     return False
