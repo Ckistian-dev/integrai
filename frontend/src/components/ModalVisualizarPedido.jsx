@@ -95,7 +95,7 @@ function CabecalhoEmpresa({ empresa }) {
             </div>
             <div className="text-right text-[11px] text-gray-600">
                 <p className="font-bold text-xs text-gray-800">{empresa.nome}</p>
-                <p>CNPJ: {empresa.cnpj}</p>
+                <p>CNPJ: {empresa.cnpj}{empresa.inscricao_estadual ? ` | IE: ${empresa.inscricao_estadual}` : ''}</p>
                 <p>{empresa.endereco}</p>
                 {empresa.telefone && <p>Telefone: {empresa.telefone}</p>}
             </div>
@@ -180,6 +180,7 @@ function SecaoCliente({ cliente, nomeFallback }) {
 
     const endereco = `${cliente.logradouro || ''}, ${cliente.numero || 'S/N'}${cliente.complemento ? ' - ' + cliente.complemento : ''}`;
     const localidade = `${cliente.bairro || ''} - ${cliente.cidade || ''}/${cliente.estado || ''}`;
+    const ieCliente = cliente.inscricao_estadual || cliente.ie || "Isento";
 
     return (
         <section className="mt-4 text-xs border-t pt-3">
@@ -192,6 +193,10 @@ function SecaoCliente({ cliente, nomeFallback }) {
                 <div className="col-span-1">
                     <span className="text-gray-500">CPF/CNPJ:</span>
                     <p className="font-semibold text-gray-800 break-words">{cliente.cpf_cnpj || "N/A"}</p>
+                </div>
+                <div className="col-span-1">
+                    <span className="text-gray-500">IE (Inscrição Estadual):</span>
+                    <p className="font-semibold text-gray-800 break-words">{ieCliente}</p>
                 </div>
                 <div className="col-span-1">
                     <span className="text-gray-500">Endereço:</span>

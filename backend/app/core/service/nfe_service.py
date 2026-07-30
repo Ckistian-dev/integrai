@@ -2170,8 +2170,9 @@ class NFeService:
                 processo_emissao=0,
                 transporte_modalidade_frete=mod_frete,
                 informacoes_adicionais_interesse_fisco='',
-                informacoes_complementares=self._limpar_texto(pedido.observacoes_nf or '')
+                informacoes_complementares_interesse_contribuinte=self._limpar_texto(pedido.observacoes_nf or '')
             )
+            nota_fiscal.informacoes_complementares = nota_fiscal.informacoes_complementares_interesse_contribuinte
 
             # --- TRANSPORTADORA ---
             if pedido.transportadora:
@@ -3077,15 +3078,18 @@ class NFeService:
                     
                     difal_text = self._limpar_texto(difal_text)
                     
-                    current_inf = nota_fiscal.informacoes_complementares or ""
+                    current_inf = getattr(nota_fiscal, 'informacoes_complementares_interesse_contribuinte', '') or getattr(nota_fiscal, 'informacoes_complementares', '') or ""
                     if current_inf:
                         # Previne duplicação caso essa função seja rodada de novo
                         if "EC 87/2015" not in current_inf:
-                            nota_fiscal.informacoes_complementares = (
-                                current_inf.strip() + " - " + difal_text
-                            )
+                            texto_final = current_inf.strip() + " - " + difal_text
+                        else:
+                            texto_final = current_inf
                     else:
-                        nota_fiscal.informacoes_complementares = difal_text
+                        texto_final = difal_text
+
+                    nota_fiscal.informacoes_complementares_interesse_contribuinte = texto_final
+                    nota_fiscal.informacoes_complementares = texto_final
 
             # --- RESPONSÁVEL TÉCNICO (Obrigatório no PR) ---
             # Dados carregados do .env via settings

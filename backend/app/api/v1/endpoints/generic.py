@@ -1306,6 +1306,16 @@ def list_items(
                     else:
                         order_by_clauses.append(expr.asc().nulls_last())
 
+        # Garante desempate determinístico pela chave primária (ID) para evitar duplicações na paginação
+        model = registry["model"]
+        has_id_sort = any(sb == "id" or sb.endswith(".id") for sb in sort_by_list)
+        if not has_id_sort and hasattr(model, "id"):
+            last_order = sort_order_list[-1] if sort_order_list else "desc"
+            if last_order == "desc":
+                order_by_clauses.append(model.id.desc().nulls_last())
+            else:
+                order_by_clauses.append(model.id.asc().nulls_last())
+
         if order_by_clauses:
             base_query = base_query.order_by(*order_by_clauses)
         else:
@@ -1313,6 +1323,9 @@ def list_items(
     else:
         # Ordenação padrão (ID desc) se não especificado
         base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
+
+    # Garantir que registros não sejam duplicados se houver outerjoins
+    base_query = base_query.distinct()
 
     # 5. Obter a contagem total (AGORA VEM DA QUERY FILTRADA)
     total_count = base_query.count()
@@ -2413,7 +2426,20 @@ def batch_update_items(
     for item in items:
         for key, value in item_data.items():
             if hasattr(item, key):
-                setattr(item, key, value)
+                val_to_set = value
+                if key == "data_despacho" and isinstance(value, str):
+                    try:
+                        val_to_set = datetime.strptime(value, "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
+                setattr(item, key, val_to_set)
+
+    # 🎯 Lógica específica: Preencher data_despacho se estiver despachando pedidos
+    if model_name == "pedidos" and item_data.get("situacao") in ["Despachado", models.PedidoSituacaoEnum.despachado]:
+        hoje = datetime.now(TZ_BR).date()
+        for item in items:
+            if getattr(item, "data_despacho", None) is None:
+                setattr(item, "data_despacho", hoje)
                 
     db.commit()
 

@@ -472,7 +472,7 @@ class IntelipostService:
             "shipment_order_type": "NORMAL",
             "shipment_order_volume_array": shipment_volumes,
             "customer_shipping_costs": float(pedido.valor_frete or dados_frete.get('final_shipping_cost', 0)),
-            "sales_channel": "ERP Talatto",
+            "sales_channel": (pedido.origem_venda or "").strip() or "IntegraAI",
             "scheduled": False,
             "created": now_iso,
             # CAMPO OBRIGATÓRIO ADICIONADO:
@@ -635,7 +635,7 @@ class IntelipostService:
             "destination_zip_code": cep_destino,
             "volumes": all_volumes,
             "additional_information": {
-                "sales_channel": "Venda Direta",
+                "sales_channel": (pedido.origem_venda or "").strip() or "IntegraAI",
                 "client_type": "gold" # Exemplo
             }
         }

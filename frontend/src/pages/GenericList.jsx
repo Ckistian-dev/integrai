@@ -121,6 +121,9 @@ const TableSkeleton = ({ columns, rows = 5 }) => {
     <>
       {[...Array(rows)].map((_, rowIndex) => (
         <tr key={rowIndex} className="border-b border-gray-50">
+          <td className="px-4 py-5 w-10 text-center">
+            <div className="h-4 w-4 bg-gray-200 rounded animate-pulse mx-auto"></div>
+          </td>
           {columns.map((col, colIndex) => (
             <td key={colIndex} className="px-6 py-5">
               {col !== '' && (
@@ -896,10 +899,19 @@ const GenericList = () => {
 
         // Ajuste para garantir que o Magento retorne 'id' para a tabela
         // Se a API retornar 'entity_id', mapeamos para 'id' para o componente GenericList funcionar
-        const items = (dataRes.data.items || []).map(item => ({
+        const rawItems = (dataRes.data.items || []).map(item => ({
           ...item,
           id: item.id || item.entity_id || item.id // Garante ID
         }));
+
+        // Desduplicação defensiva por ID para evitar re-renderização de itens repetidos no DOM
+        const seenIds = new Set();
+        const items = rawItems.filter(item => {
+          if (!item.id) return true;
+          if (seenIds.has(item.id)) return false;
+          seenIds.add(item.id);
+          return true;
+        });
 
         // --- LÓGICA DINÂMICA DE CAMPOS ---
         // Se o metadata não trouxe campos (ex: Magento/ML), construímos a partir dos dados recebidos
@@ -1079,7 +1091,7 @@ const GenericList = () => {
 
   /** * 1. Abre o modal genérico populando o estado 'actionToConfirm' * @param {object} actionDetails - O objeto de ação vindo da config 'statusChangeActions' */
   const handleStatusChangeClick = (actionDetails) => {
-    if (!selectedRowId) return;
+    if (selectedRowIds.length === 0) return;
     setActionToConfirm(actionDetails);
   };
 
@@ -1088,9 +1100,9 @@ const GenericList = () => {
     setActionToConfirm(null);
   };
 
-  /** * 3. Confirma a ação, envia o PUT e atualiza a UI. * Usa os dados do estado 'actionToConfirm'. */
+  /** * 3. Confirma a ação, envia o PUT (único ou em lote) e atualiza a UI. * Usa os dados do estado 'actionToConfirm'. */
   const handleConfirmStatusChange = async () => {
-    if (!selectedRowId || !actionToConfirm) return;
+    if (selectedRowIds.length === 0 || !actionToConfirm) return;
 
     // Pega os detalhes da ação que está no estado
     const { newStatus, errorLog, errorAlert } = actionToConfirm;
@@ -1101,23 +1113,56 @@ const GenericList = () => {
       if (newStatus === 'Despachado') {
         payload.data_despacho = new Date().toISOString().split('T')[0]; // Current date in YYYY-MM-DD format
       }
-      await api.put(`/generic/${modelName}/${selectedRowId}`, payload, {
-        situacao: newStatus // Usa o novo status vindo da ação
-      });
 
-      // Navega para a aba da nova situação (Trata 'Finalizado' como 'Nota Fiscal' para pedidos)
-      const targetTab = (modelName === 'pedidos' && newStatus === 'Finalizado')
-        ? 'Nota Fiscal'
-        : newStatus;
-      navigate(`/${modelName}/${targetTab}`);
+      if (selectedRowIds.length > 1) {
+        // Atualização em Lote
+        await api.put(`/generic/${modelName}/batch-update`, {
+          ids: selectedRowIds,
+          item_data: payload
+        });
 
-      // Remove o item da lista atual
-      setData(data.filter((item) => item.id !== selectedRowId));
-      setTotalCount(prevCount => prevCount - 1); // Ajusta a contagem
-      setSelectedRowIds([]);
+        if (statusFilter) {
+          setData(prev => prev.filter((item) => !selectedRowIds.includes(item.id)));
+          setTotalCount(prevCount => Math.max(0, prevCount - selectedRowIds.length));
+        } else {
+          setData(prev => prev.map((item) =>
+            selectedRowIds.includes(item.id)
+              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
+              : item
+          ));
+        }
+
+        const count = selectedRowIds.length;
+        setSelectedRowIds([]);
+        toast.success(newStatus === 'Despachado'
+          ? `${count} pedidos despachados com sucesso!`
+          : `${count} itens atualizados com sucesso!`
+        );
+      } else {
+        const idToUpdate = selectedRowId;
+        await api.put(`/generic/${modelName}/${idToUpdate}`, payload);
+
+        if (statusFilter) {
+          setData(prev => prev.filter((item) => item.id !== idToUpdate));
+          setTotalCount(prevCount => Math.max(0, prevCount - 1));
+        } else {
+          setData(prev => prev.map((item) =>
+            item.id === idToUpdate
+              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
+              : item
+          ));
+        }
+
+        setSelectedRowIds([]);
+        toast.success(newStatus === 'Despachado'
+          ? `Pedido despachado com sucesso.`
+          : `Item alterado para ${newStatus} com sucesso.`
+        );
+      }
 
     } catch (err) {
-      toast.error(errorAlert);
+      console.error(errorLog || "Erro ao alterar status:", err);
+      toast.error(err.response?.data?.detail || errorAlert || "Não foi possível alterar o status.");
     } finally {
       setActionToConfirm(null); // Fecha o modal
     }
@@ -3295,7 +3340,7 @@ const GenericList = () => {
                     key={`${action.newStatus}-${index}`}
                     onClick={onClickAction} // <-- USA A AÇÃO CORRETA
                     // Desabilita se estiver buscando detalhes para o modal complexo
-                    disabled={!selectedRowId || isFetchingData || isFetchingDetails || isFetchingComplementoDetails}
+                    disabled={selectedRowIds.length === 0 || isFetchingData || isFetchingDetails || isFetchingComplementoDetails}
                     className={`flex items-center px-4 py-2 text-white rounded-md shadow-sm text-sm font-medium disabled:cursor-not-allowed ${action.buttonClasses}`}
                   >
                     {/* 7. MOSTRAR LOADING SE ESTIVER BUSCANDO DETALHES */}
@@ -3306,7 +3351,11 @@ const GenericList = () => {
                     )}
                     {action.onClickHandler === 'faturamento' && selectedRowIds.length > 1
                       ? `Faturar em Lote`
-                      : action.buttonLabel}
+                      : (action.newStatus === 'Despachado' && selectedRowIds.length > 1)
+                        ? `Despachar em Lote`
+                        : (selectedRowIds.length > 1 && !action.onClickHandler)
+                          ? `${action.buttonLabel} em Lote`
+                          : action.buttonLabel}
                   </button>
                 );
               })
@@ -3339,6 +3388,21 @@ const GenericList = () => {
               {/* Cabeçalho da Tabela - Estilizado como na imagem */}
               <thead className="bg-gray-50">
                 <tr className="border-b border-gray-200">
+                  <th className="px-4 py-4 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={data.length > 0 && selectedRowIds.length === data.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRowIds(data.map(i => i.id));
+                        } else {
+                          setSelectedRowIds([]);
+                        }
+                      }}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                      title="Selecionar Todos"
+                    />
+                  </th>
                   {/* Colunas Dinâmicas */}
                   {columnsToDisplay.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
@@ -3504,14 +3568,14 @@ const GenericList = () => {
                     {/* 8. Feedback de 'Nenhum resultado' ou 'Erro de dados' */}
                     {!isFetchingData && error && data.length === 0 && (
                       <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
+                        <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
                           {error}
                         </td>
                       </tr>
                     )}
                     {!isFetchingData && !error && data.length === 0 && (
                       <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
+                        <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
                           Nenhum registro encontrado.
                         </td>
                       </tr>
@@ -3655,6 +3719,20 @@ const GenericList = () => {
                             : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
                             }`}
                         >
+                          <td className="px-4 py-4 w-10 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedRowIds.includes(item.id)}
+                              onChange={() => {
+                                setSelectedRowIds(prev =>
+                                  prev.includes(item.id)
+                                    ? prev.filter(id => id !== item.id)
+                                    : [...prev, item.id]
+                                );
+                              }}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                            />
+                          </td>
                           {columnsToDisplay.map((colName) => (
                             <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                               {renderCellContent(item, colName)}
@@ -3680,7 +3758,7 @@ const GenericList = () => {
                                   onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
                                   title="Clique para selecionar este inventário"
                                 >
-                                  <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
+                                  <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-3">
                                         <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
@@ -3717,6 +3795,7 @@ const GenericList = () => {
                           {/* Linhas vazias para preencher o card (sem bordas internas) */}
                           {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
                             <tr key={`empty-${i}`} className="h-[53px]">
+                              <td key={`empty-${i}-chk`} className="px-4 py-4 w-10">&nbsp;</td>
                               {columnsToDisplay.map((colName) => (
                                 <td key={`empty-${i}-${colName}`} className="px-6 py-4 whitespace-nowrap text-sm">
                                   &nbsp;
@@ -3729,6 +3808,7 @@ const GenericList = () => {
                           {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
                           {hasTotalsField && data.length > 0 && (
                             <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
+                              <td key="total-chk" className="px-4 py-3 w-10"></td>
                               {columnsToDisplay.map((colName, idx) => {
                                 const field = fieldMetaMap.get(colName);
                                 const isCurrency = field?.format_mask === 'currency';
@@ -3812,17 +3892,32 @@ const GenericList = () => {
           }
         </Modal>
 
-        {/* 5. MODAL GENÉRICO DE MUDANÇA DE STATUS (ÚNICO)                     */}
+        {/* 5. MODAL GENÉRICO DE MUDANÇA DE STATUS (ÚNICO E LOTE) */}
         <Modal
           isOpen={!!actionToConfirm} // Abre se actionToConfirm não for null
           onClose={handleCloseStatusModal}
           onConfirm={handleConfirmStatusChange}
-          // Popula o modal com os dados do estado 'actionToConfirm'
-          title={actionToConfirm?.modalTitle || "Confirmar Ação"}
-          variant="info" // Nossas ações são 'info' (azul)
-          confirmText={actionToConfirm?.modalConfirmText || "Confirmar"}
+          title={
+            (selectedRowIds.length > 1 && actionToConfirm?.newStatus === 'Despachado')
+              ? "Despachar Pedidos em Lote"
+              : selectedRowIds.length > 1
+                ? `${actionToConfirm?.buttonLabel || 'Alterar Status'} em Lote`
+                : (actionToConfirm?.modalTitle || "Confirmar Ação")
+          }
+          variant="info"
+          confirmText={
+            selectedRowIds.length > 1
+              ? (actionToConfirm?.newStatus === 'Despachado' ? "Sim, Despachar Todos" : "Confirmar em Lote")
+              : (actionToConfirm?.modalConfirmText || "Confirmar")
+          }
         >
-          {actionToConfirm?.modalDescription || "Você tem certeza?"}
+          {selectedRowIds.length > 1
+            ? (actionToConfirm?.newStatus === 'Despachado'
+                ? `Deseja marcar os ${selectedRowIds.length} pedidos selecionados como Despachado? Isso indica que eles saíram para entrega.`
+                : `Deseja alterar a situação dos ${selectedRowIds.length} itens selecionados para "${actionToConfirm?.newStatus}"?`
+              )
+            : (actionToConfirm?.modalDescription || "Você tem certeza?")
+          }
         </Modal>
 
         <ProgramacaoPedidoModal
