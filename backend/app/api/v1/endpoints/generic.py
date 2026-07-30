@@ -1324,11 +1324,8 @@ def list_items(
         # Ordenação padrão (ID desc) se não especificado
         base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
 
-    # Garantir que registros não sejam duplicados se houver outerjoins
-    base_query = base_query.distinct()
-
-    # 5. Obter a contagem total (AGORA VEM DA QUERY FILTRADA)
-    total_count = base_query.count()
+    # 5. Obter a contagem total (removendo ordenação para otimizar e evitar conflito no PostgreSQL)
+    total_count = base_query.order_by(None).count()
     
     # --- CÁLCULO DE TOTAIS (Para todas as páginas) ---
     totals = {}

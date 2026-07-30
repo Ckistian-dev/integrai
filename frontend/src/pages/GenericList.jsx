@@ -121,9 +121,6 @@ const TableSkeleton = ({ columns, rows = 5 }) => {
     <>
       {[...Array(rows)].map((_, rowIndex) => (
         <tr key={rowIndex} className="border-b border-gray-50">
-          <td className="px-4 py-5 w-10 text-center">
-            <div className="h-4 w-4 bg-gray-200 rounded animate-pulse mx-auto"></div>
-          </td>
           {columns.map((col, colIndex) => (
             <td key={colIndex} className="px-6 py-5">
               {col !== '' && (
@@ -2256,8 +2253,10 @@ const GenericList = () => {
       : Math.max(currentFocus - 1, 0);
 
     if (e.shiftKey) {
-      const start = Math.min(anchorIndex === -1 ? currentFocus : anchorIndex, nextFocus);
-      const end = Math.max(anchorIndex === -1 ? currentFocus : anchorIndex, nextFocus);
+      const anchor = anchorIndex === -1 ? currentFocus : anchorIndex;
+      if (anchorIndex === -1) setAnchorIndex(currentFocus);
+      const start = Math.min(anchor, nextFocus);
+      const end = Math.max(anchor, nextFocus);
       setSelectedRowIds(data.slice(start, end + 1).map(item => item.id));
     } else {
       setSelectedRowIds([data[nextFocus].id]);
@@ -3385,24 +3384,8 @@ const GenericList = () => {
             }}
           >
             <table className="w-full min-w-max">
-              {/* Cabeçalho da Tabela - Estilizado como na imagem */}
               <thead className="bg-gray-50">
                 <tr className="border-b border-gray-200">
-                  <th className="px-4 py-4 w-10 text-center">
-                    <input
-                      type="checkbox"
-                      checked={data.length > 0 && selectedRowIds.length === data.length}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedRowIds(data.map(i => i.id));
-                        } else {
-                          setSelectedRowIds([]);
-                        }
-                      }}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
-                      title="Selecionar Todos"
-                    />
-                  </th>
                   {/* Colunas Dinâmicas */}
                   {columnsToDisplay.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
@@ -3719,20 +3702,6 @@ const GenericList = () => {
                             : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
                             }`}
                         >
-                          <td className="px-4 py-4 w-10 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={selectedRowIds.includes(item.id)}
-                              onChange={() => {
-                                setSelectedRowIds(prev =>
-                                  prev.includes(item.id)
-                                    ? prev.filter(id => id !== item.id)
-                                    : [...prev, item.id]
-                                );
-                              }}
-                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
-                            />
-                          </td>
                           {columnsToDisplay.map((colName) => (
                             <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                               {renderCellContent(item, colName)}
@@ -3758,7 +3727,7 @@ const GenericList = () => {
                                   onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
                                   title="Clique para selecionar este inventário"
                                 >
-                                  <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
+                                  <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-3">
                                         <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
@@ -3795,7 +3764,6 @@ const GenericList = () => {
                           {/* Linhas vazias para preencher o card (sem bordas internas) */}
                           {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
                             <tr key={`empty-${i}`} className="h-[53px]">
-                              <td key={`empty-${i}-chk`} className="px-4 py-4 w-10">&nbsp;</td>
                               {columnsToDisplay.map((colName) => (
                                 <td key={`empty-${i}-${colName}`} className="px-6 py-4 whitespace-nowrap text-sm">
                                   &nbsp;
@@ -3808,7 +3776,6 @@ const GenericList = () => {
                           {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
                           {hasTotalsField && data.length > 0 && (
                             <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
-                              <td key="total-chk" className="px-4 py-3 w-10"></td>
                               {columnsToDisplay.map((colName, idx) => {
                                 const field = fieldMetaMap.get(colName);
                                 const isCurrency = field?.format_mask === 'currency';
