@@ -560,8 +560,9 @@ class Usuario(Base):
                   info={'tab': 'Dados Gerais', 'label': 'Nome Completo', 'placeholder': 'Ex: João da Silva'})
     email = Column(String, unique=True, index=True, nullable=False, 
                    info={'tab': 'Dados Gerais', 'label': 'E-mail', 'placeholder': 'usuario@empresa.com'})
-    senha = Column(String, nullable=False, 
-                   info={'tab': 'Dados Gerais', 'label': 'Senha', 'placeholder': 'Mínimo 8 caracteres'}) # Hashed password
+    senha = Column(EncryptedString, nullable=False, 
+                   info={'tab': 'Dados Gerais', 'label': 'Senha', 'placeholder': 'Mínimo 8 caracteres', 'ui_type': 'password'})
+
 
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais', 'label': 'Ativo?', 'placeholder': ''})
@@ -588,7 +589,7 @@ class Cadastro(Base):
     Pode ser Cliente, Fornecedor, Transportadora, Vendedor.
     """
     __tablename__ = "cadastros"
-    __label__ = "Cadastro (Pessoas)"
+    __label__ = "Cadastro"
     __label_plural__ = "Clientes e Fornecedores"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -936,7 +937,7 @@ class Pedido(Base):
     
     # --- Aba: Itens e Observações ---
     itens = Column(JSON, 
-                   info={'tab': 'Itens', 'label': 'Itens do Pedido', 'placeholder': '', 'col_span': 2}) # Armazena os itens do pedido como JSON
+                   info={'tab': 'Itens', 'label': 'Itens do Pedido', 'placeholder': '', 'col_span': 3}) # Armazena os itens do pedido como JSON
 
     # --- Aba: Endereço de Entrega ---
     endereco_cep = Column(String(9), info={'format_mask': 'cep', 'tab': 'Endereço de Entrega', 'label': 'CEP', 'placeholder': '00000-000'})
@@ -974,18 +975,25 @@ class Pedido(Base):
 
     # --- Aba: Valores ---
     total = Column(Currency(), 
-                   info={'tab': 'Valores', 'label': 'Valor Total', 'placeholder': '0,00'})
+                   info={'tab': 'Valores', 'label': 'Valor Total', 'placeholder': '0,00', 'col_span': 1})
     desconto = Column(Currency(), 
-                      info={'tab': 'Valores', 'label': 'Desconto (Valor)', 'placeholder': '0,00'})
+                      info={'tab': 'Valores', 'label': 'Desconto (Valor)', 'placeholder': '0,00', 'col_span': 1})
     total_desconto = Column(Currency(), 
-                            info={'tab': 'Valores', 'label': 'Total com Descontos', 'placeholder': '0,00'})
+                            info={'tab': 'Valores', 'label': 'Total com Descontos', 'placeholder': '0,00', 'col_span': 1})
     pagamento = Column(SQLAlchemyEnum(FiscalPagamentoEnum, native_enum=False), 
-                       info={'tab': 'Valores', 'label': 'Forma de Pagamento', 'placeholder': 'Selecione...'})
+                       info={'tab': 'Valores', 'label': 'Forma de Pagamento (Padrão)', 'placeholder': 'Selecione...', 'visible': False})
     pagamento_descricao = Column(String, nullable=True,
-                                 info={'tab': 'Valores', 'label': 'Descrição do Pagamento (Outros)', 'placeholder': 'Ex: Saldo em Conta, Vale-Presente'})
+                                 info={'tab': 'Valores', 'label': 'Descrição do Pagamento (Outros)', 'placeholder': 'Ex: Saldo em Conta, Vale-Presente', 'visible': False})
     
     caixa_destino_origem = Column(String, 
-                 info={'tab': 'Valores', 'component': 'creatable_select', 'label': 'Conta Bancária / Caixa', 'placeholder': 'Ex: Caixa Geral ou Banco Itaú'})
+                 info={'tab': 'Valores', 'component': 'creatable_select', 'label': 'Conta Bancária / Caixa', 'placeholder': 'Ex: Caixa Geral ou Banco Itaú', 'visible': False})
+
+    pagamentos = Column(JSON, default=list, info={
+        'tab': 'Valores', 
+        'label': 'Formas de Pagamento e Caixas', 
+        'component': 'payment_methods', 
+        'col_span': 3
+    })
 
     # --- Aba: Fiscal ---
     tipo_operacao = Column(SQLAlchemyEnum(RegraTipoOperacaoEnum, native_enum=False), default=RegraTipoOperacaoEnum.venda_mercadoria,

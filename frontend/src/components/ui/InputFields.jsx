@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info } from 'lucide-react';
+import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info, Plus, X, Palette } from 'lucide-react';
 import AsyncSelect from 'react-select/async';
 import Select from 'react-select';
 import api from '../../api/axiosConfig';
@@ -94,6 +94,83 @@ export const MASKS = {
   }
 };
 
+export const REACT_SELECT_CUSTOM_STYLES = (error = false) => ({
+  control: (provided, state) => ({
+    ...provided,
+    minHeight: '38px',
+    height: '38px',
+    maxHeight: '38px',
+    borderRadius: '0.375rem',
+    borderColor: error ? '#ef4444' : (state.isFocused ? '#3b82f6' : '#d1d5db'),
+    boxShadow: state.isFocused ? '0 0 0 1px #3b82f6' : '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+    '&:hover': {
+      borderColor: state.isFocused ? '#3b82f6' : '#9ca3af'
+    },
+    backgroundColor: state.isDisabled ? '#f3f4f6' : 'white',
+    fontSize: '0.875rem',
+  }),
+  valueContainer: (provided) => ({
+    ...provided,
+    height: '38px',
+    padding: '0 10px',
+    display: 'flex',
+    alignItems: 'center'
+  }),
+  singleValue: (provided) => ({
+    ...provided,
+    color: '#1f2937',
+    margin: 0,
+    padding: 0
+  }),
+  placeholder: (provided) => ({
+    ...provided,
+    color: '#9ca3af',
+    margin: 0,
+    padding: 0
+  }),
+  input: (provided) => ({
+    ...provided,
+    margin: '0px',
+    padding: '0px'
+  }),
+  indicatorsContainer: (provided) => ({
+    ...provided,
+    height: '38px'
+  }),
+  indicatorSeparator: () => ({
+    display: 'none'
+  }),
+  dropdownIndicator: (provided) => ({
+    ...provided,
+    padding: '6px',
+    color: '#9ca3af'
+  }),
+  clearIndicator: (provided) => ({
+    ...provided,
+    padding: '4px 6px',
+    color: '#9ca3af',
+    cursor: 'pointer',
+    '&:hover': {
+      color: '#ef4444'
+    }
+  }),
+  menu: (provided) => ({
+    ...provided,
+    zIndex: 50,
+    borderRadius: '0.375rem',
+    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+  }),
+  option: (provided, state) => ({
+    ...provided,
+    backgroundColor: state.isSelected ? '#dde2eb' : (state.isFocused ? '#f3f4f6' : 'white'),
+    color: '#1f2937',
+    cursor: 'pointer',
+    fontSize: '0.875rem',
+    padding: '6px 10px',
+  }),
+  menuPortal: (base) => ({ ...base, zIndex: 9999 })
+});
+
 /**
  * Formata o texto de uma opção de dropdown:
  */
@@ -158,20 +235,22 @@ export const TextInput = React.forwardRef(({
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
       <input
         type={inputType}
         id={name}
         name={name}
         autoComplete="off"
-        ref={finalRef} // <--- AQUI É O PULO DO GATO. Sem isso, o IMask não funciona.
+        ref={finalRef}
         required={required}
-        placeholder={placeholder || `Digite ${label.toLowerCase()}...`}
-        className={`w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 
-                            focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                            ${error ? 'border-red-500' : ''}`}
+        placeholder={placeholder || field?.placeholder || ''}
+        className={`w-full h-[38px] px-3 py-1.5 border border-gray-300 rounded-md shadow-2xs text-sm text-gray-800 bg-white placeholder-gray-400 
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                    ${error ? 'border-red-500 focus:ring-red-500' : ''}`}
         {...filteredInputProps}
       />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
@@ -213,46 +292,29 @@ export const MaskedInput = IMaskMixin(TextInput);
 
 
 /** * Componente de Input Booleano (Dropdown Sim/Não) * Renderiza como um <select> com opções "Sim" e "Não". */
-export const BooleanInput = ({ field, value, onChange, error, modelName, ...props }) => {
-  // ... (restante do código)
-  const { label, name, required } = field;
+export const BooleanInput = ({ field, value, onChange, error, modelName, disabled, placeholder, ...props }) => {
+  const { label, name, required } = field || {};
 
-  // 🎯 Lógica para determinar as labels (Ativo/Inativo vs Sim/Não)
-  const isSituacaoField = name.toLowerCase().includes('situacao');
-
+  const isSituacaoField = name ? name.toLowerCase().includes('situacao') : false;
   const trueLabel = isSituacaoField ? 'Ativo' : 'Sim';
   const falseLabel = isSituacaoField ? 'Inativo' : 'Não';
 
+  const options = React.useMemo(() => [
+    { value: 'true', label: trueLabel },
+    { value: 'false', label: falseLabel }
+  ], [trueLabel, falseLabel]);
 
-  const getStringValue = (boolValue) => {
+  const selectedOption = React.useMemo(() => {
+    if (value === true || value === 'true') return { value: 'true', label: trueLabel };
+    if (value === false || value === 'false') return { value: 'false', label: falseLabel };
+    return null;
+  }, [value, trueLabel, falseLabel]);
 
-    // 🎯 CORREÇÃO AQUI:
-    // Compara tanto o booleano quanto a string.
-
-    if (boolValue === true || boolValue === 'true') {
-      return 'true';
+  const handleChange = (selected) => {
+    let booleanValue = null;
+    if (selected) {
+      booleanValue = selected.value === 'true';
     }
-    if (boolValue === false || boolValue === 'false') {
-      return 'false';
-    }
-
-    return ''; // Para 'null', 'undefined', etc.
-  };
-
-  // Handler customizado para converter a string do <select> de volta para booleano
-  const handleChange = (e) => {
-    const stringValue = e.target.value;
-    let booleanValue;
-
-    if (stringValue === 'true') {
-      booleanValue = true;
-    } else if (stringValue === 'false') {
-      booleanValue = false;
-    } else {
-      booleanValue = null; // Representa o "Selecione..." (campo não preenchido)
-    }
-
-    // Simula o evento onChange com o nome e o valor booleano/null
     onChange({
       target: {
         name: name,
@@ -263,27 +325,26 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, ...prop
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-      <select
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
+      <Select
         id={name}
         name={name}
-        value={getStringValue(value)} // Usa o valor string convertido
-        onChange={handleChange}      // Usa o handler customizado
-        required={required}
-        className={`w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm 
-                            focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                            ${error ? 'border-red-500' : ''}`}
+        autoComplete="off"
+        isDisabled={disabled}
+        options={options}
+        value={selectedOption}
+        onChange={handleChange}
+        placeholder={placeholder || field?.placeholder || ''}
+        classNamePrefix="react-select"
+        menuPortalTarget={document.body}
+        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
+        isClearable={!required}
         {...props}
-      >
-        <option value="" disabled={required}>
-          Selecione...
-        </option>
-        {/* Usando as labels dinâmicas */}
-        <option value="true">{trueLabel}</option>
-        <option value="false">{falseLabel}</option>
-      </select>
+      />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
@@ -406,11 +467,7 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
   };
 
   return (
-    <div className="flex flex-col space-y-3 md:col-span-2">
-      <label className="text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-
+    <div className="flex flex-col space-y-3 md:col-span-3">
       {isComplemento && (
         <div className="bg-teal-50 border-l-4 border-teal-600 p-4 rounded-r-lg shadow-sm space-y-2 mb-2 animate-fade-in">
           <div className="flex items-center gap-2 text-teal-800 font-bold text-sm">
@@ -430,104 +487,143 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
                 <strong className="text-teal-950">Diferença de Preço ou Quantidade:</strong>
                 Se o preço ou quantidade estavam menores na nota original, informe apenas a <strong>diferença</strong> neste rascunho.
               </li>
-              <li>
-                <strong className="text-teal-950">Cálculo Automático de Impostos:</strong>
-                Os impostos (ICMS, IPI, PIS, COFINS) serão calculados automaticamente pelo sistema com base nas regras cadastradas na tabela de **Regras Tributárias** para a operação "Complementar".
-              </li>
             </ul>
           </div>
         </div>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {items.map((item, index) => (
-          <div key={index} className="border border-gray-200 rounded-lg p-3 bg-white space-y-3 shadow-sm hover:shadow-md transition-shadow">
-            <div className="flex flex-col md:flex-row gap-2 items-start md:items-center">
-              <div className="flex-grow w-full md:w-auto">
-                <AsyncProductSelect
-                  value={item.id_produto}
-                  onChange={(opt) => handleProductChange(index, opt)}
-                  error={!item.id_produto && error} // Visual simples de erro
-                />
-              </div>
+          <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-x-4 gap-y-3 items-start">
+            {/* Produto (5 cols) */}
+            <div className="md:col-span-5 flex flex-col">
+              {index === 0 && (
+                <label className="mb-1.5 text-sm font-medium text-gray-700">
+                  Produto
+                </label>
+              )}
+              <AsyncProductSelect
+                value={item.id_produto}
+                onChange={(opt) => handleProductChange(index, opt)}
+                error={!item.id_produto && error}
+              />
+            </div>
 
-              <div className="flex gap-2 w-full md:w-auto">
-                <div className="w-1/2 md:w-20">
-                  <input
-                    type="number"
-                    value={item.quantidade}
-                    onChange={(e) => handleItemChange(index, 'quantidade', e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-center"
-                    placeholder="Qtd"
-                    min={isComplemento ? "0" : "1"}
-                  />
-                </div>
-                <div className="w-1/2 md:w-28">
+            {/* Quantidade (2 cols) */}
+            <div className="md:col-span-2 flex flex-col">
+              {index === 0 && (
+                <label className="mb-1.5 text-sm font-medium text-gray-700">
+                  Qtd
+                </label>
+              )}
+              <input
+                type="number"
+                value={item.quantidade}
+                onChange={(e) => handleItemChange(index, 'quantidade', e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-800 bg-white"
+                placeholder="Qtd"
+                min={isComplemento ? "0" : "1"}
+              />
+            </div>
+
+            {/* Valor Unitário (2 cols) */}
+            <div className="md:col-span-2 flex flex-col">
+              {index === 0 && (
+                <label className="mb-1.5 text-sm font-medium text-gray-700">
+                  Valor Unit. (R$)
+                </label>
+              )}
+              <IMaskInput
+                mask={MASKS['currency'].mask}
+                blocks={{
+                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                }}
+                lazy={MASKS['currency'].lazy}
+                value={item.valor_unitario !== undefined && item.valor_unitario !== null && item.valor_unitario !== '' && item.valor_unitario !== 0 ? String(item.valor_unitario).replace('.', ',') : ''}
+                unmask={true}
+                onAccept={(val, mask) => {
+                  let rawVal = mask.unmaskedValue;
+                  if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+                    const parsed = parseFloat(String(rawVal).replace(',', '.'));
+                    if (!isNaN(parsed) && parsed !== item.valor_unitario) {
+                      handleItemChange(index, 'valor_unitario', parsed);
+                    }
+                  } else if (item.valor_unitario !== '') {
+                    handleItemChange(index, 'valor_unitario', '');
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-800 bg-white"
+                placeholder="0,00"
+              />
+            </div>
+
+            {/* Total com IPI + Lixeira (3 cols) */}
+            <div className="md:col-span-3 flex flex-col">
+              {index === 0 && (
+                <label className="mb-1.5 text-sm font-medium text-gray-700">
+                  Total c/ IPI (R$)
+                </label>
+              )}
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
                   <IMaskInput
                     mask={MASKS['currency'].mask}
                     blocks={{
                       num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
                     }}
                     lazy={MASKS['currency'].lazy}
-                    value={String(item.valor_unitario ?? '')}
+                    value={item.total_com_ipi !== undefined && item.total_com_ipi !== null && item.total_com_ipi !== '' && item.total_com_ipi !== 0 ? String(item.total_com_ipi).replace('.', ',') : ''}
                     unmask={true}
-                    onAccept={(value, mask) => handleItemChange(index, 'valor_unitario', mask.unmaskedValue)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-right"
-                    placeholder="Valor Unit."
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 w-full md:w-auto items-center justify-between md:justify-end">
-                <div className="w-1/2 md:w-24 px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-right text-sm text-gray-700" title={`Alíquota: ${item.ipi_aliquota || 0}%`}>
-                  <span className="text-xs text-gray-500 mr-2">IPI:</span>
-                  {Number(item.valor_ipi || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </div>
-                <div className="w-1/2 md:w-28">
-                  <IMaskInput
-                    mask={MASKS['currency'].mask}
-                    blocks={{
-                      num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                    onAccept={(val, mask) => {
+                      let rawVal = mask.unmaskedValue;
+                      if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+                        const parsed = parseFloat(String(rawVal).replace(',', '.'));
+                        if (!isNaN(parsed) && parsed !== item.total_com_ipi) {
+                          handleItemChange(index, 'total_com_ipi', parsed);
+                        }
+                      } else if (item.total_com_ipi !== '') {
+                        handleItemChange(index, 'total_com_ipi', '');
+                      }
                     }}
-                    lazy={MASKS['currency'].lazy}
-                    value={String(item.total_com_ipi ?? '')}
-                    unmask={true}
-                    onAccept={(value, mask) => handleItemChange(index, 'total_com_ipi', mask.unmaskedValue)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-right font-semibold text-gray-800"
-                    placeholder="Total"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm font-semibold text-gray-800 bg-white"
+                    placeholder="0,00"
                   />
                 </div>
-              </div>
-
-              <div className="flex gap-1.5 self-end md:self-center">
-                <button
-                  type="button"
-                  onClick={() => handleRemoveItem(index)}
-                  className="p-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md border border-red-100 transition-colors"
-                  title="Remover item"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                {items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveItem(index)}
+                    className="p-2 text-gray-400 hover:text-red-600 transition-colors shrink-0"
+                    title="Remover item"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <button
-        type="button"
-        onClick={handleAddItem}
-        className="flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md border-2 border-blue-200 border-dashed transition-colors duration-150"
-      >
-        + Adicionar Item
-      </button>
+      <div className="pt-2">
+        <button
+          type="button"
+          onClick={handleAddItem}
+          className="w-full py-2.5 px-4 border border-dashed border-gray-300 hover:border-teal-600 bg-gray-50/60 hover:bg-teal-50/40 text-gray-600 hover:text-teal-700 rounded-md text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-2xs group"
+        >
+          <div className="p-1 rounded bg-white group-hover:bg-teal-600 text-gray-500 group-hover:text-white border border-gray-200 group-hover:border-teal-600 transition-colors shadow-2xs">
+            <Plus className="w-3.5 h-3.5" />
+          </div>
+          <span>Adicionar Item ao Pedido</span>
+        </button>
+      </div>
 
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
 
-const AsyncProductSelect = ({ value, onChange }) => {
+const AsyncProductSelect = ({ value, onChange, error }) => {
   const [selectedOption, setSelectedOption] = useState(null);
 
   const loadOptions = (inputValue, callback) => {
@@ -569,53 +665,60 @@ const AsyncProductSelect = ({ value, onChange }) => {
       autoComplete="off"
       placeholder="Buscar produto..."
       menuPortalTarget={document.body}
-      styles={{
-        control: (base) => ({ ...base, minHeight: '42px', borderColor: '#d1d5db' }),
-        menu: (base) => ({ ...base, zIndex: 9999 }),
-        menuPortal: (base) => ({ ...base, zIndex: 9999 })
-      }}
+      styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
+      isClearable={true}
     />
   );
 };
 
-/** * Componente de Select (Dropdown) */
-export const SelectInput = ({ field, value, onChange, error, options = [], modelName, ...props }) => {
-  const { label, name, required } = field;
+export const SelectInput = ({ field, value, onChange, error, options = [], modelName, formData, disabled, placeholder, ...props }) => {
+  const { label, name, required } = field || {};
 
-  const handleChange = (e) => {
-    const val = e.target.value;
+  const formattedOptions = React.useMemo(() => {
+    return (options || []).map((opt) => ({
+      value: typeof opt === 'object' ? opt.value : opt,
+      label: typeof opt === 'object' ? formatLabel(opt.label || opt.value) : formatLabel(opt),
+    }));
+  }, [options]);
+
+  const selectedOption = React.useMemo(() => {
+    if (value === null || value === undefined || value === '') return null;
+    const stringVal = String(value);
+    return formattedOptions.find((opt) => String(opt.value) === stringVal) || { value, label: formatLabel(String(value)) };
+  }, [value, formattedOptions]);
+
+  const handleChange = (selected) => {
+    const val = selected ? selected.value : null;
     onChange({
       target: {
         name: name,
-        value: val === '' ? null : val,
+        value: val,
       },
     });
   };
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-      <select
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
+      <Select
         id={name}
         name={name}
         autoComplete="off"
-        value={value || ''}
+        isDisabled={disabled}
+        options={formattedOptions}
+        value={selectedOption}
         onChange={handleChange}
-        required={required}
-        className={`w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm 
-                            focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                            ${error ? 'border-red-500' : ''}`}
+        placeholder={placeholder || field?.placeholder || "Selecione..."}
+        classNamePrefix="react-select"
+        menuPortalTarget={document.body}
+        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
+        isClearable={true}
         {...props}
-      >
-        <option value="" disabled={required}>Selecione...</option>
-        {(options || []).map((option) => (
-          <option key={option.value} value={option.value}>
-            {formatLabel(option.label || option.value)}
-          </option>
-        ))}
-      </select>
+      />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
@@ -660,17 +763,7 @@ export const MultiSelectInput = ({ field, value, onChange, error, options = [], 
         className="basic-multi-select"
         classNamePrefix="select"
         menuPortalTarget={document.body}
-        styles={{
-          menuPortal: (base) => ({ ...base, zIndex: 9999 }),
-          control: (base, state) => ({
-            ...base,
-            borderColor: error ? '#ef4444' : (state.isFocused ? '#3b82f6' : '#d1d5db'),
-            boxShadow: state.isFocused ? '0 0 0 1px #3b82f6' : '0 1px 2px 0 rgb(0 0 0 / 0.05)',
-            '&:hover': {
-              borderColor: state.isFocused ? '#3b82f6' : '#d1d5db'
-            },
-          }),
-        }}
+        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
         {...props}
       />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
@@ -985,8 +1078,8 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
         menuPortalTarget={document.body}
         loadingMessage={() => "Buscando..."}
         isLoading={isLoading}
-        styles={customStyles}
-        isClearable // Permite limpar o campo
+        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
+        isClearable
         {...props}
       />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
@@ -995,9 +1088,16 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
 };
 
 /** * Componente de Input de Senha * Renderiza um campo type="password" com botão de "Mostrar/Ocultar" */
-export const PasswordInput = ({ field, value, onChange, error, modelName, ...props }) => {
-  const { label, name, required, placeholder } = field;
+export const PasswordInput = ({ field, value, onChange, error, modelName, formData, disabled, placeholder, ...props }) => {
+  const { label, name, required } = field || {};
   const [showPassword, setShowPassword] = useState(false);
+
+  // Se o valor for um hash bcrypt antigo ($2b$ ou $2a$), esconde a hash e pede nova senha se desejar alterar
+  const isLegacyBcryptHash = value && (String(value).startsWith('$2b$') || String(value).startsWith('$2a$'));
+  const inputValue = isLegacyBcryptHash ? '' : (value || '');
+  const activePlaceholder = isLegacyBcryptHash 
+    ? '(Senha salva - digite nova para alterar)' 
+    : (placeholder || field?.placeholder || '');
 
   const toggleShowPassword = () => {
     setShowPassword((prev) => !prev);
@@ -1005,37 +1105,37 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, ...pro
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
 
-      {/* Container relativo para posicionar o botão */}
-      <div className="relative">
+      <div className="relative flex items-center">
         <input
-          // O tipo muda dinamicamente
           type={showPassword ? 'text' : 'password'}
           id={name}
           name={name}
           autoComplete="new-password"
-          value={value || ''}
+          value={inputValue}
           onChange={onChange}
-          required={required}
-          placeholder={placeholder || `Digite ${label.toLowerCase()}...`}
-          // Adiciona padding à direita (pr-10) para o ícone não sobrepor o texto
-          className={`w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 
-                                focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                                ${error ? 'border-red-500' : ''}`}
+          required={required && !isLegacyBcryptHash}
+          disabled={disabled}
+          placeholder={activePlaceholder}
+          className={`w-full h-[38px] px-3 py-1.5 pr-10 border border-gray-300 rounded-md shadow-2xs text-sm text-gray-800 bg-white placeholder-gray-400 
+                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                      ${error ? 'border-red-500 focus:ring-red-500' : ''}
+                      ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-400' : ''}`}
           {...props}
         />
-        {/* Botão de Mostrar/Ocultar */}
         <button
-          type="button" // Impede que o botão envie o formulário
+          type="button"
           onClick={toggleShowPassword}
-          className="absolute inset-y-0 right-0 flex items-center justify-center w-10 text-gray-500 hover:text-gray-700"
+          disabled={disabled}
+          className="absolute right-0 h-[38px] w-9 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
           aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
         >
-          {/* 🎯 Substituição dos ícones: Usando Lucide-React */}
-          {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
         </button>
       </div>
 
@@ -1044,8 +1144,9 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, ...pro
   );
 };
 
+
 /** * Componente para Data (calendário) e Data/Hora * Usa o input nativo do HTML5 (<input type="date" />) * que abre um pop-up de calendário. */
-export const DateInput = ({ field, value, onChange, error, disabled, modelName, ...props }) => {
+export const DateInput = ({ field, value, onChange, error, disabled, modelName, formData, ...props }) => {
   const { label, name, required } = field;
 
   // O tipo vindo do backend é 'date' or 'datetime'.
@@ -1106,23 +1207,24 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
       <input
         type={inputType}
         id={name}
         name={name}
         autoComplete="off"
-        value={formattedValue} // <- Usa o valor formatado
-        onChange={onChange}    // <- O onChange nativo já envia o formato correto
+        value={formattedValue}
+        onChange={onChange}
         required={required}
         disabled={disabled}
-        // Adiciona padding à direita para o ícone do calendário não sobrepor o texto
-        className={`w-full px-3 py-2 pr-9 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 
-                    focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                    ${error ? 'border-red-500' : ''}
-                    ${disabled ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+        className={`w-full h-[38px] px-3 py-1.5 border border-gray-300 rounded-md shadow-2xs text-sm text-gray-800 bg-white placeholder-gray-400 
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                    ${error ? 'border-red-500 focus:ring-red-500' : ''}
+                    ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-400' : ''}`}
         {...props}
       />
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
@@ -1132,13 +1234,12 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
 
 /** * Componente de Upload de Arquivo (Converte para Base64) */
 export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, ...props }) => {
-  const { label, name, required, placeholder } = field;
+  const { label, name, required, placeholder } = field || {};
   const fileInputRef = React.useRef(null);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Se houver um campo configurado para salvar o nome do arquivo, atualiza-o
       if (field.filename_field) {
         onChange({
           target: {
@@ -1150,8 +1251,6 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
 
       const reader = new FileReader();
       reader.onload = () => {
-        // O resultado vem como "data:application/x-pkcs12;base64,MI..."
-        // Precisamos remover o prefixo para enviar apenas o base64 puro para o backend
         const base64String = reader.result.split(',')[1];
         onChange({
           target: {
@@ -1169,14 +1268,13 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
   };
 
   const handleDownload = (e) => {
-    e.stopPropagation(); // Impede que o clique abra a seleção de arquivo
+    e.stopPropagation();
     if (!value) return;
 
     let mimeType = 'text/plain';
     let extension = 'txt';
     let isBase64 = false;
 
-    // Detecta tipo pelo nome do campo
     if (name.includes('xml')) {
       mimeType = 'application/xml';
       extension = 'xml';
@@ -1205,14 +1303,15 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     document.body.removeChild(link);
   };
 
-  // Define o texto a ser exibido dentro do input simulado
   const displayText = fileName || (value ? "Arquivo disponível" : "");
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
 
       <div className="relative">
         <input
@@ -1227,10 +1326,10 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
 
         <div
           onClick={handleTriggerClick}
-          className={`w-full px-3 py-2 pr-20 border border-gray-300 rounded-md shadow-sm 
-                      cursor-pointer bg-white flex items-center min-h-[42px]
+          className={`w-full h-[38px] px-3 py-1.5 pr-20 border border-gray-300 rounded-md shadow-2xs 
+                      cursor-pointer bg-white flex items-center text-sm text-gray-800
                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
-                      ${error ? 'border-red-500' : 'hover:border-gray-400'}`}
+                      ${error ? 'border-red-500 focus:ring-red-500' : 'hover:border-gray-400'}`}
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -1241,7 +1340,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
           }}
         >
           <span className={`truncate ${!displayText ? 'text-gray-400' : 'text-gray-700'}`}>
-            {displayText || placeholder || "Clique para selecionar..."}
+            {displayText || placeholder || field?.placeholder || ''}
           </span>
 
           <div className="absolute inset-y-0 right-0 flex items-center pr-2 space-x-1">
@@ -1249,14 +1348,14 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
               <button
                 type="button"
                 onClick={handleDownload}
-                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-full transition-colors z-10"
+                className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-full transition-colors z-10"
                 title="Baixar arquivo"
               >
-                <Download className="w-5 h-5" />
+                <Download className="w-4 h-4" />
               </button>
             )}
-            <div className="p-1.5 pointer-events-none text-gray-500">
-              <Upload className="w-5 h-5" />
+            <div className="p-1 pointer-events-none text-gray-400">
+              <Upload className="w-4 h-4" />
             </div>
           </div>
         </div>
@@ -1267,30 +1366,32 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
   );
 };
 
-/** * Componente de Upload de Imagem ou Link Direto (URL) */
-export const ImageUploadOrUrlInput = ({ field, value, onChange, error, disabled, ...props }) => {
-  const { label, name, required, placeholder } = field;
-  const [tab, setTab] = useState(() => {
-    if (value && String(value).startsWith('data:')) {
-      return 'file';
-    }
-    if (value && (String(value).startsWith('http://') || String(value).startsWith('https://'))) {
-      return 'url';
-    }
-    return 'file'; // default tab
-  });
-
+export const ImageUploadOrUrlInput = ({ field, value, onChange, error, disabled, placeholder, fileName: externalFileName, ...props }) => {
+  const { label, name, required } = field || {};
   const fileInputRef = React.useRef(null);
+  const [internalFileName, setInternalFileName] = useState('');
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      setInternalFileName(file.name);
+      if (field?.filename_field) {
+        onChange({
+          target: {
+            name: field.filename_field,
+            value: file.name,
+          },
+        });
+      }
       const reader = new FileReader();
       reader.onload = () => {
+        const rawBase64 = reader.result;
+        // Embute o nome do arquivo no cabeçalho do Data URL: data:image/png;name=logo.png;base64,...
+        const base64WithName = rawBase64.replace(/^data:(image\/[^;]+);base64,/, `data:$1;name=${encodeURIComponent(file.name)};base64,`);
         onChange({
           target: {
             name: name,
-            value: reader.result,
+            value: base64WithName,
           },
         });
       };
@@ -1298,7 +1399,8 @@ export const ImageUploadOrUrlInput = ({ field, value, onChange, error, disabled,
     }
   };
 
-  const handleUrlChange = (e) => {
+  const handleTextChange = (e) => {
+    setInternalFileName('');
     onChange({
       target: {
         name: name,
@@ -1307,149 +1409,244 @@ export const ImageUploadOrUrlInput = ({ field, value, onChange, error, disabled,
     });
   };
 
-  const handleRemove = () => {
+  const handleClear = (e) => {
+    e.stopPropagation();
+    setInternalFileName('');
     onChange({
       target: {
         name: name,
         value: '',
       },
     });
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleTriggerClick = () => {
     fileInputRef.current?.click();
   };
 
+  const parseFileNameFromDataUrl = (val) => {
+    if (!val || typeof val !== 'string') return null;
+    const match = val.match(/;name=([^;]+);/);
+    if (match && match[1]) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return match[1];
+      }
+    }
+    return null;
+  };
+
+  const hasValue = !!value;
   const isBase64 = value && String(value).startsWith('data:');
-  const isUrl = value && (String(value).startsWith('http://') || String(value).startsWith('https://'));
+  const currentFileName = externalFileName || internalFileName || parseFileNameFromDataUrl(value) || 'imagem_anexada.png';
+
+  // Se for base64, exibe o nome do arquivo na caixa de texto em vez da hash gigante
+  const displayValue = isBase64 ? currentFileName : (value || '');
+
 
   return (
-    <div className="flex flex-col space-y-2">
-      <label className="text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+    <div className="flex flex-col">
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
 
-      {/* Tabs */}
-      <div className="flex space-x-1 p-0.5 bg-gray-100 rounded-lg w-fit">
-        <button
-          type="button"
-          onClick={() => setTab('file')}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-            tab === 'file'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
+      <div className="relative flex items-center">
+        <input
+          type="file"
+          id={`${name}_file`}
+          accept="image/*"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          className="hidden"
           disabled={disabled}
-        >
-          Carregar Arquivo
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('url')}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-            tab === 'url'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-          disabled={disabled}
-        >
-          Link da Imagem
-        </button>
-      </div>
+        />
 
-      {/* Content */}
-      <div className="relative">
-        {tab === 'file' ? (
-          <div>
-            <input
-              type="file"
-              id={name}
-              name={name}
-              accept="image/*"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              className="hidden"
-              disabled={disabled}
-            />
-            <div
-              onClick={disabled ? undefined : handleTriggerClick}
-              className={`w-full px-4 py-3 border border-gray-300 rounded-md shadow-sm 
-                          bg-white flex flex-col items-center justify-center min-h-[90px] border-dashed
-                          ${disabled ? 'bg-gray-50 cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-blue-500 hover:bg-blue-50/10'}`}
-              tabIndex={disabled ? -1 : 0}
-              onKeyDown={(e) => {
-                if (disabled) return;
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleTriggerClick();
-                }
-              }}
-            >
-              <Upload className="w-6 h-6 text-gray-400 mb-1" />
-              <span className="text-sm font-medium text-gray-600">
-                {isBase64 ? "Imagem carregada" : placeholder || "Clique para carregar imagem..."}
-              </span>
-              <span className="text-xs text-gray-400 mt-0.5">
-                Formatos suportados: PNG, JPG, JPEG, GIF
-              </span>
+        <div
+          className={`w-full h-[38px] px-2.5 border border-gray-300 rounded-md shadow-2xs bg-white 
+                      flex items-center gap-2 text-sm text-gray-800 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500
+                      ${error ? 'border-red-500 focus-within:ring-red-500' : ''}
+                      ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-400' : ''}`}
+        >
+          {/* Visualização no início do campo antes da URL/Texto */}
+          {hasValue && (
+            <div className="w-6 h-6 rounded border border-gray-200 overflow-hidden bg-gray-50 flex items-center justify-center shrink-0">
+              <img
+                src={value}
+                alt="preview"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
+              />
             </div>
-          </div>
-        ) : (
+          )}
+
+          {/* Campo de Texto para colar a URL ou visualizar o Nome do Arquivo */}
           <input
             type="text"
             id={name}
             name={name}
-            value={isUrl ? value : ''}
-            onChange={handleUrlChange}
-            placeholder="Cole o link direto da imagem (https://...)"
+            value={displayValue}
+            onChange={handleTextChange}
+            readOnly={isBase64}
+            placeholder={placeholder || field?.placeholder || ''}
             disabled={disabled}
-            className={`w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 
-                        focus:outline-none focus:ring-blue-500 focus:border-blue-500
-                        ${error ? 'border-red-500' : ''}
-                        ${disabled ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+            className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 p-0 text-sm text-gray-800 placeholder-gray-400 min-w-0"
             {...props}
           />
-        )}
-      </div>
 
-      {/* Preview and Remove Button */}
-      {value && (
-        <div className="flex items-center space-x-4 mt-2 p-2 bg-gray-50 border border-gray-100 rounded-lg animate-fade-in">
-          <div className="w-16 h-16 bg-white border border-gray-200 rounded flex items-center justify-center overflow-hidden p-1 shadow-sm">
-            <img
-              src={value}
-              alt="Pré-visualização do Logo"
-              className="max-w-full max-h-full object-contain"
-              onError={(e) => {
-                e.target.style.display = 'none';
-              }}
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              Visualização do Logo
-            </p>
-            <p className="text-xs text-gray-400 truncate mt-0.5">
-              {isBase64 ? "Arquivo Base64" : value}
-            </p>
-          </div>
-          {!disabled && (
+          {/* Botões de Ação na Direita (Limpar e Upload) */}
+          <div className="flex items-center gap-1 shrink-0">
+
+            {hasValue && !disabled && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                title="Limpar imagem"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
             <button
               type="button"
-              onClick={handleRemove}
-              className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full transition-colors"
-              title="Remover logo"
+              onClick={handleTriggerClick}
+              disabled={disabled}
+              className="p-1 text-gray-400 hover:text-blue-600 rounded transition-colors"
+              title="Carregar arquivo de imagem"
             >
-              <Trash2 className="w-4 h-4" />
+              <Upload className="w-4 h-4" />
             </button>
-          )}
+          </div>
         </div>
-      )}
+      </div>
 
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
+
+/**
+ * Componente de Seleção de Cores (Color Picker com Pop-up RGB/HEX)
+ */
+export const ColorInput = ({ field, value, onChange, error, disabled, placeholder, ...props }) => {
+  const { label, name, required } = field || {};
+  const colorInputRef = React.useRef(null);
+
+  const colorValue = value || '#3b82f6';
+
+  const handleNativeColorChange = (e) => {
+    onChange({
+      target: {
+        name: name,
+        value: e.target.value,
+      },
+    });
+  };
+
+  const handleTextChange = (e) => {
+    onChange({
+      target: {
+        name: name,
+        value: e.target.value,
+      },
+    });
+  };
+
+  const handleClear = (e) => {
+    e.stopPropagation();
+    onChange({
+      target: {
+        name: name,
+        value: '',
+      },
+    });
+  };
+
+  const openPicker = () => {
+    if (!disabled) {
+      colorInputRef.current?.click();
+    }
+  };
+
+  return (
+    <div className="flex flex-col">
+      {label && (
+        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
+
+      <div className="relative flex items-center">
+        <input
+          type="color"
+          ref={colorInputRef}
+          value={colorValue.startsWith('#') && colorValue.length === 7 ? colorValue : '#3b82f6'}
+          onChange={handleNativeColorChange}
+          disabled={disabled}
+          className="absolute opacity-0 pointer-events-none w-0 h-0"
+        />
+
+        <div
+          className={`w-full h-[38px] px-2.5 border border-gray-300 rounded-md shadow-2xs bg-white 
+                      flex items-center gap-2 text-sm text-gray-800 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500
+                      ${error ? 'border-red-500 focus-within:ring-red-500' : ''}
+                      ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-400' : ''}`}
+        >
+          {/* Amostra visual de cor que abre o pop-up RGB/HEX */}
+          <button
+            type="button"
+            onClick={openPicker}
+            disabled={disabled}
+            className="w-6 h-6 rounded-md border border-gray-300 shadow-2xs shrink-0 cursor-pointer transition-transform hover:scale-105 active:scale-95 flex items-center justify-center overflow-hidden"
+            style={{ backgroundColor: colorValue }}
+            title="Clique para abrir a paleta de cores (RGB / HEX)"
+          />
+
+          {/* Campo de texto para visualizar/digitar o código HEX ou RGB */}
+          <input
+            type="text"
+            id={name}
+            name={name}
+            value={value || ''}
+            onChange={handleTextChange}
+            placeholder={placeholder || field?.placeholder || '#000000 ou rgb(...)'}
+            disabled={disabled}
+            className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 p-0 text-sm font-mono text-gray-800 placeholder-gray-400 min-w-0"
+            {...props}
+          />
+
+          {/* Botões de Ação na Direita */}
+          <div className="flex items-center gap-1 shrink-0">
+            {value && !disabled && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                title="Limpar cor"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={openPicker}
+              disabled={disabled}
+              className="p-1 text-gray-400 hover:text-blue-600 rounded transition-colors"
+              title="Selecionar Cor"
+            >
+              <Palette className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
+    </div>
+  );
+};
+

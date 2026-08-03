@@ -13,13 +13,15 @@ import {
   DefaultFiltersInput,
   MultiSelectInput,
   TextAreaInput,
-  ImageUploadOrUrlInput
+  ImageUploadOrUrlInput,
+  ColorInput
 } from '../ui/InputFields';
 import { RuleBuilderInput } from '../ui/RuleBuilderInput';
 import { CreatableSelectInput } from '../ui/CreatableSelectInput';
 import { StateTaxRulesInput } from '../ui/StateTaxRulesInput';
 import { PermissionsBuilderInput } from '../ui/PermissionsBuilderInput';
 import { ReportBuilderInput } from '../ui/ReportBuilderInput';
+import { PaymentMethodsInput } from '../ui/PaymentMethodsInput';
 
 /**
  * Componente FormRenderer
@@ -205,7 +207,24 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     return <PasswordInput {...props} value={value} />
   }
 
+  if (
+    field.type === 'color' ||
+    field.ui_type === 'color' ||
+    fieldName === 'cor' ||
+    fieldName === 'color' ||
+    fieldName.includes('cor_') ||
+    fieldName.includes('_cor') ||
+    fieldName.includes('color_') ||
+    fieldName.includes('_color') ||
+    fieldName.includes('sidebar')
+  ) {
+    return <ColorInput {...props} value={value} />;
+  }
+
   switch (field.type) {
+    case 'color':
+      return <ColorInput {...props} value={value} />;
+
     case 'text':
     case 'email':
     case 'number':
@@ -254,7 +273,13 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     case 'order_items':
       return <OrderItemsInput {...props} value={value} />;
 
+    case 'payment_methods':
+      return <PaymentMethodsInput {...props} value={value} formData={formData} />;
+
     default:
+      if (field.component === 'payment_methods') {
+        return <PaymentMethodsInput {...props} value={value} formData={formData} />;
+      }
       return <TextInput {...props} value={value} />;
   }
 };

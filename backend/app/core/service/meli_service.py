@@ -974,52 +974,80 @@ class MeliService:
         logger.info(f"Pedido {order_id_ml} importado com frete completo. ID ERP: {novo_pedido.id}")
         return novo_pedido
 
-    async def _resolve_shipment_id(self, client, order_id_ml: str):
+    async def _resolve_all_ml_ids(self, client, order_id_ml: str):
         """
-        Resolve o shipment_id a partir de um ID que pode ser de Pedido, Envio ou Pacote.
+        Resolve todos os IDs (order_id, pack_id, shipment_id) a partir de qualquer ID do Mercado Livre.
         """
-        logger.info(f"Resolvendo shipment_id para o ID ML: {order_id_ml}")
-        
+        logger.info(f"Resolvendo estrutura de IDs ML para: {order_id_ml}")
+        ids = {
+            "order_id": None,
+            "pack_id": None,
+            "shipment_id": None
+        }
+
         # 1. Tenta como Order ID
         try:
             order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
             if order_resp.status_code == 200:
-                shipment_id = order_resp.json().get('shipping', {}).get('id')
-                if shipment_id:
-                    logger.info(f"Shipment ID {shipment_id} resolvido a partir da Order {order_id_ml}")
-                    return str(shipment_id)
+                order_data = order_resp.json()
+                ids["order_id"] = str(order_data.get('id'))
+                if order_data.get('pack_id'):
+                    ids["pack_id"] = str(order_data.get('pack_id'))
+                ship_id = order_data.get('shipping', {}).get('id')
+                if ship_id:
+                    ids["shipment_id"] = str(ship_id)
+                logger.info(f"IDs resolvidos via Order: {ids}")
+                return ids
         except Exception as e:
-            logger.debug(f"Falha ao tentar resolver como Order ID: {e}")
+            logger.debug(f"Falha ao resolver como Order ID: {e}")
 
-        # 2. Tenta como Shipment ID direto
-        try:
-            ship_resp = await client.get(f"{self.base_url}/shipments/{order_id_ml}")
-            if ship_resp.status_code == 200:
-                logger.info(f"ID {order_id_ml} já é um Shipment ID válido.")
-                return str(order_id_ml)
-        except Exception as e:
-            logger.debug(f"Falha ao tentar resolver como Shipment ID: {e}")
-
-        # 3. Tenta como Pack ID
+        # 2. Tenta como Pack ID
         try:
             pack_resp = await client.get(f"{self.base_url}/packs/{order_id_ml}")
             if pack_resp.status_code == 200:
                 pack_data = pack_resp.json()
+                ids["pack_id"] = str(order_id_ml)
                 orders = pack_data.get('orders', [])
                 if orders:
                     first_order_id = orders[0].get('id')
                     if first_order_id:
-                        order_resp = await client.get(f"{self.base_url}/orders/{first_order_id}")
-                        if order_resp.status_code == 200:
-                            shipment_id = order_resp.json().get('shipping', {}).get('id')
-                            if shipment_id:
-                                logger.info(f"Shipment ID {shipment_id} resolvido a partir do Pack {order_id_ml} via Order {first_order_id}")
-                                return str(shipment_id)
+                        ids["order_id"] = str(first_order_id)
+                        try:
+                            order_resp = await client.get(f"{self.base_url}/orders/{first_order_id}")
+                            if order_resp.status_code == 200:
+                                ship_id = order_resp.json().get('shipping', {}).get('id')
+                                if ship_id:
+                                    ids["shipment_id"] = str(ship_id)
+                        except:
+                            pass
+                logger.info(f"IDs resolvidos via Pack: {ids}")
+                return ids
         except Exception as e:
-            logger.debug(f"Falha ao tentar resolver como Pack ID: {e}")
+            logger.debug(f"Falha ao resolver como Pack ID: {e}")
 
-        logger.warning(f"Não foi possível resolver o shipment_id para o ID ML: {order_id_ml}")
-        return None
+        # 3. Tenta como Shipment ID
+        try:
+            ship_resp = await client.get(f"{self.base_url}/shipments/{order_id_ml}")
+            if ship_resp.status_code == 200:
+                ship_data = ship_resp.json()
+                ids["shipment_id"] = str(order_id_ml)
+                if ship_data.get('order_id'):
+                    ids["order_id"] = str(ship_data.get('order_id'))
+                logger.info(f"IDs resolvidos via Shipment: {ids}")
+                return ids
+        except Exception as e:
+            logger.debug(f"Falha ao resolver como Shipment ID: {e}")
+
+        # Fallback se nada respondeu 200
+        ids["order_id"] = str(order_id_ml)
+        return ids
+
+    async def _resolve_shipment_id(self, client, order_id_ml: str):
+        """
+        Método de compatibilidade para obter apenas o shipment_id.
+        """
+        all_ids = await self._resolve_all_ml_ids(client, order_id_ml)
+        return all_ids.get("shipment_id")
 
     async def upload_xml(
         self,
@@ -1030,7 +1058,8 @@ class MeliService:
         data_emissao: str = None
     ):
         """
-        Envia o XML da NFe para o Mercado Livre via JSON no endpoint de Shipments.
+        Envia o XML da NFe para o Mercado Livre utilizando estratégias adaptativas
+        para Mercado Envios (ME2) e Envio Próprio / Outras Transportadoras (Custom, ME1, Packs, etc.).
         """
         if settings.ENVIRONMENT != "production":
             logger.info(f"Simulando upload de XML para pedido ML {order_id_ml} (Ambiente: {settings.ENVIRONMENT})")
@@ -1039,103 +1068,168 @@ class MeliService:
         logger.info(f"Iniciando upload de XML para pedido ML {order_id_ml}")
         client = await self.get_client()
 
-        # 1. Parse missing fields from XML content if not provided
-        if not chave_acesso or not numero_nf or not data_emissao:
-            try:
-                xml_str_temp = xml_content if isinstance(xml_content, str) else xml_content.decode('utf-8')
-                if not chave_acesso:
-                    ch_match = re.search(r"<chNFe>([^<]+)</chNFe>", xml_str_temp)
-                    if ch_match:
-                        chave_acesso = ch_match.group(1)
-                    else:
-                        id_match = re.search(r'infNFe\s+Id="NFe([^"]+)"', xml_str_temp)
-                        if id_match:
-                            chave_acesso = id_match.group(1)
-                
-                if not numero_nf:
-                    n_nf_match = re.search(r"<nNF>([^<]+)</nNF>", xml_str_temp)
-                    if n_nf_match:
-                        numero_nf = n_nf_match.group(1)
-                
-                if not data_emissao:
-                    dh_emi_match = re.search(r"<dhEmi>([^<]+)</dhEmi>", xml_str_temp)
-                    if dh_emi_match:
-                        dh_emi = dh_emi_match.group(1)
-                        if "." not in dh_emi:
-                            tz_match = re.search(r"([+-]\d{2}:\d{2}|Z)$", dh_emi)
-                            if tz_match:
-                                tz = tz_match.group(1)
-                                base_time = dh_emi[:-len(tz)]
-                                data_emissao = f"{base_time}.000{tz}"
-                            else:
-                                data_emissao = f"{dh_emi}.000"
-                        else:
-                            data_emissao = dh_emi
-                    else:
-                        data_emissao = datetime.now().isoformat()
-            except Exception as parse_err:
-                logger.warning(f"Erro ao extrair metadados do XML no upload_xml: {parse_err}")
+        # 1. Parse de metadados do XML se ausentes
+        xml_str = xml_content if isinstance(xml_content, str) else xml_content.decode('utf-8')
+        xml_str = xml_str.strip()
+        if not xml_str.startswith('<?xml'):
+            xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + xml_str
+        xml_bytes = xml_str.encode('utf-8')
 
+        serie = "1"
         try:
-            # 2. Busca o Shipment ID resoluto
-            shipment_id = await self._resolve_shipment_id(client, order_id_ml)
-            if not shipment_id:
-                return {"status": "error", "message": f"Não foi possível localizar o envio (shipment_id) para o ID {order_id_ml}."}
+            if not chave_acesso:
+                ch_match = re.search(r"<chNFe>([^<]+)</chNFe>", xml_str)
+                if ch_match:
+                    chave_acesso = ch_match.group(1)
+                else:
+                    id_match = re.search(r'infNFe\s+Id="NFe([^"]+)"', xml_str)
+                    if id_match:
+                        chave_acesso = id_match.group(1)
 
-            url = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
+            if not numero_nf:
+                n_nf_match = re.search(r"<nNF>([^<]+)</nNF>", xml_str)
+                if n_nf_match:
+                    numero_nf = n_nf_match.group(1)
 
-            # 3. Tratamento da String do XML
-            xml_str = xml_content if isinstance(xml_content, str) else xml_content.decode('utf-8')
-            xml_str = xml_str.strip()
-            if not xml_str.startswith('<?xml'):
-                xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + xml_str
+            s_match = re.search(r"<serie>([^<]+)</serie>", xml_str)
+            if s_match:
+                serie = s_match.group(1)
 
-            # 4. Envia o XML como application/xml (raw body)
-            # O endpoint /shipments/{id}/invoice_data recusa JSON (415), aceita XML puro.
-            xml_bytes = xml_str.encode('utf-8')
-            xml_headers = {"Content-Type": "application/xml"}
-            
-            logger.debug(f"Enviando XML (application/xml) para {url} | Chave: {chave_acesso} | NF: {numero_nf}")
+            if not data_emissao:
+                dh_emi_match = re.search(r"<dhEmi>([^<]+)</dhEmi>", xml_str)
+                if dh_emi_match:
+                    dh_emi = dh_emi_match.group(1)
+                    if "." not in dh_emi:
+                        tz_match = re.search(r"([+-]\d{2}:\d{2}|Z)$", dh_emi)
+                        if tz_match:
+                            tz = tz_match.group(1)
+                            base_time = dh_emi[:-len(tz)]
+                            data_emissao = f"{base_time}.000{tz}"
+                        else:
+                            data_emissao = f"{dh_emi}.000"
+                    else:
+                        data_emissao = dh_emi
+                else:
+                    data_emissao = datetime.now().isoformat()
+        except Exception as parse_err:
+            logger.warning(f"Erro ao extrair metadados do XML no upload_xml: {parse_err}")
 
-            params = {"siteId": "MLB", "site_id": "MLB"}
-            resp = await client.post(url, content=xml_bytes, headers=xml_headers, params=params)
+        # 2. Resolve a estrutura completa de IDs
+        resolved_ids = await self._resolve_all_ml_ids(client, order_id_ml)
+        shipment_id = resolved_ids.get("shipment_id")
+        pack_id = resolved_ids.get("pack_id")
+        order_id = resolved_ids.get("order_id") or order_id_ml
 
-            if resp.status_code in [200, 201]:
-                logger.info(f"✅ XML anexado com sucesso no ML para shipment {shipment_id}!")
-                return {"status": "success"}
-            elif resp.status_code == 400 and "nfe_already_generated" in resp.text:
-                logger.warning(f"XML já consta no ML para shipment {shipment_id}.")
-                return {"status": "already_sent"}
-            elif resp.status_code == 409:
-                logger.warning(f"Conflito no ML (XML já existente ou limite atingido): {resp.text}")
-                return {"status": "already_sent"}
-            elif resp.status_code == 403:
-                try:
-                    err_data = resp.json()
-                    msg = err_data.get('message', '') or err_data.get('error', '')
-                    if "biller" in str(msg).lower():
-                        logger.warning(f"Upload bloqueado pelo ML (Faturador Ativo): {msg}")
-                        return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
-                except:
-                    pass
-                logger.error(f"❌ Erro ML 403: {resp.text}")
-                return {"status": "error", "message": f"Acesso negado pelo Mercado Livre (403). Verifique permissões ou configurações de faturamento."}
-            else:
-                logger.error(f"❌ Erro ML {resp.status_code}: {resp.text}")
-                return {"status": "error", "message": f"Erro na API do Mercado Livre ({resp.status_code}): {resp.text}"}
+        logger.info(f"Tentando upload XML Mercado Livre com IDs: shipment_id={shipment_id}, pack_id={pack_id}, order_id={order_id}")
 
-        except httpx.TimeoutException:
-            logger.error(f"Timeout ao comunicar com Mercado Livre para o pedido {order_id_ml}")
-            return {"status": "error", "message": "Tempo de resposta esgotado ao comunicar com o Mercado Livre. Tente novamente."}
-        except httpx.ConnectError:
-            logger.error(f"Erro de conexão com Mercado Livre para o pedido {order_id_ml}")
-            return {"status": "error", "message": "Falha de conexão com o servidor do Mercado Livre. Verifique sua internet."}
-        except json.JSONDecodeError:
-            logger.error(f"Erro ao processar resposta JSON do Mercado Livre para o pedido {order_id_ml}")
-            return {"status": "error", "message": "O Mercado Livre retornou uma resposta inválida."}
-        except Exception as e:
-            logger.exception(f"Erro fatal no upload_xml: {e}")
-            return {"status": "error", "message": f"Erro inesperado na integração ML: {str(e)}"}
+        params = {"siteId": "MLB", "site_id": "MLB"}
+        last_error_msg = None
+
+        def is_already_sent_response(resp_status: int, resp_text: str) -> bool:
+            txt = resp_text.lower()
+            if resp_status in [400, 409] and any(k in txt for k in ["already", "duplicat", "salva", "gerada", "existente"]):
+                return True
+            return False
+
+        # --- ESTRATÉGIA 1: POST /shipments/{shipment_id}/invoice_data com Raw XML (Mercado Envios ME2) ---
+        if shipment_id:
+            try:
+                url_ship = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
+                logger.debug(f"Tentativa 1 (Raw XML): {url_ship}")
+                resp1 = await client.post(url_ship, content=xml_bytes, headers={"Content-Type": "application/xml"}, params=params)
+                
+                if resp1.status_code in [200, 201]:
+                    logger.info(f"✅ XML anexado com sucesso via raw application/xml (shipment {shipment_id})")
+                    return {"status": "success"}
+                elif is_already_sent_response(resp1.status_code, resp1.text):
+                    logger.warning(f"XML já consta no ML para shipment {shipment_id}")
+                    return {"status": "already_sent"}
+                elif resp1.status_code == 403 and "biller" in resp1.text.lower():
+                    return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
+                else:
+                    last_error_msg = f"Shipment Raw XML ({resp1.status_code}): {resp1.text}"
+                    logger.debug(f"Tentativa 1 não concluída: {last_error_msg}")
+            except Exception as e:
+                logger.debug(f"Falha na tentativa 1: {e}")
+
+        # --- ESTRATÉGIA 2: POST /packs/{pack_id}/fiscal_documents ou /orders/{order_id}/fiscal_documents com Multipart (Envio Próprio / Outras Transportadoras / Packs) ---
+        target_docs_url = None
+        if pack_id:
+            target_docs_url = f"{self.base_url}/packs/{pack_id}/fiscal_documents"
+        elif order_id:
+            target_docs_url = f"{self.base_url}/orders/{order_id}/fiscal_documents"
+
+        if target_docs_url:
+            try:
+                logger.debug(f"Tentativa 2 (Multipart Fiscal Docs): {target_docs_url}")
+                files = {
+                    'fiscal_document': ('nfe.xml', xml_bytes, 'application/xml')
+                }
+                resp2 = await client.post(target_docs_url, files=files, params=params)
+                
+                if resp2.status_code in [200, 201]:
+                    logger.info(f"✅ XML anexado com sucesso via multipart/form-data fiscal_documents ({target_docs_url})")
+                    return {"status": "success"}
+                elif is_already_sent_response(resp2.status_code, resp2.text):
+                    logger.warning(f"XML já consta no ML em fiscal_documents")
+                    return {"status": "already_sent"}
+                elif resp2.status_code == 403 and "biller" in resp2.text.lower():
+                    return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
+                else:
+                    last_error_msg = f"Fiscal Documents ({resp2.status_code}): {resp2.text}"
+                    logger.debug(f"Tentativa 2 não concluída: {last_error_msg}")
+            except Exception as e:
+                logger.debug(f"Falha na tentativa 2: {e}")
+
+        # --- ESTRATÉGIA 3: POST /shipments/{shipment_id}/invoice_data com Multipart (Fallback Envio Próprio / ME1) ---
+        if shipment_id:
+            try:
+                url_ship_mp = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
+                logger.debug(f"Tentativa 3 (Shipment Multipart): {url_ship_mp}")
+                files = {
+                    'fiscal_document': ('nfe.xml', xml_bytes, 'application/xml')
+                }
+                resp3 = await client.post(url_ship_mp, files=files, params=params)
+                if resp3.status_code in [200, 201]:
+                    logger.info(f"✅ XML anexado com sucesso via multipart em shipment {shipment_id}")
+                    return {"status": "success"}
+                elif is_already_sent_response(resp3.status_code, resp3.text):
+                    return {"status": "already_sent"}
+                else:
+                    last_error_msg = f"Shipment Multipart ({resp3.status_code}): {resp3.text}"
+            except Exception as e:
+                logger.debug(f"Falha na tentativa 3: {e}")
+
+        # --- ESTRATÉGIA 4: POST /shipments/{shipment_id}/invoice_data ou /orders/{order_id}/invoice_data com JSON Metadata ---
+        target_json_url = None
+        if shipment_id:
+            target_json_url = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
+        elif order_id:
+            target_json_url = f"{self.base_url}/orders/{order_id}/invoice_data"
+
+        if target_json_url and chave_acesso and numero_nf:
+            try:
+                logger.debug(f"Tentativa 4 (JSON Metadata): {target_json_url}")
+                json_payload = {
+                    "fiscal_key": chave_acesso,
+                    "invoice_number": str(numero_nf),
+                    "invoice_series": str(serie),
+                    "issue_date": data_emissao
+                }
+                resp4 = await client.post(target_json_url, json=json_payload, params=params)
+                if resp4.status_code in [200, 201]:
+                    logger.info(f"✅ Dados da NF-e vinculados com sucesso via JSON metadata no ML!")
+                    return {"status": "success"}
+                elif is_already_sent_response(resp4.status_code, resp4.text):
+                    return {"status": "already_sent"}
+                else:
+                    last_error_msg = f"JSON Metadata ({resp4.status_code}): {resp4.text}"
+            except Exception as e:
+                logger.debug(f"Falha na tentativa 4: {e}")
+
+        # Se todas as tentativas falharam
+        logger.error(f"❌ Todas as tentativas de upload de XML para o pedido ML {order_id_ml} falharam. Último detalhe: {last_error_msg}")
+        return {"status": "error", "message": f"Erro na API do Mercado Livre ao anexar XML da NF-e: {last_error_msg or 'Envio recusado pelo Mercado Livre'}"}
 
     async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None):
         """

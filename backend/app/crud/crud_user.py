@@ -15,16 +15,11 @@ def get_user(db: Session, user_id: int) -> Optional[models. Usuario]:
     """Busca um usuário pelo ID."""
     return db.query(models. Usuario).filter(models. Usuario.id == user_id).first()
 
-def create_user(db: Session, *, obj_in:  UsuarioCreate, id_empresa: int) -> models. Usuario:
-    """Cria um novo usuário no banco de dados."""
-    senha = get_password_hash(obj_in.senha)
-    
-    # Cria o dict de dados, excluindo a senha plana
-    db_obj_data = obj_in.model_dump(exclude={"senha"})
-    
-    db_user = models. Usuario(
+def create_user(db: Session, *, obj_in: UsuarioCreate, id_empresa: int) -> models.Usuario:
+    """Cria um novo usuário no banco de dados com senha criptografada via EncryptedString."""
+    db_obj_data = obj_in.model_dump()
+    db_user = models.Usuario(
         **db_obj_data,
-        senha=senha,
         id_empresa=id_empresa
     )
     db.add(db_user)
@@ -32,14 +27,14 @@ def create_user(db: Session, *, obj_in:  UsuarioCreate, id_empresa: int) -> mode
     db.refresh(db_user)
     return db_user
 
-def authenticate_user(db: Session, email: str, senha: str) -> Optional[models. Usuario]:
+def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Usuario]:
     """
     Autentica um usuário. Retorna o usuário se for válido, senão None.
+    Suporta senhas criptografadas por EncryptedString e hashes antigos do Bcrypt.
     """
     print(f"[DEBUG AUTH] Tentando autenticar usuário com email: '{email}'")
     
-    # Adicionamos order_by id_empresa desc para tentar contornar temporariamente casos de empresas antigas
-    user = db.query(models. Usuario).filter(models. Usuario.email == email).order_by(models.Usuario.id.desc()).first()
+    user = db.query(models.Usuario).filter(models.Usuario.email == email).order_by(models.Usuario.id.desc()).first()
     
     if not user:
         print(f"[DEBUG AUTH] Falha: Usuário com email '{email}' não encontrado no banco de dados.")
@@ -47,28 +42,35 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models. U
         
     print(f"[DEBUG AUTH] Usuário encontrado: ID={user.id}, Empresa={user.id_empresa}")
     
-    if not verify_password(senha, user.senha):
+    # Suporte a senhas legadas (Bcrypt $2b$) e novo EncryptedString
+    is_valid = False
+    if user.senha and (user.senha.startswith("$2b$") or user.senha.startswith("$2a$")):
+        is_valid = verify_password(senha, user.senha)
+    else:
+        is_valid = (user.senha == senha)
+
+    if not is_valid:
         print(f"[DEBUG AUTH] Falha: Senha incorreta para o usuário '{email}' (ID={user.id}, Empresa={user.id_empresa}).")
         return None
         
     print(f"[DEBUG AUTH] Sucesso: Usuário '{email}' autenticado corretamente para Empresa={user.id_empresa}.")
     return user
 
-def update_user(db: Session, *, db_obj: models. Usuario, obj_in:  UsuarioUpdate) -> models. Usuario:
+def update_user(db: Session, *, db_obj: models.Usuario, obj_in: UsuarioUpdate) -> models.Usuario:
     """Atualiza um usuário."""
     update_data = obj_in.model_dump(exclude_unset=True)
 
-    # Se uma nova senha foi fornecida, hasheia ela
+    # Se uma nova senha foi fornecida, atualiza no objeto (EncryptedString criptografa no banco)
     if "senha" in update_data and update_data["senha"]:
-        senha = get_password_hash(update_data["senha"])
-        db_obj.senha = senha
-        del update_data["senha"] # Remove para não tentar setar duas vezes
+        db_obj.senha = update_data["senha"]
+        del update_data["senha"]
 
     # Atualiza os outros campos
     for field, value in update_data.items():
         setattr(db_obj, field, value)
 
     db.add(db_obj)
+
     db.commit()
     db.refresh(db_obj)
     return db_obj

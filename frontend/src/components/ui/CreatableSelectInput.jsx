@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { components } from 'react-select';
 import api from '../../api/axiosConfig';
-import { Plus, Trash2, Edit2, Check, X, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { REACT_SELECT_CUSTOM_STYLES } from './InputFields';
 
 // --- Componente Customizado de Opção (Inline Edit) ---
 const CustomOption = (props) => {
@@ -12,7 +13,6 @@ const CustomOption = (props) => {
   const isEditing = editingId === data.id;
   const [editValue, setEditValue] = useState(data.label);
 
-  // Sincroniza o valor quando entra em modo de edição
   useEffect(() => {
     if (isEditing) setEditValue(data.label);
   }, [isEditing, data.label]);
@@ -48,7 +48,7 @@ const CustomOption = (props) => {
 
   return (
     <components.Option {...props}>
-      <div className="flex justify-between items-center h-8 group w-full">
+      <div className="flex justify-between items-center min-h-[24px] group w-full">
         {isEditing && isAdmin ? (
           <div className="flex items-center flex-1 gap-2 w-full" onMouseDown={(e) => e.stopPropagation()}>
             <input
@@ -143,7 +143,7 @@ const CustomMenuList = (props) => {
   );
 };
 
-export const CreatableSelectInput = ({ field, value, onChange, error, modelName, ...props }) => {
+export const CreatableSelectInput = ({ field, value, onChange, error, modelName, disabled, ...props }) => {
   const { user } = useAuth();
   const isAdmin = user?.perfil === 'admin' || user?.perfil === 'Admin';
 
@@ -157,12 +157,11 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
     
     setIsLoading(true);
     try {
-      // Busca da nova rota de opções
       const response = await api.get(`/options/${modelName}/${field.name}`);
       const loadedOptions = response.data.map(item => ({
         label: item.valor,
         value: item.valor,
-        id: item.id // Guardamos o ID para deletar se necessário
+        id: item.id
       }));
       setOptions(loadedOptions);
     } catch (err) {
@@ -176,18 +175,15 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
     fetchOptions();
   }, [modelName, field.name]);
 
-  // --- Ações do CRUD ---
-
   const handleCreate = async (inputValue) => {
     setIsLoading(true);
     try {
-      const res = await api.post('/options', {
+      await api.post('/options', {
         model_name: modelName,
         field_name: field.name,
         valor: inputValue
       });
       await fetchOptions();
-      // Seleciona o valor criado
       onChange({
         target: { name: field.name, value: inputValue }
       });
@@ -203,7 +199,6 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
     try {
       await api.put(`/options/${id}`, { valor: newValue });
       await fetchOptions();
-      // Se o valor editado era o selecionado, atualiza o input
       if (value === options.find(o => o.id === id)?.value) {
          onChange({ target: { name: field.name, value: newValue } });
       }
@@ -219,7 +214,6 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
     try {
       await api.delete(`/options/${id}`);
       await fetchOptions();
-      // Se deletou o selecionado, limpa o campo
       if (value === options.find(o => o.id === id)?.value) {
         onChange({ target: { name: field.name, value: '' } });
       }
@@ -231,7 +225,6 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
   };
 
   const handleChange = (newValue) => {
-    // newValue é { label: 'X', value: 'X' } ou null
     const val = newValue ? newValue.value : '';
     onChange({
       target: {
@@ -241,70 +234,37 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
     });
   };
 
-  // Converte o valor string atual para o formato do react-select
   const selectedOption = value 
     ? { label: value, value: value }
     : null;
 
-  // Determina se o menu deve ser forçado a ficar aberto (durante edição/adição)
   const isInteracting = editingId !== null || isAdding;
 
-  // Estilização customizada para combinar com os outros inputs (Tailwind)
-  const customStyles = {
-    control: (provided, state) => ({
-      ...provided,
-      minHeight: '42px',
-      borderRadius: '0.375rem', // rounded-md
-      borderColor: error ? '#ef4444' : (state.isFocused ? '#3b82f6' : '#d1d5db'), // red-500 : blue-500 : gray-300
-      boxShadow: state.isFocused ? '0 0 0 1px #3b82f6' : '0 1px 2px 0 rgb(0 0 0 / 0.05)', // ring-1 blue-500 : shadow-sm
-      '&:hover': {
-        borderColor: state.isFocused ? '#3b82f6' : '#9ca3af' // blue-500 : gray-400
-      },
-      backgroundColor: 'white',
-    }),
-    menu: (provided) => ({
-      ...provided,
-      zIndex: 50,
-      borderRadius: '0.375rem',
-      boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)', // shadow-xl
-    }),
-    option: (provided, state) => ({
-      ...provided,
-      backgroundColor: state.isSelected ? '#dde2eb' : (state.isFocused ? '#f3f4f6' : 'white'), // blue-100 : gray-100
-      color: '#1f2937', // gray-800
-      cursor: 'pointer',
-      ':active': {
-        backgroundColor: '#bfdbfe', // blue-200
-      },
-    }),
-    menuPortal: (base) => ({ ...base, zIndex: 9999 })
-  };
-
   return (
-    <div className="mb-4">
-      <label className="block text-gray-700 text-sm font-medium mb-2">
-        {field.label}
-        {field.required && <span className="text-red-500 ml-1">*</span>}
-      </label>
+    <div className="flex flex-col">
+      {field?.label && (
+        <label className="mb-1.5 text-sm font-medium text-gray-700 block">
+          {field.label}
+          {field.required && <span className="text-red-500 ml-1">*</span>}
+        </label>
+      )}
       
       <Select
-        isClearable
-        isDisabled={isLoading}
+        isClearable={true}
+        isDisabled={isLoading || disabled}
         isLoading={isLoading}
         menuIsOpen={isInteracting ? true : undefined}
         onChange={handleChange}
         options={options}
         value={selectedOption}
-        placeholder={field.placeholder || (isAdmin ? "Selecione ou digite para criar..." : "Selecione...")}
+        placeholder={field?.placeholder || (isAdmin ? "Selecione ou digite para criar..." : "Selecione...")}
         classNamePrefix="react-select"
         menuPortalTarget={document.body}
-        styles={customStyles}
-        // Injeta os componentes customizados
+        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
         components={{
           Option: CustomOption,
           MenuList: CustomMenuList
         }}
-        // Passa as funções para os componentes internos
         customProps={{
           onCreate: handleCreate,
           onUpdate: handleUpdate,
@@ -319,7 +279,9 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
         noOptionsMessage={() => isAdmin ? "Digite para buscar ou criar..." : "Nenhum resultado encontrado"}
       />
       
-      {error && <p className="text-red-500 text-xs italic mt-1">{error}</p>}
+      {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
     </div>
   );
 };
+
+export default CreatableSelectInput;

@@ -394,6 +394,10 @@ const GenericList = () => {
   const [pendingAuthUrl, setPendingAuthUrl] = useState('');
   const [ordersToImport, setOrdersToImport] = useState([]);
 
+  // --- ESTADOS PARA MODAL DANFE (COMPLETA / SIMPLIFICADA) ---
+  const [isDanfeModalOpen, setIsDanfeModalOpen] = useState(false);
+  const [danfeModalIds, setDanfeModalIds] = useState([]);
+
   // --- ESTADOS PARA CANCELAMENTO NFE ---
   const [isCancelNFeModalOpen, setIsCancelNFeModalOpen] = useState(false);
   const [cancelJustification, setCancelJustification] = useState('');
@@ -1545,6 +1549,34 @@ const GenericList = () => {
         toast.error("Erro ao sincronizar conexão com Tiktok Shop.");
       }
       setIsFetchingData(false);
+    }
+  };
+
+  // --- HANDLER DOWNLOAD DANFE (COMPLETA / SIMPLIFICADA) ---
+  const handleConfirmDownloadDanfe = async (tipo) => {
+    setIsDanfeModalOpen(false);
+    if (!danfeModalIds || danfeModalIds.length === 0) return;
+    try {
+      setIsFetchingData(true);
+      let response;
+      if (danfeModalIds.length > 1) {
+        response = await api.post(`/nfe/danfe-lote`, { pedido_ids: danfeModalIds, tipo }, {
+          responseType: 'blob'
+        });
+      } else {
+        response = await api.get(`/nfe/danfe/${danfeModalIds[0]}?tipo=${tipo}`, {
+          responseType: 'blob'
+        });
+      }
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+      toast.success("DANFE gerada com sucesso!");
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Erro ao gerar DANFE.";
+      toast.error(msg);
+    } finally {
+      setIsFetchingData(false);
+      setDanfeModalIds([]);
     }
   };
 
@@ -3255,28 +3287,11 @@ const GenericList = () => {
                     }
                   };
                 } else if (action.onClickHandler === 'download_danfe') {
-                  onClickAction = async () => {
-                    try {
-                      setIsFetchingData(true);
-                      let response;
-                      if (selectedRowIds.length > 1) {
-                        response = await api.post(`/nfe/danfe-lote`, { pedido_ids: selectedRowIds }, {
-                          responseType: 'blob'
-                        });
-                      } else {
-                        response = await api.get(`/nfe/danfe/${selectedRowId}`, {
-                          responseType: 'blob'
-                        });
-                      }
-                      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-                      window.open(url, '_blank');
-                      toast.success("DANFE gerada com sucesso!");
-                    } catch (err) {
-                      const msg = err.response?.data?.detail || "Erro ao gerar DANFE.";
-                      toast.error(msg);
-                    } finally {
-                      setIsFetchingData(false);
-                    }
+                  onClickAction = () => {
+                    const idsToUse = selectedRowIds.length > 0 ? selectedRowIds : (selectedRowId ? [selectedRowId] : []);
+                    if (idsToUse.length === 0) return;
+                    setDanfeModalIds(idsToUse);
+                    setIsDanfeModalOpen(true);
                   };
                 } else if (action.onClickHandler === 'imprimir_etiqueta') {
                   onClickAction = async () => {
@@ -4091,6 +4106,70 @@ const GenericList = () => {
         </Modal>
 
 
+
+        {/* MODAL SELEÇÃO DE DANFE (COMPLETA OU SIMPLIFICADA) */}
+        <Transition.Root show={isDanfeModalOpen} as={React.Fragment}>
+          <Dialog as="div" className="relative z-50" onClose={() => setIsDanfeModalOpen(false)}>
+            <Transition.Child as={React.Fragment} enter="ease-out duration-300" enterFrom="opacity-0" enterTo="opacity-100" leave="ease-in duration-200" leaveFrom="opacity-100" leaveTo="opacity-0">
+              <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+            </Transition.Child>
+            <div className="fixed inset-0 z-10 overflow-y-auto">
+              <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+                <Transition.Child as={React.Fragment} enter="ease-out duration-300" enterFrom="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" enterTo="opacity-100 translate-y-0 sm:scale-100" leave="ease-in duration-200" leaveFrom="opacity-100 translate-y-0 sm:scale-100" leaveTo="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95">
+                  <Dialog.Panel className="relative transform overflow-hidden rounded-xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-md">
+                    <div className="bg-white px-4 pt-5 pb-4 sm:p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <Dialog.Title as="h3" className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                          <FileDown className="text-blue-600" size={20} />
+                          Selecione o Formato da DANFE
+                        </Dialog.Title>
+                        <button onClick={() => setIsDanfeModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                          <X size={20} />
+                        </button>
+                      </div>
+                      <p className="text-sm text-gray-600 mb-6">
+                        Escolha o modelo de DANFE que deseja visualizar ou baixar:
+                      </p>
+                      <div className="space-y-3">
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmDownloadDanfe('completa')}
+                          className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50/50 transition-all text-left group"
+                        >
+                          <div>
+                            <div className="font-semibold text-gray-800 text-sm group-hover:text-blue-600">DANFE Completa</div>
+                            <div className="text-xs text-gray-500 mt-0.5">Formato A4 padrão com todos os itens e campos detalhados</div>
+                          </div>
+                          <FileText size={20} className="text-gray-400 group-hover:text-blue-600 shrink-0 ml-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmDownloadDanfe('simplificada')}
+                          className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50/50 transition-all text-left group"
+                        >
+                          <div>
+                            <div className="font-semibold text-gray-800 text-sm group-hover:text-emerald-600">DANFE Simplificada</div>
+                            <div className="text-xs text-gray-500 mt-0.5">Etiqueta 10x15cm com chave, código de barras e identificação</div>
+                          </div>
+                          <Tag size={20} className="text-gray-400 group-hover:text-emerald-600 shrink-0 ml-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 px-4 py-3 sm:px-6 flex justify-end">
+                      <button
+                        type="button"
+                        className="inline-flex justify-center rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+                        onClick={() => setIsDanfeModalOpen(false)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </Dialog.Panel>
+                </Transition.Child>
+              </div>
+            </div>
+          </Dialog>
+        </Transition.Root>
 
         {/* MODAL DE FILTROS MAGENTO */}
         <Transition.Root show={isFilterModalOpen} as={React.Fragment}>

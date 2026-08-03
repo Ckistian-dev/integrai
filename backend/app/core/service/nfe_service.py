@@ -1328,6 +1328,270 @@ class NFeService:
             traceback.print_exc()
             return None
 
+    def _gerar_danfe_simplificada(self, xml_nfe, nProt: str, dhRecbto: str, chNFe: str, c=None, is_cancelada: bool = False) -> str:
+        """
+        Gera DANFE Simplificada para etiqueta 10x15cm (100mm x 150mm) conforme modelo oficial.
+        """
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.units import mm
+            from reportlab.graphics.barcode import code128
+            from reportlab.lib.utils import simpleSplit
+
+            FONT_REGULAR = "Helvetica"
+            FONT_BOLD = "Helvetica-Bold"
+
+            if isinstance(xml_nfe, (str, bytes)):
+                xml_nfe = etree.fromstring(xml_nfe)
+
+            ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+
+            def get_val(node, xpath):
+                try:
+                    r = node.xpath(xpath, namespaces=ns)
+                    if r:
+                        return r[0].text.upper() if r[0].text else ""
+                    return ""
+                except:
+                    return ""
+
+            def format_date(date_str):
+                try:
+                    if 'T' in str(date_str):
+                        date_obj = datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d')
+                        return date_obj.strftime('%d/%m/%Y')
+                    return datetime.strptime(str(date_str), '%Y-%m-%d').strftime('%d/%m/%Y')
+                except:
+                    return ""
+
+            def format_doc(value):
+                v = str(value or "")
+                if len(v) == 14: return f"{v[:2]}.{v[2:5]}.{v[5:8]}/{v[8:12]}-{v[12:]}"
+                if len(v) == 11: return f"{v[:3]}.{v[3:6]}.{v[6:9]}-{v[9:]}"
+                return v
+
+            def format_protocolo(n_prot, dh_recbto):
+                try:
+                    if dh_recbto and 'T' in str(dh_recbto):
+                        val_str = str(dh_recbto)
+                        partes = val_str.split('T')
+                        data_iso = partes[0]
+                        hora_suja = partes[1]
+                        ano, mes, dia = data_iso.split('-')
+                        hora = hora_suja.split('-')[0].split('+')[0]
+                        return f"{n_prot} {dia}/{mes}/{ano} {hora}"
+                    return f"{n_prot} {dh_recbto}"
+                except:
+                    return f"{n_prot} {dh_recbto}"
+
+            page_w, page_h = 100 * mm, 150 * mm
+
+            save_pdf = False
+            if c is None:
+                buffer = io.BytesIO()
+                c = canvas.Canvas(buffer, pagesize=(page_w, page_h))
+                c.setTitle(f"DANFE_SIMPLIFICADA_{chNFe}.pdf")
+                save_pdf = True
+            else:
+                c.setPageSize((page_w, page_h))
+
+            # XML Nodes
+            emit = xml_nfe.xpath('//ns:emit', namespaces=ns)[0]
+            dest_nodes = xml_nfe.xpath('//ns:dest', namespaces=ns)
+            dest = dest_nodes[0] if dest_nodes else None
+            ide = xml_nfe.xpath('//ns:ide', namespaces=ns)[0]
+            inf_cpl = get_val(xml_nfe, '//ns:infAdic/ns:infCpl')
+
+            # Border setup
+            margin_left = 3 * mm
+            margin_bottom = 3 * mm
+            w = page_w - 6 * mm
+            h = page_h - 6 * mm
+
+            c.setLineWidth(0.6)
+            # Outer border box
+            c.rect(margin_left, margin_bottom, w, h)
+
+            # -------------------------------------------------------------
+            # SECTION 1: TOP HEADER
+            # -------------------------------------------------------------
+            # Left Box (Bordered)
+            box_x = margin_left + 1.5 * mm
+            box_y = 126 * mm
+            box_w = 34 * mm
+            box_h = 19.5 * mm
+            c.rect(box_x, box_y, box_w, box_h)
+
+            tp_nf = get_val(ide, 'ns:tpNF')
+            tp_str = "0 - Entrada" if tp_nf == "0" else "1 - Saida"
+            n_nf = get_val(ide, 'ns:nNF')
+            serie = get_val(ide, 'ns:serie')
+            try:
+                n_nf_fmt = f"{int(n_nf):,}".replace(",", ".")
+            except:
+                n_nf_fmt = n_nf
+            num_serie_str = f"Número {n_nf_fmt}/Serie {serie}"
+            dt_emi = format_date(get_val(ide, 'ns:dhEmi'))
+
+            c.setFont(FONT_REGULAR, 7)
+            c.drawString(box_x + 1.5 * mm, box_y + 14 * mm, tp_str)
+            c.setFont(FONT_BOLD, 7)
+            c.drawString(box_x + 1.5 * mm, box_y + 9 * mm, num_serie_str)
+            c.setFont(FONT_REGULAR, 7)
+            c.drawString(box_x + 1.5 * mm, box_y + 4 * mm, f"Emissão {dt_emi}")
+
+            # Right Box Text (Centered in right section)
+            right_x = box_x + box_w + 1 * mm
+            right_w = margin_left + w - right_x - 1 * mm
+            center_right_x = right_x + right_w / 2
+
+            c.setFont(FONT_BOLD, 11)
+            c.drawCentredString(center_right_x, 141 * mm, "Chave de acesso")
+
+            key_font_size = 6.5
+            c.setFont(FONT_REGULAR, key_font_size)
+            c.drawCentredString(center_right_x, 136.5 * mm, chNFe)
+
+            c.setFont(FONT_BOLD, 9.5)
+            c.drawCentredString(center_right_x, 131 * mm, "Protocolo de Autorização de uso")
+
+            prot_str = format_protocolo(nProt, dhRecbto)
+            c.setFont(FONT_REGULAR, 8)
+            c.drawCentredString(center_right_x, 126.5 * mm, prot_str)
+
+            # -------------------------------------------------------------
+            # DIVIDER LINE 1: Y = 125 * mm
+            # -------------------------------------------------------------
+            c.line(margin_left, 125 * mm, margin_left + w, 125 * mm)
+
+            # -------------------------------------------------------------
+            # SECTION 2: BARCODE
+            # -------------------------------------------------------------
+            if chNFe:
+                try:
+                    barcode = code128.Code128(chNFe, barHeight=17 * mm, barWidth=0.21 * mm)
+                    bc_x = margin_left + (w - barcode.width) / 2
+                    barcode.drawOn(c, bc_x, 104 * mm)
+                except Exception as b_err:
+                    print(f"Erro ao gerar código de barras no DANFE Simplificado: {b_err}")
+
+            c.setFont(FONT_REGULAR, 7.5)
+            c.drawCentredString(margin_left + w / 2, 99 * mm, chNFe)
+
+            # -------------------------------------------------------------
+            # DIVIDER LINE 2: Y = 97 * mm
+            # -------------------------------------------------------------
+            c.line(margin_left, 97 * mm, margin_left + w, 97 * mm)
+
+            # -------------------------------------------------------------
+            # SECTION 3: REMETENTE & DESTINATÁRIO & DANFE SIMPLIFICADO
+            # -------------------------------------------------------------
+            pad_x = margin_left + 2 * mm
+            end_x = margin_left + w - 2 * mm
+
+            emit_nome = get_val(emit, 'ns:xNome')
+            emit_cnpj = format_doc(get_val(emit, 'ns:CNPJ'))
+            emit_ie = get_val(emit, 'ns:IE')
+            emit_uf = get_val(emit, 'ns:enderEmit/ns:UF')
+
+            # Line 1: Remetente
+            c.setFont(FONT_BOLD, 8)
+            c.drawString(pad_x, 91.5 * mm, "Remetente: ")
+            rem_title_w = c.stringWidth("Remetente: ", FONT_BOLD, 8)
+            c.setFont(FONT_REGULAR, 8)
+            c.drawString(pad_x + rem_title_w, 91.5 * mm, emit_nome[:45])
+
+            # Line 2: CNPJ | IE | UF
+            c.setFont(FONT_BOLD, 7)
+            c.drawString(pad_x, 85.5 * mm, "CNPJ: ")
+            cnpj_lbl_w = c.stringWidth("CNPJ: ", FONT_BOLD, 7)
+            c.setFont(FONT_REGULAR, 7)
+            c.drawString(pad_x + cnpj_lbl_w, 85.5 * mm, emit_cnpj)
+
+            x_ie = pad_x + cnpj_lbl_w + c.stringWidth(emit_cnpj, FONT_REGULAR, 7) + 4 * mm
+            c.setFont(FONT_BOLD, 7)
+            c.drawString(x_ie, 85.5 * mm, "INSCRIÇÃO ESTADUAL: ")
+            ie_lbl_w = c.stringWidth("INSCRIÇÃO ESTADUAL: ", FONT_BOLD, 7)
+            c.setFont(FONT_REGULAR, 7)
+            c.drawString(x_ie + ie_lbl_w, 85.5 * mm, emit_ie)
+
+            uf_rem_str = f"UF: {emit_uf}"
+            c.setFont(FONT_BOLD, 7)
+            c.drawString(end_x - c.stringWidth(uf_rem_str, FONT_BOLD, 7), 85.5 * mm, uf_rem_str)
+
+            # Line 3: Destinatário | UF
+            dest_nome = get_val(dest, 'ns:xNome') if dest else ""
+            dest_uf = get_val(dest, 'ns:enderDest/ns:UF') if dest else ""
+
+            c.setFont(FONT_BOLD, 8)
+            c.drawString(pad_x, 77.5 * mm, "DESTINATARIO: ")
+            dest_lbl_w = c.stringWidth("DESTINATARIO: ", FONT_BOLD, 8)
+            c.setFont(FONT_REGULAR, 8)
+            c.drawString(pad_x + dest_lbl_w, 77.5 * mm, dest_nome[:42])
+
+            uf_dest_str = f"UF: {dest_uf}"
+            c.setFont(FONT_BOLD, 8)
+            c.drawString(end_x - c.stringWidth(uf_dest_str, FONT_BOLD, 8), 77.5 * mm, uf_dest_str)
+
+            # Line 4: DANFE SIMPLIFICADO
+            c.setFont(FONT_BOLD, 9)
+            c.drawString(pad_x, 68.5 * mm, "DANFE SIMPLIFICADO")
+
+            # -------------------------------------------------------------
+            # DIVIDER LINE 3: Y = 64 * mm
+            # -------------------------------------------------------------
+            c.line(margin_left, 64 * mm, margin_left + w, 64 * mm)
+
+            # -------------------------------------------------------------
+            # SECTION 4: MIDDLE SECTION (Blank Box)
+            # -------------------------------------------------------------
+
+            # -------------------------------------------------------------
+            # DIVIDER LINE 4: Y = 30 * mm
+            # -------------------------------------------------------------
+            c.line(margin_left, 30 * mm, margin_left + w, 30 * mm)
+
+            # -------------------------------------------------------------
+            # SECTION 5: DADOS ADICIONAIS
+            # -------------------------------------------------------------
+            c.setFont(FONT_BOLD, 8)
+            c.drawString(pad_x, 25.5 * mm, "DADOS ADICIONAIS")
+
+            if inf_cpl:
+                c.setFont(FONT_REGULAR, 6)
+                inf_cpl_clean = str(inf_cpl).replace('\n', ' ').replace('\r', ' ').strip()
+                lines = simpleSplit(inf_cpl_clean, FONT_REGULAR, 6, w - 4 * mm)
+                y_txt = 21 * mm
+                for ln in lines:
+                    if y_txt < (margin_bottom + 2 * mm):
+                        break
+                    c.drawString(pad_x, y_txt, ln)
+                    y_txt -= 2.6 * mm
+
+            # Watermark if canceled
+            if is_cancelada:
+                c.saveState()
+                from reportlab.lib.colors import Color
+                c.setFillColor(Color(1, 0, 0, alpha=0.4))
+                c.setFont(FONT_BOLD, 40)
+                c.translate(page_w / 2, page_h / 2)
+                c.rotate(45)
+                c.drawCentredString(0, 0, "CANCELADO")
+                c.restoreState()
+
+            c.showPage()
+
+            if save_pdf:
+                c.save()
+                return base64.b64encode(buffer.getvalue()).decode('utf-8')
+            return None
+
+        except Exception as e:
+            print(f"Erro PDF Simplificado: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def _gerar_pdf_cce(self, chave_acesso: str, cnpj_cpf: str, protocolo: str, data_evento: str, uf: str, texto_correcao: str) -> str:
         """
         Gera o PDF da Carta de Correção (CC-e) no layout padronizado.
@@ -3007,26 +3271,51 @@ class NFeService:
             
             if fin_nfe not in [3, 4]:
                 # Venda Normal
-                # Ajuste: Usa o totalizador da nota (vNF) calculado pela lib para bater centavos (inclui IPI, ST, Frete etc)
-                valor_pagamento = nota_fiscal.totais_icms_total_nota
+                lista_pags = pedido.pagamentos if isinstance(pedido.pagamentos, list) else []
+                pags_validos = [p for p in lista_pags if isinstance(p, dict) and (safe_decimal(p.get('valor')) > 0)]
 
-                # ==============================================================================
-                # CORREÇÃO ERRO 904: Se tPag=90 (Sem Pagamento), vPag DEVE ser 0.00
-                # Nota: A pynfe tem um bug onde write_float(required=True) rejeita o valor 0.
-                # Usamos 0.00000001 que será formatado como "0.00" no XML final.
-                # ==============================================================================
-                if t_pag == '90' or not valor_pagamento:
-                    valor_pagamento = Decimal('0.00000001')
+                if len(pags_validos) > 0:
+                    for item_p in pags_validos:
+                        t_p = '99'
+                        pag_val_raw = item_p.get('pagamento')
+                        if pag_val_raw:
+                            if hasattr(pag_val_raw, 'value'):
+                                t_p = pag_val_raw.value
+                            elif isinstance(pag_val_raw, str):
+                                if pag_val_raw.isdigit():
+                                    t_p = pag_val_raw
+                                else:
+                                    try:
+                                        t_p = FiscalPagamentoEnum(pag_val_raw).value
+                                    except Exception:
+                                        t_p = '99'
 
-                # Pega a descrição (se for 99 Outros)
-                desc_pagamento = pedido.pagamento_descricao or "Outros" if t_pag == '99' else ""
+                        v_p = safe_decimal(item_p.get('valor'))
+                        ind_p = 1 if t_p in ['03', '05', '14', '15'] else 0
+                        desc_p = (item_p.get('pagamento_descricao') or "Outros") if t_p == '99' else ""
 
-                nota_fiscal.adicionar_pagamento(
-                    t_pag=t_pag,
-                    v_pag=valor_pagamento,
-                    ind_pag=ind_pag,
-                    x_pag=desc_pagamento[:60].strip() if t_pag == '99' else ""
-                )
+                        nota_fiscal.adicionar_pagamento(
+                            t_pag=t_p,
+                            v_pag=v_p,
+                            ind_pag=ind_p,
+                            x_pag=desc_p[:60].strip() if t_p == '99' else ""
+                        )
+                else:
+                    # Ajuste: Usa o totalizador da nota (vNF) calculado pela lib para bater centavos (inclui IPI, ST, Frete etc)
+                    valor_pagamento = nota_fiscal.totais_icms_total_nota
+
+                    if t_pag == '90' or not valor_pagamento:
+                        valor_pagamento = Decimal('0.00000001')
+
+                    # Pega a descrição (se for 99 Outros)
+                    desc_pagamento = pedido.pagamento_descricao or "Outros" if t_pag == '99' else ""
+
+                    nota_fiscal.adicionar_pagamento(
+                        t_pag=t_pag,
+                        v_pag=valor_pagamento,
+                        ind_pag=ind_pag,
+                        x_pag=desc_pagamento[:60].strip() if t_pag == '99' else ""
+                    )
             else:
                 # Devolução (Fin=4): A lib gera o XML <pag> sozinha e corretamente.
                 # Apenas para garantir que o objeto Python tenha o dado em memória (opcional),
@@ -4067,7 +4356,7 @@ class NFeService:
         email_res = None
 
         # 1. Integração Mercado Livre
-        if pedido.origem_venda == "Mercado Livre":
+        if pedido.origem_venda == "Mercado Livre" or "Pedido ML:" in (pedido.observacao or "") or "ID:" in (pedido.observacao or ""):
             if settings.ENVIRONMENT != "production":
                 meli_res = {"success": True, "message": "Simulado: XML enviado para o Mercado Livre (Ambiente de Testes)"}
                 pedido.meli_xml_enviado = True
@@ -4198,9 +4487,9 @@ class NFeService:
 
         return meli_res, intelipost_res, email_res
 
-    def gerar_danfe_manual(self, pedido_id: int) -> bytes:
+    def gerar_danfe_manual(self, pedido_id: int, tipo: str = "completa") -> bytes:
         """
-        Gera o PDF da DANFE a partir do XML já autorizado do pedido.
+        Gera o PDF da DANFE (completa ou simplificada) a partir do XML já autorizado do pedido.
         Salva no pedido e retorna os bytes do PDF.
         """
         pedido = self.db.query(models.Pedido).filter(
@@ -4229,7 +4518,10 @@ class NFeService:
             if pedido.situacao == PedidoSituacaoEnum.cancelado or (pedido.status_sefaz and "CANCELADA" in pedido.status_sefaz.upper()):
                 is_cancelada = True
 
-            pdf_b64 = self._gerar_danfe(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, is_cancelada=is_cancelada)
+            if tipo == "simplificada":
+                pdf_b64 = self._gerar_danfe_simplificada(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, is_cancelada=is_cancelada)
+            else:
+                pdf_b64 = self._gerar_danfe(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, is_cancelada=is_cancelada)
             
             if not pdf_b64:
                 raise HTTPException(status_code=500, detail="Falha na geração do PDF (retorno vazio).")
@@ -4244,15 +4536,19 @@ class NFeService:
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Erro ao gerar DANFE: {str(e)}")
 
-    def gerar_danfe_lote(self, pedido_ids: list[int]) -> bytes:
+    def gerar_danfe_lote(self, pedido_ids: list[int], tipo: str = "completa") -> bytes:
         """
         Gera um único PDF contendo as DANFEs de todos os pedidos selecionados.
         """
         from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
         
         buffer = io.BytesIO()
-        c = canvas.Canvas(buffer, pagesize=A4)
+        if tipo == "simplificada":
+            c = canvas.Canvas(buffer, pagesize=(100 * mm, 150 * mm))
+        else:
+            c = canvas.Canvas(buffer, pagesize=A4)
         
         for pid in pedido_ids:
             pedido = self.db.query(models.Pedido).filter(
@@ -4272,7 +4568,10 @@ class NFeService:
                 if pedido.situacao == PedidoSituacaoEnum.cancelado or (pedido.status_sefaz and "CANCELADA" in pedido.status_sefaz.upper()):
                     is_cancelada = True
                 
-                self._gerar_danfe(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, c=c, is_cancelada=is_cancelada)
+                if tipo == "simplificada":
+                    self._gerar_danfe_simplificada(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, c=c, is_cancelada=is_cancelada)
+                else:
+                    self._gerar_danfe(root, pedido.protocolo_autorizacao, dhRecbto, pedido.chave_acesso, c=c, is_cancelada=is_cancelada)
         
         c.save()
         return buffer.getvalue()

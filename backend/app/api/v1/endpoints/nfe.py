@@ -85,11 +85,12 @@ def corrigir_nfe(
 @router.get("/nfe/danfe/{pedido_id}")
 def gerar_danfe(
     pedido_id: int,
+    tipo: str = "completa",
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     service = NFeService(db, current_user.id_empresa)
-    pdf_bytes = service.gerar_danfe_manual(pedido_id)
+    pdf_bytes = service.gerar_danfe_manual(pedido_id, tipo=tipo)
     
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -104,8 +105,9 @@ def gerar_danfe_lote(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     pedido_ids = payload.get("pedido_ids", [])
+    tipo = payload.get("tipo", "completa")
     service = NFeService(db, current_user.id_empresa)
-    pdf_bytes = service.gerar_danfe_lote(pedido_ids)
+    pdf_bytes = service.gerar_danfe_lote(pedido_ids, tipo=tipo)
     
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

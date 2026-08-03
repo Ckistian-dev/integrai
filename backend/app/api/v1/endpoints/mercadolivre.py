@@ -184,3 +184,53 @@ async def exchange_code(
     except Exception as e:
         logger.exception(f"Erro na autenticação ML para empresa {current_user.id_empresa}")
         raise e
+
+@router.post("/mercadolivre/pedidos/{pedido_id}/enviar-xml")
+async def reenviar_xml_ml(
+    pedido_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Envia ou re-envia o XML da NFe autorizada de um pedido para o Mercado Livre.
+    Funciona para qualquer modalidade de frete (Mercado Envios e outras transportadoras).
+    """
+    import re
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id == pedido_id,
+        models.Pedido.id_empresa == current_user.id_empresa
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    if not pedido.xml_autorizado:
+        raise HTTPException(status_code=400, detail="Este pedido não possui XML da NFe autorizado no ERP.")
+
+    obs = pedido.observacao or ""
+    match_pack = re.search(r"Pedido ML:\s*(\d+)", obs)
+    if match_pack:
+        order_id_ml = match_pack.group(1)
+    else:
+        match_id = re.search(r"ID:\s*(\d+)", obs)
+        order_id_ml = match_id.group(1) if match_id else None
+
+    if not order_id_ml:
+        raise HTTPException(status_code=400, detail="Não foi localizado um ID do Mercado Livre na observação do pedido.")
+
+    service = MeliService(db, current_user.id_empresa)
+    res = await service.upload_xml(
+        order_id_ml=order_id_ml,
+        xml_content=pedido.xml_autorizado,
+        chave_acesso=pedido.chave_acesso,
+        numero_nf=pedido.numero_nf
+    )
+
+    if res and isinstance(res, dict) and res.get('status') in ['success', 'already_sent', 'warning']:
+        pedido.meli_xml_enviado = True
+        db.commit()
+        msg = "XML já constava no Mercado Livre!" if res.get('status') == 'already_sent' else "XML enviado com sucesso ao Mercado Livre!"
+        return {"success": True, "message": res.get("message") or msg, "details": res}
+    else:
+        err_msg = res.get('message') if isinstance(res, dict) and res.get('message') else "Erro ao enviar XML ao Mercado Livre."
+        return {"success": False, "message": err_msg, "details": res}

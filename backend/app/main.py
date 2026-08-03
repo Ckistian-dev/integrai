@@ -35,10 +35,12 @@ app.include_router(v1_router, prefix="/api/v1")
 app.include_router(nfe.router, prefix="/api/v1", tags=["NFe"])
 app.include_router(dfe.router, prefix="/api/v1/dfe", tags=["DF-e"])
 
+from app.core.db.sync import sync_database_schema
+
 @app.on_event("startup")
 def on_startup():
-    """Cria as tabelas do banco de dados na inicialização."""
-    Base.metadata.create_all(bind=engine)
+    """Cria e sincroniza colunas do banco de dados na inicialização."""
+    sync_database_schema(engine, Base)
     start_backup_scheduler()
 
 

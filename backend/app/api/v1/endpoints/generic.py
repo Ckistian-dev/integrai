@@ -2187,7 +2187,6 @@ def generate_custom_report_pdf(
         canvas.saveState()
         canvas.setFont('Helvetica', 7)
         footer_text = f"Página {canvas.getPageNumber()}"
-        # Centraliza exatamente no meio da folha gerada (seja ela retrato ou paisagem)
         canvas.drawCentredString(tamanho_pagina[0]/2, 5*mm, footer_text)
         canvas.restoreState()
 
@@ -2201,6 +2200,145 @@ def generate_custom_report_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_user: models.Usuario, obs_origem: str = ""):
+    try:
+        desc_conta = f"Pedido de Venda #{item.id}"
+        existing_conta = db.query(models.Conta).filter(
+            models.Conta.id_empresa == current_user.id_empresa,
+            models.Conta.descricao.contains(desc_conta),
+            models.Conta.tipo_conta == models.ContaTipoEnum.a_receber
+        ).first()
+
+        if existing_conta:
+            return
+
+        # Sincroniza campos legados com o primeiro item de pagamentos se houver
+        lista_pagamentos = item.pagamentos if isinstance(item.pagamentos, list) else []
+        if lista_pagamentos and len(lista_pagamentos) > 0:
+            first_pag = lista_pagamentos[0]
+            if isinstance(first_pag, dict):
+                if first_pag.get('pagamento'):
+                    try:
+                        pag_val = first_pag.get('pagamento')
+                        item.pagamento = models.FiscalPagamentoEnum(pag_val) if isinstance(pag_val, str) else pag_val
+                    except Exception:
+                        pass
+                if first_pag.get('caixa_destino_origem'):
+                    item.caixa_destino_origem = first_pag.get('caixa_destino_origem')
+                if first_pag.get('pagamento_descricao'):
+                    item.pagamento_descricao = first_pag.get('pagamento_descricao')
+
+        valor_final = item.total_desconto if (item.total_desconto and item.total_desconto > 0) else item.total
+        if not valor_final or valor_final <= 0:
+            return
+
+        # 1. Fallback Cliente Seguro
+        cliente_nome = item.cliente.nome_razao if item.cliente else "Consumidor Final"
+        cliente_id = item.id_cliente
+        if not cliente_id:
+            fallback_cli = db.query(models.Cadastro).filter(models.Cadastro.id_empresa == current_user.id_empresa).first()
+            if fallback_cli:
+                cliente_id = fallback_cli.id
+            else:
+                novo_cli = models.Cadastro(
+                    id_empresa=current_user.id_empresa,
+                    cpf_cnpj="00000000000",
+                    nome_razao="CONSUMIDOR FINAL",
+                    tipo_cadastro=models.CadastroTipoCadastroEnum.cliente,
+                    cep="00000000"
+                )
+                db.add(novo_cli)
+                db.flush()
+                cliente_id = novo_cli.id
+
+        # 2. Resgata e Garante o Plano de Contas
+        empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
+        classificacao_id = empresa_obj.id_classificacao_contabil_padrao if empresa_obj else None
+        if not classificacao_id:
+            fallback_class = db.query(models.ClassificacaoContabil).filter(
+                models.ClassificacaoContabil.id_empresa == current_user.id_empresa,
+                models.ClassificacaoContabil.tipo.ilike('%receita%')
+            ).first() or db.query(models.ClassificacaoContabil).filter(
+                models.ClassificacaoContabil.id_empresa == current_user.id_empresa
+            ).first()
+            if fallback_class:
+                classificacao_id = fallback_class.id
+            else:
+                nova_class = models.ClassificacaoContabil(
+                    id_empresa=current_user.id_empresa,
+                    grupo="Receitas",
+                    descricao="Vendas de Mercadorias",
+                    tipo="Receita",
+                    considerar=True
+                )
+                db.add(nova_class)
+                db.flush()
+                classificacao_id = nova_class.id
+
+        pagamentos_validos = [p for p in lista_pagamentos if isinstance(p, dict) and (float(p.get('valor', 0) or 0) > 0)]
+
+        if len(pagamentos_validos) > 0:
+            for idx, pag_item in enumerate(pagamentos_validos, 1):
+                val_p = Decimal(str(pag_item.get('valor', 0)))
+                pag_enum = None
+                if pag_item.get('pagamento'):
+                    try:
+                        pag_enum = models.FiscalPagamentoEnum(pag_item.get('pagamento'))
+                    except Exception:
+                        pass
+                caixa_p = pag_item.get('caixa_destino_origem') or item.caixa_destino_origem
+                
+                label_forma = ""
+                if pag_enum and hasattr(pag_enum, 'description'):
+                    label_forma = pag_enum.description
+                elif pag_item.get('pagamento'):
+                    label_forma = str(pag_item.get('pagamento'))
+
+                sub_desc = f"{desc_conta} - {cliente_nome}"
+                if label_forma:
+                    sub_desc += f" ({label_forma})"
+                if caixa_p:
+                    sub_desc += f" [{caixa_p}]"
+
+                nova_conta = models.Conta(
+                    id_empresa=current_user.id_empresa,
+                    tipo_conta=models.ContaTipoEnum.a_receber,
+                    situacao=models.ContaSituacaoEnum.em_aberto,
+                    descricao=sub_desc,
+                    numero_conta=str(item.id),
+                    id_fornecedor=cliente_id,
+                    valor=val_p,
+                    data_emissao=datetime.now(TZ_BR).date(),
+                    data_vencimento=datetime.now(TZ_BR).date(),
+                    pagamento=pag_enum,
+                    caixa_destino_origem=caixa_p,
+                    id_classificacao_contabil=classificacao_id,
+                    observacoes=f"{obs_origem} Pagamento {idx}/{len(pagamentos_validos)}".strip()
+                )
+                db.add(nova_conta)
+        else:
+            nova_conta = models.Conta(
+                id_empresa=current_user.id_empresa,
+                tipo_conta=models.ContaTipoEnum.a_receber,
+                situacao=models.ContaSituacaoEnum.em_aberto,
+                descricao=f"{desc_conta} - {cliente_nome}",
+                numero_conta=str(item.id),
+                id_fornecedor=cliente_id,
+                valor=valor_final,
+                data_emissao=datetime.now(TZ_BR).date(),
+                data_vencimento=datetime.now(TZ_BR).date(),
+                pagamento=item.pagamento,
+                caixa_destino_origem=item.caixa_destino_origem,
+                id_classificacao_contabil=classificacao_id,
+                observacoes=obs_origem
+            )
+            db.add(nova_conta)
+
+        db.commit()
+    except Exception as e:
+        print(f"Erro ao gerar financeiro automático do pedido: {e}")
+
 
 # --- Endpoint de Criação (POST) ---
 @router.post("/generic/{model_name}", response_model=Any)
@@ -2267,17 +2405,15 @@ def create_item(
     try:
         # 🎯 CORREÇÃO PARA HASH DE SENHA NA CRIAÇÃO
         if model_name == "usuarios":
-            # 1. Chama a função específica que SABE fazer o hash da senha
             item = crud_user.create_user(
                 db=db,
                 obj_in=validated_data,
                 id_empresa=current_user.id_empresa
             )
         else:
-            # 3. Para todos os outros modelos, usa o CRUD genérico
             item = registry["crud"].create(
                 db,
-                model=registry["model"], # Passa o modelo
+                model=registry["model"],
                 obj_in=validated_data,
                 id_empresa=current_user.id_empresa
             )
@@ -2285,84 +2421,7 @@ def create_item(
             # 🎯 LÓGICA ESPECÍFICA: Gerar Financeiro ao Criar Pedido já Aprovado (Programação)
             if model_name == "pedidos":
                 if item.situacao == models.PedidoSituacaoEnum.programacao:
-                    try:
-                        # Verifica duplicidade
-                        desc_conta = f"Pedido de Venda #{item.id}"
-                        existing_conta = db.query(models.Conta).filter(
-                            models.Conta.id_empresa == current_user.id_empresa,
-                            models.Conta.descricao.contains(desc_conta),
-                            models.Conta.tipo_conta == models.ContaTipoEnum.a_receber
-                        ).first()
-
-                        if not existing_conta:
-                            # Define o valor
-                            valor_final = item.total_desconto if (item.total_desconto and item.total_desconto > 0) else item.total
-                            
-                            if valor_final and valor_final > 0:
-                                # 1. Fallback Cliente Seguro
-                                cliente_nome = item.cliente.nome_razao if item.cliente else "Consumidor Final"
-                                cliente_id = item.id_cliente
-                                
-                                if not cliente_id:
-                                    fallback_cli = db.query(models.Cadastro).filter(models.Cadastro.id_empresa == current_user.id_empresa).first()
-                                    if fallback_cli:
-                                        cliente_id = fallback_cli.id
-                                    else:
-                                        novo_cli = models.Cadastro(
-                                            id_empresa=current_user.id_empresa,
-                                            cpf_cnpj="00000000000",
-                                            nome_razao="CONSUMIDOR FINAL",
-                                            tipo_cadastro=models.CadastroTipoCadastroEnum.cliente,
-                                            cep="00000000"
-                                        )
-                                        db.add(novo_cli)
-                                        db.flush()
-                                        cliente_id = novo_cli.id
-                                
-                                # 2. Resgata e Garante o Plano de Contas
-                                empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
-                                classificacao_id = empresa_obj.id_classificacao_contabil_padrao if empresa_obj else None
-                                
-                                if not classificacao_id:
-                                    fallback_class = db.query(models.ClassificacaoContabil).filter(
-                                        models.ClassificacaoContabil.id_empresa == current_user.id_empresa,
-                                        models.ClassificacaoContabil.tipo.ilike('%receita%')
-                                    ).first() or db.query(models.ClassificacaoContabil).filter(
-                                        models.ClassificacaoContabil.id_empresa == current_user.id_empresa
-                                    ).first()
-                                    if fallback_class:
-                                        classificacao_id = fallback_class.id
-                                    else:
-                                        nova_class = models.ClassificacaoContabil(
-                                            id_empresa=current_user.id_empresa,
-                                            grupo="Receitas",
-                                            descricao="Vendas de Mercadorias",
-                                            tipo="Receita",
-                                            considerar=True
-                                        )
-                                        db.add(nova_class)
-                                        db.flush()
-                                        classificacao_id = nova_class.id
-
-                                nova_conta = models.Conta(
-                                    id_empresa=current_user.id_empresa,
-                                    tipo_conta=models.ContaTipoEnum.a_receber,
-                                    situacao=models.ContaSituacaoEnum.em_aberto,
-                                    descricao=f"{desc_conta} - {cliente_nome}",
-                                    numero_conta=str(item.id),
-                                    id_fornecedor=cliente_id,
-                                    valor=valor_final,
-                                    data_emissao=datetime.now(TZ_BR).date(),
-                                    data_vencimento=datetime.now(TZ_BR).date(),
-                                    pagamento=item.pagamento,
-                                    caixa_destino_origem=item.caixa_destino_origem,
-                                    id_classificacao_contabil=classificacao_id,
-                                    observacoes="Gerado automaticamente na criação do pedido aprovado."
-                                )
-                                db.add(nova_conta)
-                                db.commit()
-                    except Exception as e:
-                        print(f"Erro ao gerar financeiro automático na criação: {e}")
+                    gerar_contas_financeiras_pedido(db, item, current_user, "Gerado automaticamente na criação do pedido aprovado.")
 
             # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI na criação de pedido
             if model_name == "pedidos":
@@ -2639,84 +2698,7 @@ def update_item(
         if model_name == "pedidos":
             # Se mudou para Programação (Aprovado) e não estava antes
             if old_situacao != item.situacao and item.situacao == models.PedidoSituacaoEnum.programacao:
-                try:
-                    # Verifica duplicidade (evita gerar 2x se o usuário ficar trocando status)
-                    desc_conta = f"Pedido de Venda #{item.id}"
-                    existing_conta = db.query(models.Conta).filter(
-                        models.Conta.id_empresa == current_user.id_empresa,
-                        models.Conta.descricao.contains(desc_conta),
-                        models.Conta.tipo_conta == models.ContaTipoEnum.a_receber
-                    ).first()
-
-                    if not existing_conta:
-                        # Define o valor (Total com desconto ou Total bruto)
-                        valor_final = item.total_desconto if (item.total_desconto and item.total_desconto > 0) else item.total
-                        
-                        if valor_final and valor_final > 0:
-                            # 1. Fallback Cliente Seguro
-                            cliente_nome = item.cliente.nome_razao if item.cliente else "Consumidor Final"
-                            cliente_id = item.id_cliente
-                            
-                            if not cliente_id:
-                                fallback_cli = db.query(models.Cadastro).filter(models.Cadastro.id_empresa == current_user.id_empresa).first()
-                                if fallback_cli:
-                                    cliente_id = fallback_cli.id
-                                else:
-                                    novo_cli = models.Cadastro(
-                                        id_empresa=current_user.id_empresa,
-                                        cpf_cnpj="00000000000",
-                                        nome_razao="CONSUMIDOR FINAL",
-                                        tipo_cadastro=models.CadastroTipoCadastroEnum.cliente,
-                                        cep="00000000"
-                                    )
-                                    db.add(novo_cli)
-                                    db.flush()
-                                    cliente_id = novo_cli.id
-                            
-                            # 2. Resgata e Garante o Plano de Contas
-                            empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
-                            classificacao_id = empresa_obj.id_classificacao_contabil_padrao if empresa_obj else None
-                            
-                            if not classificacao_id:
-                                fallback_class = db.query(models.ClassificacaoContabil).filter(
-                                    models.ClassificacaoContabil.id_empresa == current_user.id_empresa,
-                                    models.ClassificacaoContabil.tipo.ilike('%receita%')
-                                ).first() or db.query(models.ClassificacaoContabil).filter(
-                                    models.ClassificacaoContabil.id_empresa == current_user.id_empresa
-                                ).first()
-                                if fallback_class:
-                                    classificacao_id = fallback_class.id
-                                else:
-                                    nova_class = models.ClassificacaoContabil(
-                                        id_empresa=current_user.id_empresa,
-                                        grupo="Receitas",
-                                        descricao="Vendas de Mercadorias",
-                                        tipo="Receita",
-                                        considerar=True
-                                    )
-                                    db.add(nova_class)
-                                    db.flush()
-                                    classificacao_id = nova_class.id
-
-                            nova_conta = models.Conta(
-                                id_empresa=current_user.id_empresa,
-                                tipo_conta=models.ContaTipoEnum.a_receber,
-                                situacao=models.ContaSituacaoEnum.em_aberto,
-                                descricao=f"{desc_conta} - {cliente_nome}",
-                                numero_conta=str(item.id),
-                                id_fornecedor=cliente_id,
-                                valor=valor_final,
-                                data_emissao=datetime.now(TZ_BR).date(),
-                                data_vencimento=datetime.now(TZ_BR).date(), # Vencimento padrão hoje
-                                pagamento=item.pagamento,
-                                caixa_destino_origem=item.caixa_destino_origem,
-                                id_classificacao_contabil=classificacao_id,
-                                observacoes="Gerado automaticamente na aprovação do pedido."
-                            )
-                            db.add(nova_conta)
-                            db.commit()
-                except Exception as e:
-                    print(f"Erro ao gerar financeiro automático: {e}")
+                gerar_contas_financeiras_pedido(db, item, current_user, "Gerado automaticamente na aprovação do pedido.")
             
             # 🎯 LÓGICA ESPECÍFICA: Cancelar contas financeiras ao cancelar pedido
             if old_situacao != item.situacao and item.situacao == models.PedidoSituacaoEnum.cancelado:

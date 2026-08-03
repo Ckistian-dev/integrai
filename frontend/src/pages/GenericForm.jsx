@@ -775,20 +775,23 @@ const GenericForm = ({ modelName: propModelName }) => {
                 </div>
               ) : (
                 // Itera sobre as abas e renderiza o conteúdo
-                visibleTabs.map((tab, tabIndex) => (
-                  <div
-                    key={tab.name}
-                    // Usa 'hidden' para esconder abas inativas
-                    // Isso mantém o estado dos inputs ao trocar de aba!
-                    className={activeTab !== tab.name ? 'hidden' : ''}
-                  >
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-                      {/* Renderiza apenas os campos da aba ativa */}
-                      {tab.fields.map((field, fieldIndex) => {
-                        if (field.visible === false) return null;
+                visibleTabs.map((tab, tabIndex) => {
+                  const hasCol3 = tab.fields.some(f => f.col_span === 3);
+                  const gridColsClass = hasCol3 ? 'grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4' : 'grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4';
 
-                        // Define a classe de span da coluna. O grid tem 2 colunas no desktop.
-                        const colSpanClass = field.col_span === 2 ? 'md:col-span-2' : '';
+                  return (
+                    <div
+                      key={tab.name}
+                      className={activeTab !== tab.name ? 'hidden' : ''}
+                    >
+                        <div className={gridColsClass}>
+                          {/* Renderiza apenas os campos da aba ativa */}
+                          {tab.fields.map((field, fieldIndex) => {
+                            if (field.visible === false) return null;
+
+                            let colSpanClass = '';
+                            if (field.col_span === 3) colSpanClass = 'md:col-span-3';
+                            else if (field.col_span === 2) colSpanClass = 'md:col-span-2';
 
                         // O FormRenderer é envolvido por uma div para aplicar o col-span.
                         // A 'key' é movida para o elemento mais externo do loop.
@@ -849,9 +852,10 @@ const GenericForm = ({ modelName: propModelName }) => {
                           </React.Fragment>
                         );
                       })}
+                        </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 

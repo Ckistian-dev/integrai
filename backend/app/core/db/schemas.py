@@ -185,8 +185,10 @@ class Perfil(PerfilBase):
 class UsuarioBase(BaseModel):
     nome: str
     email: str
+    senha: Optional[str] = None
     situacao: bool = True
     id_perfil: Optional[int] = None
+
 
 class UsuarioCreate(BaseModel):
     nome: str
@@ -540,6 +542,7 @@ class PedidoBase(BaseModel):
     pagamento: Optional[FiscalPagamentoEnum] = None
     pagamento_descricao: Optional[str] = None
     caixa_destino_origem: Optional[str] = None
+    pagamentos: Optional[List[Dict[str, Any]]] = None
     observacao: Optional[str] = None
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None)
@@ -606,6 +609,7 @@ class PedidoUpdate(BaseModel):
     pagamento: Optional[FiscalPagamentoEnum] = None
     pagamento_descricao: Optional[str] = None
     caixa_destino_origem: Optional[str] = None
+    pagamentos: Optional[List[Dict[str, Any]]] = None
     observacao: Optional[str] = None
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None)

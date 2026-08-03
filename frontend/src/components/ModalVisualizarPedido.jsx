@@ -402,9 +402,10 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
 
     const formasPagamento = useMemo(() => {
         try {
-            return Array.isArray(pedido.formas_pagamento) ? pedido.formas_pagamento : JSON.parse(pedido.formas_pagamento || '[]');
+            const raw = pedido.pagamentos || pedido.formas_pagamento;
+            return Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
         } catch (e) { return []; }
-    }, [pedido.formas_pagamento]);
+    }, [pedido.pagamentos, pedido.formas_pagamento]);
 
     const isOrcamento = pedido.situacao === 'Orçamento';
     const labelDocumento = isOrcamento ? 'Orçamento' : 'Pedido';
