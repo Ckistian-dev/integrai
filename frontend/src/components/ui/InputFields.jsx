@@ -1053,7 +1053,11 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
         .then(response => {
           const item = response.data;
           const fetchedLabel = getOptionLabel(item);
-          setSelectedOption({ value: value, label: fetchedLabel });
+          const targetVal = item.id_sequencial ?? item.id;
+          setSelectedOption({ value: targetVal, label: fetchedLabel });
+          if (targetVal !== value && typeof onChange === 'function') {
+            onChange({ target: { name, value: targetVal } });
+          }
         })
         .catch(() => {
           setSelectedOption({ value: value, label: `ID ${value} (Não encontrado)` });

@@ -309,7 +309,7 @@ class TiktokService:
         # 4. Cria Pedido
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
-            id_cliente=cliente_erp.id,
+            id_cliente=cliente_erp.id_sequencial if cliente_erp else None,
             id_vendedor=self.config.vendedor_padrao_id,
             situacao=self.config.situacao_pedido_inicial,
             data_orcamento=datetime.now(),

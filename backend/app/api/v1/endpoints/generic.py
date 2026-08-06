@@ -2304,7 +2304,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
         if not cliente_id:
             fallback_cli = db.query(models.Cadastro).filter(models.Cadastro.id_empresa == current_user.id_empresa).first()
             if fallback_cli:
-                cliente_id = fallback_cli.id
+                cliente_id = fallback_cli.id_sequencial or fallback_cli.id
             else:
                 novo_cli = models.Cadastro(
                     id_empresa=current_user.id_empresa,
@@ -2315,7 +2315,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
                 )
                 db.add(novo_cli)
                 db.flush()
-                cliente_id = novo_cli.id
+                cliente_id = novo_cli.id_sequencial or novo_cli.id
 
         # 2. Resgata e Garante o Plano de Contas
         empresa_obj = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
@@ -2328,7 +2328,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
                 models.ClassificacaoContabil.id_empresa == current_user.id_empresa
             ).first()
             if fallback_class:
-                classificacao_id = fallback_class.id
+                classificacao_id = fallback_class.id_sequencial or fallback_class.id
             else:
                 nova_class = models.ClassificacaoContabil(
                     id_empresa=current_user.id_empresa,
@@ -2339,7 +2339,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
                 )
                 db.add(nova_class)
                 db.flush()
-                classificacao_id = nova_class.id
+                classificacao_id = nova_class.id_sequencial or nova_class.id
 
         pagamentos_validos = [p for p in lista_pagamentos if isinstance(p, dict) and (float(p.get('valor', 0) or 0) > 0)]
 
@@ -2405,6 +2405,76 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
         print(f"Erro ao gerar financeiro automático do pedido: {e}")
 
 
+_TABLE_TO_MODEL_MAP = {}
+
+def _get_model_class_by_tablename(tablename: str):
+    if not _TABLE_TO_MODEL_MAP:
+        from app.core.db.database import Base
+        for mapper in Base.registry.mappers:
+            cls = mapper.class_
+            tbl = getattr(cls, "__tablename__", None)
+            if tbl:
+                _TABLE_TO_MODEL_MAP[tbl] = cls
+    return _TABLE_TO_MODEL_MAP.get(tablename)
+
+def resolve_related_ids(db: Session, model: Any, item_data: Dict[str, Any], id_empresa: int) -> Dict[str, Any]:
+    """
+    Garante que os campos com ID de tabelas relacionadas utilizem o id_sequencial da tabela destino,
+    convertendo se o payload enviar o id primário interno.
+    """
+    if not item_data or not isinstance(item_data, dict):
+        return item_data
+
+    try:
+        mapper_inspector = inspect(model)
+        for col in mapper_inspector.columns:
+            col_name = col.name
+            if col_name in item_data and item_data[col_name] is not None:
+                val = item_data[col_name]
+                if col.foreign_keys:
+                    for fk in col.foreign_keys:
+                        target_table_name = fk.column.table.name
+                        if target_table_name == "empresas":
+                            continue
+
+                        target_model = _get_model_class_by_tablename(target_table_name)
+                        if target_model and hasattr(target_model, "id_sequencial"):
+                            if isinstance(val, (int, str)) and str(val).isdigit():
+                                num_val = int(val)
+                                q = db.query(target_model)
+                                if hasattr(target_model, "id_empresa"):
+                                    q = q.filter(target_model.id_empresa == id_empresa)
+
+                                target_obj = q.filter(target_model.id_sequencial == num_val).first()
+                                if target_obj and target_obj.id_sequencial is not None:
+                                    item_data[col_name] = target_obj.id_sequencial
+                                else:
+                                    target_obj_by_id = q.filter(target_model.id == num_val).first()
+                                    if target_obj_by_id and target_obj_by_id.id_sequencial is not None:
+                                        item_data[col_name] = target_obj_by_id.id_sequencial
+    except Exception as e:
+        print(f"Aviso ao resolver IDs relacionados em {model}: {e}")
+
+    # Processa itens aninhados em Pedidos (ex: id_produto / produto_id)
+    if "itens" in item_data and isinstance(item_data["itens"], list):
+        for item in item_data["itens"]:
+            if isinstance(item, dict):
+                for prod_key in ["id_produto", "produto_id"]:
+                    prod_val = item.get(prod_key)
+                    if prod_val is not None and str(prod_val).isdigit():
+                        num_prod = int(prod_val)
+                        prod_q = db.query(models.Produto).filter(models.Produto.id_empresa == id_empresa)
+                        prod_obj = prod_q.filter(models.Produto.id_sequencial == num_prod).first()
+                        if prod_obj and prod_obj.id_sequencial is not None:
+                            item[prod_key] = prod_obj.id_sequencial
+                        else:
+                            prod_obj_by_id = prod_q.filter(models.Produto.id == num_prod).first()
+                            if prod_obj_by_id and prod_obj_by_id.id_sequencial is not None:
+                                item[prod_key] = prod_obj_by_id.id_sequencial
+
+    return item_data
+
+
 # --- Endpoint de Criação (POST) ---
 @router.post("/generic/{model_name}", response_model=Any)
 def create_item(
@@ -2417,6 +2487,9 @@ def create_item(
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    # Resolução de IDs de tabelas relacionadas para id_sequencial
+    resolve_related_ids(db, registry["model"], item_data, current_user.id_empresa)
 
     # --- Validação: Trim em todos os campos de string ---
     for key, value in item_data.items():
@@ -2530,6 +2603,9 @@ def batch_update_items(
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
 
+    # Resolução de IDs de tabelas relacionadas para id_sequencial
+    resolve_related_ids(db, registry["model"], item_data, current_user.id_empresa)
+
     # --- Validação: Trim em todos os campos de string ---
     for key, value in item_data.items():
         if isinstance(value, str):
@@ -2613,6 +2689,9 @@ def update_item(
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    # Resolução de IDs de tabelas relacionadas para id_sequencial
+    resolve_related_ids(db, registry["model"], item_data, current_user.id_empresa)
 
     # --- Validação: Trim em todos os campos de string ---
     for key, value in item_data.items():
@@ -2996,14 +3075,15 @@ def get_user_preferences(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Retorna as preferências salvas do usuário para um modelo específico."""
+    user_id_target = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
     pref = db.query(models.UsuarioPreferencia).filter(
-        models.UsuarioPreferencia.id_usuario == current_user.id,
+        or_(models.UsuarioPreferencia.id_usuario == user_id_target, models.UsuarioPreferencia.id_usuario == current_user.id),
         models.UsuarioPreferencia.model_name == model_name
     ).first()
     
     if not pref:
         # Retorna objeto vazio se não existir
-        return schemas.UsuarioPreferencia(id=0, id_usuario=current_user.id, model_name=model_name, config={})
+        return schemas.UsuarioPreferencia(id=0, id_usuario=user_id_target, model_name=model_name, config={})
     
     return pref
 
@@ -3015,15 +3095,16 @@ def save_user_preferences(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Salva ou atualiza as preferências do usuário."""
+    user_id_target = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
     pref = db.query(models.UsuarioPreferencia).filter(
-        models.UsuarioPreferencia.id_usuario == current_user.id,
+        or_(models.UsuarioPreferencia.id_usuario == user_id_target, models.UsuarioPreferencia.id_usuario == current_user.id),
         models.UsuarioPreferencia.model_name == model_name
     ).first()
     
     if pref:
         pref.config = config
     else:
-        pref = models.UsuarioPreferencia(id_usuario=current_user.id, model_name=model_name, config=config)
+        pref = models.UsuarioPreferencia(id_usuario=user_id_target, model_name=model_name, config=config)
         db.add(pref)
     
     db.commit()

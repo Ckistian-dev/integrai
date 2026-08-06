@@ -28,6 +28,11 @@ def create(db: Session, *, model: ModelType, obj_in: BaseModel, id_empresa: int)
     'obj_in' já deve ser um schema Pydantic validado.
     """
     obj_in_data = obj_in.model_dump()
+    try:
+        from app.api.v1.endpoints.generic import resolve_related_ids
+        obj_in_data = resolve_related_ids(db, model, obj_in_data, id_empresa)
+    except Exception:
+        pass
     
     # Filtra apenas os campos que existem no modelo SQLAlchemy para evitar TypeError
     # de argumentos inesperados no construtor.
@@ -47,6 +52,13 @@ def update(
     'obj_in' já deve ser um schema Pydantic validado.
     """
     update_data = obj_in.model_dump(exclude_unset=True)
+    id_empresa = getattr(db_obj, "id_empresa", None)
+    if id_empresa is not None:
+        try:
+            from app.api.v1.endpoints.generic import resolve_related_ids
+            update_data = resolve_related_ids(db, type(db_obj), update_data, id_empresa)
+        except Exception:
+            pass
     
     for field, value in update_data.items():
         setattr(db_obj, field, value)

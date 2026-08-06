@@ -5071,12 +5071,12 @@ class NFeService:
                 novas_vars.append(item['sku_fornecedor'])
                 produto.variacoes = novas_vars
 
-            produto.id_fornecedor = fornecedor.id
+            produto.id_fornecedor = fornecedor.id_sequencial if fornecedor else None
 
             if movimentar_estoque:
                 logger.info(f"Movimentando estoque para produto {produto.sku}. Qtd: {item.get('quantidade', 0)}")
                 novo_estoque = models.Estoque(
-                    id_produto=produto.id,
+                    id_produto=produto.id_sequencial or produto.id,
                     quantidade=item.get('quantidade', 0),
                     id_empresa=self.id_empresa,
                     lote=f"ENTRADA_NFE_{nota.id}"
@@ -5108,7 +5108,7 @@ class NFeService:
                     descricao=descricao_nota,
                     numero_conta=nNF,
                     pagamento=pagamento_enum,
-                    id_fornecedor=fornecedor.id,
+                    id_fornecedor=fornecedor.id_sequencial if fornecedor else None,
                     id_classificacao_contabil=id_classificacao_contabil,
                     caixa_destino_origem=caixa_destino_origem,
                     data_emissao=nota.data_emissao.date() if getattr(nota, 'data_emissao', None) else datetime.now(TZ_BR).date(),

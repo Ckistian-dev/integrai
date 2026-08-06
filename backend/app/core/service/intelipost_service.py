@@ -451,7 +451,7 @@ class IntelipostService:
             pedido.delivery_method_id_intelipost = str(delivery_method_id)
             carrier = self._find_carrier_by_intelipost_id(delivery_method_id)
             if carrier:
-                pedido.id_transportadora = carrier.id
+                pedido.id_transportadora = carrier.id_sequencial or carrier.id
 
         if not delivery_method_id:
             delivery_method_id = pedido.delivery_method_id_intelipost

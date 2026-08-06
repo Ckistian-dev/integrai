@@ -75,8 +75,9 @@ def update_dashboard_preferences(
     ).first()
 
     if not prefs:
+        user_id_seq = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
         prefs = models.DashboardPreferencia(
-            id_usuario=current_user.id,
+            id_usuario=user_id_seq,
             id_empresa=current_user.id_empresa,
             layout=data.layout,
             cards_config=data.cards_config
