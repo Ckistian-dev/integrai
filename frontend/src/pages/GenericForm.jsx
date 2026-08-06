@@ -7,6 +7,7 @@ import api from '../api/axiosConfig';
 import FormRenderer from '../components/form/FormRenderer';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { Save, X, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { toast } from 'react-toastify';
 import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 
 const GenericForm = ({ modelName: propModelName, propId }) => {
