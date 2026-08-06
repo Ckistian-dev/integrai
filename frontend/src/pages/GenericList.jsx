@@ -1208,8 +1208,9 @@ const GenericList = () => {
 
   const handleEditClick = () => {
     if (selectedRowId) {
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
       // Adiciona o "/edit/" no caminho para bater com a rota do App.jsx
-      navigate(`/${modelName}/edit/${selectedRowId}`);
+      navigate(`/${modelName}/edit/${targetId}`);
     }
   };
 
@@ -1389,7 +1390,7 @@ const GenericList = () => {
       const response = await api.get('/generic/magento_configuracoes');
       const items = response.data.items;
       if (items && items.length > 0) {
-        navigate(`/magento_configuracoes/edit/${items[0].id}`);
+        navigate(`/magento_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         navigate(`/magento_configuracoes/new`);
       }
@@ -1585,7 +1586,7 @@ const GenericList = () => {
       const response = await api.get('/generic/elastic_email_configuracoes');
       const items = response.data.items;
       if (items && items.length > 0) {
-        navigate(`/elastic_email_configuracoes/edit/${items[0].id}`);
+        navigate(`/elastic_email_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         navigate(`/elastic_email_configuracoes/new`);
       }
@@ -1602,7 +1603,7 @@ const GenericList = () => {
       const response = await api.get('/generic/meli_configuracoes');
       const items = response.data.items;
       if (items && items.length > 0) {
-        navigate(`/meli_configuracoes/edit/${items[0].id}`);
+        navigate(`/meli_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         navigate(`/meli_configuracoes/new`);
       }
@@ -1642,7 +1643,7 @@ const GenericList = () => {
       const response = await api.get('/generic/tiktok_configuracoes');
       const items = response.data.items;
       if (items && items.length > 0) {
-        navigate(`/tiktok_configuracoes/edit/${items[0].id}`);
+        navigate(`/tiktok_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         navigate(`/tiktok_configuracoes/new`);
       }
@@ -2212,7 +2213,7 @@ const GenericList = () => {
 
       if (items && items.length > 0) {
         // Se existir, abre o formulário de edição do primeiro item
-        navigate(`/intelipost_configuracoes/edit/${items[0].id}`);
+        navigate(`/intelipost_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         // Se não existir, abre o formulário de criação
         navigate(`/intelipost_configuracoes/new`);
@@ -3944,7 +3945,8 @@ const GenericList = () => {
                           onClick={(e) => handleRowClick(e, item.id, index)}
                           onDoubleClick={() => {
                             if (!isMeliView && !isMagentoView && modelName !== 'estoque') {
-                              navigate(`/${modelName}/edit/${item.id}`);
+                              const targetId = item.id_sequencial ?? item.id;
+                              navigate(`/${modelName}/edit/${targetId}`);
                             }
                           }}
                           style={{ height: '53px' }}

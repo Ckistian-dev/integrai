@@ -331,7 +331,7 @@ const MainLayout = () => {
       const res = await api.get(`/generic/${model}`);
       const items = res.data.items;
       if (items && items.length > 0) {
-        navigate(`/${model}/edit/${items[0].id}`);
+        navigate(`/${model}/edit/${items[0].id_sequencial ?? items[0].id}`);
       } else {
         navigate(`/${model}/new`);
       }
