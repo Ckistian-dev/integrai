@@ -8,6 +8,7 @@ import ProtectedRoute from './components/layout/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
 import GenericList from './pages/GenericList';
 import GenericForm from './pages/GenericForm';
+import GenericDispatcher from './pages/GenericDispatcher';
 import PermissionRoute from './components/layout/PermissionRoute';
 import MeliCallback from './pages/MeliCallback';
 import { useAuth } from './contexts/AuthContext';
@@ -69,11 +70,10 @@ function App() {
             </PermissionRoute>
           } />
 
-          {/* Rotas Genéricas */}
-          {/* Rota de Listagem: /customers, /products, etc. */}
+          {/* Rotas Genéricas (Dispatcher) */}
           <Route path=":modelName/:statusFilter?" element={
             <PermissionRoute >
-              <GenericList />
+              <GenericDispatcher />
             </PermissionRoute>
           } />
 

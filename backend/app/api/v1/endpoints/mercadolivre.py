@@ -185,6 +185,7 @@ async def exchange_code(
         logger.exception(f"Erro na autenticação ML para empresa {current_user.id_empresa}")
         raise e
 
+
 @router.post("/mercadolivre/pedidos/{pedido_id}/enviar-xml")
 async def reenviar_xml_ml(
     pedido_id: int,
@@ -207,16 +208,21 @@ async def reenviar_xml_ml(
     if not pedido.xml_autorizado:
         raise HTTPException(status_code=400, detail="Este pedido não possui XML da NFe autorizado no ERP.")
 
-    obs = pedido.observacao or ""
-    match_pack = re.search(r"Pedido ML:\s*(\d+)", obs)
-    if match_pack:
-        order_id_ml = match_pack.group(1)
-    else:
-        match_id = re.search(r"ID:\s*(\d+)", obs)
-        order_id_ml = match_id.group(1) if match_id else None
+    # 1. Prioridade: novos campos dedicados
+    order_id_ml = pedido.meli_order_id or pedido.meli_pack_id
+
+    # 2. Fallback: regex na observação
+    if not order_id_ml:
+        obs = pedido.observacao or ""
+        match_pack = re.search(r"Pedido ML:\s*(\d+)", obs)
+        if match_pack:
+            order_id_ml = match_pack.group(1)
+        else:
+            match_id = re.search(r"ID:\s*(\d+)", obs)
+            order_id_ml = match_id.group(1) if match_id else None
 
     if not order_id_ml:
-        raise HTTPException(status_code=400, detail="Não foi localizado um ID do Mercado Livre na observação do pedido.")
+        raise HTTPException(status_code=400, detail="Não foi localizado um ID do Mercado Livre na observação nem nos campos do pedido.")
 
     service = MeliService(db, current_user.id_empresa)
     res = await service.upload_xml(

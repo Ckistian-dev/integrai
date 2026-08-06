@@ -22,12 +22,19 @@ import { StateTaxRulesInput } from '../ui/StateTaxRulesInput';
 import { PermissionsBuilderInput } from '../ui/PermissionsBuilderInput';
 import { ReportBuilderInput } from '../ui/ReportBuilderInput';
 import { PaymentMethodsInput } from '../ui/PaymentMethodsInput';
+import { MeliStatusRulesInput } from '../ui/MeliStatusRulesInput';
+import { PackagingSimulationInput } from '../ui/PackagingSimulationInput';
 
 /**
  * Componente FormRenderer
  * Renderiza o input correto baseado nos metadados do campo.
  */
 const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...rest }) => {
+  // Se o campo estiver explicitamente marcado como não visível, não renderiza
+  if (field.visible === false) {
+    return null;
+  }
+
   // Estado para controlar se o campo está focado
   const [isFocused, setIsFocused] = React.useState(false);
 
@@ -258,6 +265,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     case 'rule_builder':
       return <RuleBuilderInput {...props} value={value} />;
 
+    case 'packaging_simulation':
+      return <PackagingSimulationInput {...props} value={value} formData={formData} />;
+
     case 'state_tax_rules':
       return <StateTaxRulesInput {...props} value={value} />;
 
@@ -275,6 +285,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
 
     case 'payment_methods':
       return <PaymentMethodsInput {...props} value={value} formData={formData} />;
+
+    case 'meli_status_rules':
+      return <MeliStatusRulesInput {...props} value={value} />;
 
     default:
       if (field.component === 'payment_methods') {

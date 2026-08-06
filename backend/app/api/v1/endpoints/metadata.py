@@ -12,8 +12,10 @@ router = APIRouter()
 
 # Mapeia nomes de colunas para labels amigáveis
 def get_field_label(col_name: str) -> str:
-    if col_name.lower() == "id":
+    if col_name.lower() == "id_sequencial":
         return "ID"
+    if col_name.lower() == "id":
+        return "ID Interno"
     # 🎯 1. Remove prefixos e sufixos de ID
     if col_name.startswith("id_"):
         col_name = col_name[3:] # "id_vendedor" -> "vendedor"
@@ -27,7 +29,7 @@ def get_field_label(col_name: str) -> str:
     return text_with_spaces.title() # "nome razao" -> "Nome Razao", "vendedor" -> "Vendedor"
 
 # Campos que não devem aparecer no formulário do frontend
-SKIPPED_FIELDS = ["id_empresa"]
+SKIPPED_FIELDS = ["id_empresa", "id"]
 
 def get_format_mask(col_name: str, col_type: TypeEngine) -> Optional[str]:
     # Converte para minúsculas para facilitar a comparação
@@ -107,6 +109,12 @@ def get_model_metadata(model_name: str):
     model = registry_entry["model"]
     display_name = registry_entry["display_name"]
     display_field = registry_entry.get("display_field", None)
+    is_single_record = (
+        model_name == "empresas" or 
+        model_name.endswith("_configuracao") or 
+        model_name.endswith("_configuracoes") or 
+        getattr(model, '__is_single_record__', False)
+    )
     fields: List[FieldMetadata] = []
     
     
@@ -119,6 +127,7 @@ def get_model_metadata(model_name: str):
                 continue
             
             tab_name = col.info.get('tab', 'Dados Gerais')
+            sub_tab_name = col.info.get('sub_tab')
             
             # Tenta pegar label e placeholder do col.info
             label = col.info.get('label')
@@ -213,9 +222,20 @@ def get_model_metadata(model_name: str):
                 options = col.info.get('available_fields')
             
             read_only = col.info.get('read_only', False)
-            if col.name in ["criado_em", "atualizado_em"]:
+            if col.name in ["criado_em", "atualizado_em", "id_sequencial"]:
                 read_only = True
-                visible = False
+                if col.name == "id_sequencial":
+                    label = col.info.get('label', "ID")
+                    if col.info.get('visible') is not None:
+                        visible = col.info.get('visible')
+                    elif is_single_record:
+                        visible = False
+                    else:
+                        visible = True
+                    if not placeholder:
+                        placeholder = "(Gerado automaticamente)"
+                elif col.name in ["criado_em", "atualizado_em"]:
+                    visible = False
             
             ui_type = col.info.get('ui_type')
             # Se não houver ui_type manual, mas o nome sugerir senha, define como password
@@ -233,6 +253,7 @@ def get_model_metadata(model_name: str):
                 default_value=default_value,
                 format_mask=format_mask,
                 tab=tab_name,
+                sub_tab=sub_tab_name,
                 foreign_key_model=foreign_key_model,
                 foreign_key_label_field=foreign_key_label_field,
                 filename_field=filename_field,
@@ -307,7 +328,8 @@ def get_model_metadata(model_name: str):
             display_name_singular=registry_entry.get("display_name_singular", display_name),
             display_name_plural=registry_entry.get("display_name_plural", display_name),
             fields=fields,
-            display_field=display_field
+            display_field=display_field,
+            is_single_record=is_single_record
         )
     except Exception as e:
         # Adiciona um print para debug no console do backend

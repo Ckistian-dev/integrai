@@ -26,6 +26,16 @@ export const FORMAS_PAGAMENTO_OPTIONS = [
 export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled }) => {
   const [items, setItems] = useState([]);
 
+  // Captura o total do pedido com desconto
+  const totalPedido = useMemo(() => {
+    if (!formData) return 0;
+    const totDesc = Number(formData.total_desconto);
+    if (!isNaN(totDesc) && totDesc > 0) return totDesc;
+    const totBruto = Number(formData.total);
+    if (!isNaN(totBruto) && totBruto > 0) return totBruto;
+    return 0;
+  }, [formData?.total_desconto, formData?.total]);
+
   useEffect(() => {
     let parsed = [];
     if (Array.isArray(value)) {
@@ -38,9 +48,7 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
       }
     }
 
-    const initialValor = (formData?.total_desconto || formData?.total)
-      ? Number(formData.total_desconto || formData.total)
-      : '';
+    const initialValor = totalPedido > 0 ? totalPedido : '';
 
     if (parsed.length === 0 && (formData?.pagamento || formData?.caixa_destino_origem)) {
       const pagPadrao = typeof formData.pagamento === 'object' && formData.pagamento?.value
@@ -67,19 +75,6 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
     setItems(parsed);
   }, [value]);
 
-  const totalPedido = useMemo(() => {
-    if (!formData) return 0;
-    const totDesc = Number(formData.total_desconto);
-    if (!isNaN(totDesc) && totDesc > 0) return totDesc;
-    const totBruto = Number(formData.total);
-    if (!isNaN(totBruto) && totBruto > 0) return totBruto;
-    return 0;
-  }, [formData?.total_desconto, formData?.total]);
-
-  const totalPagamentos = useMemo(() => {
-    return items.reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0);
-  }, [items]);
-
   const updateItems = (newItems) => {
     setItems(newItems);
     onChange({
@@ -90,13 +85,55 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
     });
   };
 
+  // Cálculo Automático Contínuo quando totalPedido é alterado
+  useEffect(() => {
+    if (totalPedido <= 0) return;
+
+    setItems((prevItems) => {
+      if (!prevItems || prevItems.length === 0) {
+        const initial = [{
+          pagamento: '17',
+          caixa_destino_origem: '',
+          valor: totalPedido,
+          pagamento_descricao: '',
+          ind_pag: 0
+        }];
+        onChange({ target: { name: field.name, value: initial } });
+        return initial;
+      }
+
+      if (prevItems.length === 1) {
+        if (prevItems[0].valor !== totalPedido) {
+          const updated = [{ ...prevItems[0], valor: totalPedido }];
+          onChange({ target: { name: field.name, value: updated } });
+          return updated;
+        }
+        return prevItems;
+      }
+
+      // Se houver mais de 1 item, a última linha reajusta o saldo restante
+      const otherSum = prevItems.slice(0, -1).reduce((acc, item) => acc + (Number(item.valor) || 0), 0);
+      const remaining = parseFloat(Math.max(0, totalPedido - otherSum).toFixed(2));
+      const lastIdx = prevItems.length - 1;
+
+      if (prevItems[lastIdx].valor !== remaining) {
+        const updated = [...prevItems];
+        updated[lastIdx] = { ...updated[lastIdx], valor: remaining };
+        onChange({ target: { name: field.name, value: updated } });
+        return updated;
+      }
+
+      return prevItems;
+    });
+  }, [totalPedido]);
+
   const handleAddItem = () => {
-    const diff = totalPedido - totalPagamentos;
-    const defaultValor = diff > 0 ? Number(diff.toFixed(2)) : '';
+    const currentSum = items.reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0);
+    const diff = parseFloat(Math.max(0, totalPedido - currentSum).toFixed(2));
     const newItem = {
       pagamento: '17',
       caixa_destino_origem: '',
-      valor: defaultValor,
+      valor: diff,
       pagamento_descricao: '',
       ind_pag: 0,
     };
@@ -104,8 +141,16 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
   };
 
   const handleRemoveItem = (index) => {
-    const newItems = items.filter((_, i) => i !== index);
-    updateItems(newItems);
+    const remainingItems = items.filter((_, i) => i !== index);
+    if (remainingItems.length > 0 && totalPedido > 0) {
+      const otherSum = remainingItems.slice(0, -1).reduce((acc, item) => acc + (Number(item.valor) || 0), 0);
+      const remaining = parseFloat(Math.max(0, totalPedido - otherSum).toFixed(2));
+      remainingItems[remainingItems.length - 1] = {
+        ...remainingItems[remainingItems.length - 1],
+        valor: remaining
+      };
+    }
+    updateItems(remainingItems);
   };
 
   const handleChangeItem = (index, prop, val) => {
@@ -113,19 +158,28 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
     let updatedVal = val;
 
     if (prop === 'valor') {
-      updatedVal = (val === '' || val === null || val === undefined) ? '' : (Number(val) || '');
-    } else if (prop === 'pagamento') {
+      updatedVal = (val === '' || val === null || val === undefined) ? 0 : (Number(val) || 0);
+    }
+
+    if (prop === 'pagamento') {
       const isPrazo = ['03', '05', '14', '15'].includes(val);
       newItems[index] = {
         ...newItems[index],
         pagamento: val,
         ind_pag: isPrazo ? 1 : 0
       };
-      updateItems(newItems);
-      return;
+    } else {
+      newItems[index] = { ...newItems[index], [prop]: updatedVal };
     }
 
-    newItems[index] = { ...newItems[index], [prop]: updatedVal };
+    // Se alterou o valor manualmente e houver mais de 1 linha, reajusta a outra linha para manter a soma igual ao total com desconto
+    if (prop === 'valor' && newItems.length > 1 && totalPedido > 0) {
+      const targetAdjustIdx = (index === newItems.length - 1) ? 0 : (newItems.length - 1);
+      const otherSum = newItems.reduce((acc, item, i) => i !== targetAdjustIdx ? acc + (Number(item.valor) || 0) : acc, 0);
+      const remaining = parseFloat(Math.max(0, totalPedido - otherSum).toFixed(2));
+      newItems[targetAdjustIdx] = { ...newItems[targetAdjustIdx], valor: remaining };
+    }
+
     updateItems(newItems);
   };
 
@@ -187,8 +241,8 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
                       if (!isNaN(parsed) && parsed !== item.valor) {
                         handleChangeItem(idx, 'valor', parsed);
                       }
-                    } else if (item.valor !== '') {
-                      handleChangeItem(idx, 'valor', '');
+                    } else if (item.valor !== 0 && item.valor !== '') {
+                      handleChangeItem(idx, 'valor', 0);
                     }
                   }}
                   disabled={disabled}
@@ -196,6 +250,7 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
                   placeholder="0,00"
                 />
               </div>
+
               {items.length > 1 && (
                 <button
                   type="button"
@@ -245,4 +300,6 @@ export const PaymentMethodsInput = ({ field, value, onChange, formData, disabled
   );
 };
 
+
 export default PaymentMethodsInput;
+

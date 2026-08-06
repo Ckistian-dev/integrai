@@ -5,7 +5,7 @@ import DatePicker, { registerLocale } from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import ptBR from 'date-fns/locale/pt-BR';
 import { Dialog, Transition, Popover, Menu } from '@headlessui/react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/axiosConfig';
@@ -42,20 +42,20 @@ import {
   Settings,
   X,
   RefreshCw,
-  SlidersHorizontal, // Ícone para o botão de filtro avançado
-  Ban, // Ícone para Cancelar
-  FileText, // Ícone para Carta de Correção
-  RotateCcw, // Ícone para Devolução
-  Tag, // Ícone para Etiqueta
-  Calendar, // Ícone para Filtro de Data
-  Play, // Ícone para Gerar Relatório
+  SlidersHorizontal,
+  Ban,
+  FileText,
+  RotateCcw,
+  Tag,
+  Calendar,
+  Play,
   GripVertical,
   ArrowUp,
   ArrowDown,
   FileCode,
-  ClipboardList,
   Download
 } from 'lucide-react';
+import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 
 registerLocale('pt-BR', ptBR);
 
@@ -80,6 +80,7 @@ function useDebounce(value, delay) {
 // Helper para formatar labels dinâmicos (ex: customer_name -> Customer Name)
 const formatLabel = (key) => {
   if (!key) return '';
+  if (key === 'id_sequencial' || key === 'id') return 'ID';
   return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
 
@@ -520,6 +521,23 @@ const GenericList = () => {
   const [addColumnSearch, setAddColumnSearch] = useState("");
   const [userPreferences, setUserPreferences] = useState({ visibleColumns: [], filters: [], sort: [{ field: 'id', direction: 'desc' }] });
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
+  const [draggedColName, setDraggedColName] = useState(null);
+  const [dragTargetColName, setDragTargetColName] = useState(null);
+
+  // Pré-visualização dinâmica em tempo real da tabela enquanto arrasta a coluna
+  const displayColumns = useMemo(() => {
+    if (!draggedColName || !dragTargetColName || draggedColName === dragTargetColName) {
+      return columnsToDisplay;
+    }
+    const fromIdx = columnsToDisplay.indexOf(draggedColName);
+    const toIdx = columnsToDisplay.indexOf(dragTargetColName);
+    if (fromIdx === -1 || toIdx === -1) return columnsToDisplay;
+
+    const result = [...columnsToDisplay];
+    const [removed] = result.splice(fromIdx, 1);
+    result.splice(toIdx, 0, removed);
+    return result;
+  }, [columnsToDisplay, draggedColName, dragTargetColName]);
 
   // --- LÓGICA DE TOTAIS E LIMITE EFETIVO ---
   // A paginação deve ser baseada estritamente no limite selecionado pelo usuário
@@ -603,7 +621,14 @@ const GenericList = () => {
           }
         } else {
           // Se não tiver config salva, usa padrão baseado nos metadados carregados
-          const allCols = metadata.fields.map(f => f.name).filter(c => c !== 'itens' && c !== 'retiradas_detalhadas');
+          const allCols = metadata.fields.map(f => f.name).filter(c => c !== 'id' && c !== 'itens' && c !== 'retiradas_detalhadas');
+          if (allCols.includes('id_sequencial')) {
+            const idSeqIdx = allCols.indexOf('id_sequencial');
+            if (idSeqIdx > -1) {
+              allCols.splice(idSeqIdx, 1);
+              allCols.unshift('id_sequencial');
+            }
+          }
 
           // --- CONFIGURAÇÃO PADRÃO DE FILTROS RÁPIDOS ---
           const defaultQuickFields = [];
@@ -748,7 +773,7 @@ const GenericList = () => {
   };
 
   const handleDragOverContainer = (e) => {
-    if (!isEditMode) return;
+    if (!isEditMode || !draggedColName) return;
     e.preventDefault();
     const container = tableContainerRef.current;
     if (!container) return;
@@ -776,6 +801,55 @@ const GenericList = () => {
 
   const stopAutoScroll = () => {
     scrollVelocityRef.current = 0;
+  };
+
+  // --- HANDLERS PARA ARRASTE E PRÉ-VISUALIZAÇÃO DE COLUNAS ---
+  const handleColumnDragStart = (e, colName) => {
+    if (!isEditMode) return;
+    setDraggedColName(colName);
+    setDragTargetColName(colName);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', colName);
+    }
+  };
+
+  const handleColumnDragOver = (e, colName) => {
+    if (!isEditMode || !draggedColName) return;
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
+    // PROTEÇÃO ANTI-FLICKERING: Ignora dragOver se for a própria coluna que está sendo arrastada
+    if (colName !== draggedColName && dragTargetColName !== colName) {
+      setDragTargetColName(colName);
+    }
+  };
+
+  const handleColumnDrop = (e, targetColName) => {
+    if (!isEditMode || !draggedColName) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const fromCol = draggedColName;
+    const toCol = (dragTargetColName && dragTargetColName !== draggedColName) ? dragTargetColName : targetColName;
+
+    setDraggedColName(null);
+    setDragTargetColName(null);
+    stopAutoScroll();
+
+    if (fromCol && toCol && fromCol !== toCol) {
+      moveColumn(fromCol, toCol);
+    }
+  };
+
+  const handleColumnDragEnd = () => {
+    if (draggedColName && dragTargetColName && draggedColName !== dragTargetColName) {
+      moveColumn(draggedColName, dragTargetColName);
+    }
+    setDraggedColName(null);
+    setDragTargetColName(null);
+    stopAutoScroll();
   };
 
   useEffect(() => {
@@ -945,15 +1019,6 @@ const GenericList = () => {
         setTotalCount(dataRes.data.total_count);
         setTotals(dataRes.data.totals || {});
 
-        if (paramModelName === 'atendai_configuracoes') {
-          if (items && items.length > 0) {
-            navigate(`/atendai_configuracoes/edit/${items[0].id}`, { replace: true });
-          } else {
-            navigate(`/atendai_configuracoes/new`, { replace: true });
-          }
-          return;
-        }
-
         lastFetchedParamsRef.current = paramsKey;
         isInitialLoad.current = false;
       } catch (err) {
@@ -1021,9 +1086,10 @@ const GenericList = () => {
     }
     // --------------------------------------
 
-    // Filtra colunas complexas que quebram a tabela (JSONs grandes) e valores nulos
+    // Filtra colunas complexas que quebram a tabela (JSONs grandes), ID primário e valores nulos
     const finalCols = cols.filter((col) =>
       col && // Garante que a coluna não seja nula ou vazia
+      col !== 'id' &&
       col !== 'itens' &&
       col !== 'retiradas_detalhadas' &&
       col !== 'retiradas_detalhadas_json'
@@ -2380,16 +2446,42 @@ const GenericList = () => {
     handleSavePreferences({ ...userPreferences, visibleColumns: newCols });
   };
 
-  const moveColumn = (fromIdx, toIdx) => {
-    if (isNaN(fromIdx) || isNaN(toIdx)) return;
-    const currentCols = userPreferences.visibleColumns && userPreferences.visibleColumns.length > 0
+  const moveColumn = (from, to) => {
+    const fromColName = typeof from === 'string' ? from : columnsToDisplay[from];
+    const toColName = typeof to === 'string' ? to : columnsToDisplay[to];
+
+    if (!fromColName || !toColName || fromColName === toColName) return;
+
+    const currentDisplay = [...columnsToDisplay];
+    const fromIdx = currentDisplay.indexOf(fromColName);
+    const toIdx = currentDisplay.indexOf(toColName);
+
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const [removed] = currentDisplay.splice(fromIdx, 1);
+    currentDisplay.splice(toIdx, 0, removed);
+
+    // Atualiza imediatamente as colunas renderizadas na tela
+    setColumnsToDisplay(currentDisplay);
+
+    // Reordena nas preferências
+    const currentVisible = (userPreferences.visibleColumns && userPreferences.visibleColumns.length > 0)
       ? userPreferences.visibleColumns
       : columnsToDisplay;
-    const newCols = [...currentCols];
-    if (fromIdx < 0 || fromIdx >= newCols.length || toIdx < 0 || toIdx >= newCols.length) return;
-    const [removed] = newCols.splice(fromIdx, 1);
-    newCols.splice(toIdx, 0, removed);
-    handleSavePreferences({ ...userPreferences, visibleColumns: newCols });
+
+    const newVisible = [...currentVisible];
+    const visFromIdx = newVisible.indexOf(fromColName);
+    const visToIdx = newVisible.indexOf(toColName);
+
+    if (visFromIdx !== -1 && visToIdx !== -1) {
+      const [visRemoved] = newVisible.splice(visFromIdx, 1);
+      newVisible.splice(visToIdx, 0, visRemoved);
+    } else {
+      newVisible.length = 0;
+      newVisible.push(...currentDisplay);
+    }
+
+    handleSavePreferences({ ...userPreferences, visibleColumns: newVisible });
   };
 
   const addQuickFilterField = (type) => {
@@ -2436,6 +2528,44 @@ const GenericList = () => {
 
   const totalPages = Math.ceil(totalCount / effectiveLimit) || 1; // || 1 para evitar 0
 
+  const outletContext = useOutletContext();
+  const setPageHeader = outletContext?.setPageHeader;
+
+  // --- BREADCRUMB & HEADER: Hooks DEVEM ficar ANTES dos early returns (Rules of Hooks) ---
+  const pageTitle = useMemo(() => {
+    const rawPlural = metadata?.display_name_plural || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return statusFilter && statusFilter !== 'Todos' ? `${rawPlural} (${statusFilter})` : rawPlural;
+  }, [metadata, modelName, statusFilter]);
+
+  const breadcrumbCrumbs = useMemo(() => {
+    const activeModel = paramModelName || modelName;
+    const entry = MODULE_MAP[activeModel];
+    const crumbs = [{ label: 'Home', path: '/dashboard' }];
+
+    const rawPlural = metadata?.display_name_plural || metadata?.display_name || HUMAN_MODEL_NAMES[activeModel] || activeModel.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const currentPageLabel = statusFilter && statusFilter !== 'Todos' ? statusFilter : rawPlural;
+
+    if (entry) {
+      // Adiciona o módulo pai se seu nome for diferente da página atual (evita duplicados tipo "Pedidos > Pedidos")
+      const isSameLabel = entry.module.toLowerCase() === currentPageLabel.toLowerCase();
+      if (!isSameLabel) {
+        crumbs.push({ label: entry.module, path: entry.modulePath });
+      }
+    }
+
+    crumbs.push({ label: currentPageLabel, path: null });
+    return crumbs;
+  }, [paramModelName, modelName, statusFilter, metadata]);
+
+  useEffect(() => {
+    if (setPageHeader && metadata) {
+      setPageHeader({
+        title: pageTitle,
+        crumbs: breadcrumbCrumbs
+      });
+    }
+  }, [pageTitle, breadcrumbCrumbs, setPageHeader, metadata]);
+
   // Loading inicial (enquanto busca metadados)
   if (loadingMetadata) {
     return <LoadingSpinner />;
@@ -2451,20 +2581,18 @@ const GenericList = () => {
     return <div className="p-6">Metadados não encontrados.</div>;
   }
 
-  // Pega o nome plural direto dos metadados (que agora vem do backend)
-  const pageTitlePlural = metadata.display_name_plural || metadata.display_name;
-
-  const pageTitle = statusFilter ? `${pageTitlePlural} (${statusFilter})` : pageTitlePlural;
-
   return (
     // Fundo cinza claro para a página, como na imagem
-    <div className="bg-gray-100 min-h-screen p-16">
+    <div className="bg-gray-100 min-h-screen p-8">
       <div className="container mx-auto">
-        {/* Header (Título e Filtros) */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-          <h1 className="text-4xl font-bold text-gray-800">
-            {pageTitle}
-          </h1>
+        {/* Header (Breadcrumb, Título e Filtros) */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <div className="flex flex-col gap-1">
+            <Breadcrumb crumbs={breadcrumbCrumbs} />
+            <h1 className="text-2xl font-bold text-gray-800 tracking-tight">
+              {pageTitle}
+            </h1>
+          </div>
 
           {/* Filtros e Pesquisa */}
           <div className="flex flex-wrap items-center gap-2 mb-[-30px]">
@@ -3401,8 +3529,8 @@ const GenericList = () => {
             <table className="w-full min-w-max">
               <thead className="bg-gray-50">
                 <tr className="border-b border-gray-200">
-                  {/* Colunas Dinâmicas */}
-                  {columnsToDisplay.map((colName, idx) => {
+                  {/* Colunas Dinâmicas com Pré-Visualização em Tempo Real */}
+                  {displayColumns.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
                     const isCurrency = field?.format_mask === 'currency';
                     const sortList = getSortArray(userPreferences.sort);
@@ -3410,20 +3538,21 @@ const GenericList = () => {
                     const sort = sortIdx !== -1 ? sortList[sortIdx] : null;
                     const sortPriority = sortIdx !== -1 ? sortIdx + 1 : null;
 
+                    const isDraggingThis = colName === draggedColName;
+
                     return (
                       <th
                         key={colName}
                         draggable={isEditMode}
-                        onDragStart={(e) => isEditMode && e.dataTransfer.setData('colIndex', idx)}
-                        onDragOver={(e) => isEditMode && e.preventDefault()}
-                        onDrop={(e) => {
-                          if (!isEditMode) return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const fromIdx = e.dataTransfer.getData('colIndex');
-                          moveColumn(parseInt(fromIdx), idx);
-                        }}
-                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left ${isEditMode ? 'cursor-move hover:bg-gray-100 group' : ''}`}
+                        onDragStart={(e) => handleColumnDragStart(e, colName)}
+                        onDragOver={(e) => handleColumnDragOver(e, colName)}
+                        onDrop={(e) => handleColumnDrop(e, colName)}
+                        onDragEnd={handleColumnDragEnd}
+                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-all duration-200 ease-in-out ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : ''
+                          } ${isDraggingThis
+                            ? 'bg-blue-100/90 text-blue-900 border-2 border-dashed border-blue-500 shadow-lg scale-[0.98] opacity-80 z-20'
+                            : ''
+                          }`}
                       >
                         <div className="flex items-center gap-2 justify-between">
                           <div className="flex items-center gap-1 truncate">
@@ -3534,7 +3663,7 @@ const GenericList = () => {
                               </div>
                               <div className="max-h-60 overflow-y-auto p-1">
                                 {metadata.fields
-                                  .filter(f => !columnsToDisplay.includes(f.name))
+                                  .filter(f => !displayColumns.includes(f.name))
                                   .filter(f => f.label.toLowerCase().includes(addColumnSearch.toLowerCase()) || f.name.toLowerCase().includes(addColumnSearch.toLowerCase()))
                                   .map(f => (
                                     <button
@@ -3560,20 +3689,20 @@ const GenericList = () => {
               {/* Corpo da Tabela */}
               <tbody className="bg-white">
                 {isFetchingData && data.length === 0 ? (
-                  <TableSkeleton columns={isEditMode ? [...columnsToDisplay, ''] : columnsToDisplay} rows={limit} />
+                  <TableSkeleton columns={isEditMode ? [...displayColumns, ''] : displayColumns} rows={limit} />
                 ) : (
                   <>
                     {/* 8. Feedback de 'Nenhum resultado' ou 'Erro de dados' */}
                     {!isFetchingData && error && data.length === 0 && (
                       <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
+                        <td colSpan={displayColumns.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
                           {error}
                         </td>
                       </tr>
                     )}
                     {!isFetchingData && !error && data.length === 0 && (
                       <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={columnsToDisplay.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
+                        <td colSpan={displayColumns.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
                           Nenhum registro encontrado.
                         </td>
                       </tr>
@@ -3598,6 +3727,10 @@ const GenericList = () => {
                               break;
                             }
                           }
+                        }
+
+                        if (colName === 'id_sequencial') {
+                          return <span className="font-semibold text-gray-700">{value ?? item.id}</span>;
                         }
 
                         if (colName === 'trigger' && modelName === 'email_regras' && value) {
@@ -3717,11 +3850,20 @@ const GenericList = () => {
                             : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
                             }`}
                         >
-                          {columnsToDisplay.map((colName) => (
-                            <td key={colName} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                              {renderCellContent(item, colName)}
-                            </td>
-                          ))}
+                          {displayColumns.map((colName) => {
+                            const isDraggingCell = colName === draggedColName;
+                            return (
+                              <td
+                                key={colName}
+                                className={`px-6 py-4 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
+                                  ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
+                                  : ''
+                                  }`}
+                              >
+                                {renderCellContent(item, colName)}
+                              </td>
+                            );
+                          })}
                           {isEditMode && <td className="bg-gray-50/30"></td>}
                         </tr>
                       );
@@ -3742,7 +3884,7 @@ const GenericList = () => {
                                   onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
                                   title="Clique para selecionar este inventário"
                                 >
-                                  <td colSpan={columnsToDisplay.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
+                                  <td colSpan={displayColumns.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-3">
                                         <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
@@ -3779,7 +3921,7 @@ const GenericList = () => {
                           {/* Linhas vazias para preencher o card (sem bordas internas) */}
                           {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
                             <tr key={`empty-${i}`} className="h-[53px]">
-                              {columnsToDisplay.map((colName) => (
+                              {displayColumns.map((colName) => (
                                 <td key={`empty-${i}-${colName}`} className="px-6 py-4 whitespace-nowrap text-sm">
                                   &nbsp;
                                 </td>
@@ -3791,7 +3933,7 @@ const GenericList = () => {
                           {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
                           {hasTotalsField && data.length > 0 && (
                             <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
-                              {columnsToDisplay.map((colName, idx) => {
+                              {displayColumns.map((colName, idx) => {
                                 const field = fieldMetaMap.get(colName);
                                 const isCurrency = field?.format_mask === 'currency';
 
@@ -3895,9 +4037,9 @@ const GenericList = () => {
         >
           {selectedRowIds.length > 1
             ? (actionToConfirm?.newStatus === 'Despachado'
-                ? `Deseja marcar os ${selectedRowIds.length} pedidos selecionados como Despachado? Isso indica que eles saíram para entrega.`
-                : `Deseja alterar a situação dos ${selectedRowIds.length} itens selecionados para "${actionToConfirm?.newStatus}"?`
-              )
+              ? `Deseja marcar os ${selectedRowIds.length} pedidos selecionados como Despachado? Isso indica que eles saíram para entrega.`
+              : `Deseja alterar a situação dos ${selectedRowIds.length} itens selecionados para "${actionToConfirm?.newStatus}"?`
+            )
             : (actionToConfirm?.modalDescription || "Você tem certeza?")
           }
         </Modal>

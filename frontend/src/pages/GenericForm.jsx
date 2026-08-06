@@ -1,18 +1,19 @@
 // src/pages/GenericForm.jsx
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/axiosConfig';
 import FormRenderer from '../components/form/FormRenderer';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { Save, X, Loader2, RefreshCw } from 'lucide-react';
-import { toast } from 'react-toastify';
+import { Save, X, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 
-const GenericForm = ({ modelName: propModelName }) => {
-  const { modelName: paramModelName, id } = useParams();
+const GenericForm = ({ modelName: propModelName, propId }) => {
+  const { modelName: paramModelName, id: paramId } = useParams();
   const { user } = useAuth();
   const modelName = propModelName || paramModelName;
+  const id = propId !== undefined ? propId : paramId;
   const navigate = useNavigate();
   const isEditMode = !!id;
 
@@ -23,6 +24,11 @@ const GenericForm = ({ modelName: propModelName }) => {
   const [tabs, setTabs] = useState([]);
   // Armazena o NOME da aba ativa
   const [activeTab, setActiveTab] = useState('');
+
+  // --- ESTADOS PARA SUBABAS (sub_tab) ---
+  const [activeSubTabMap, setActiveSubTabMap] = useState({});
+  const [openSubTabDropdown, setOpenSubTabDropdown] = useState(null);
+  const subTabDropdownRef = useRef(null);
 
   // --- ESTADO PARA PARCELAMENTO (CONTAS) ---
   const [installmentConfig, setInstallmentConfig] = useState({
@@ -86,7 +92,7 @@ const GenericForm = ({ modelName: propModelName }) => {
       // 1. Prioridade: Default vindo do Backend (Model/Metadata)
       if (field.default_value !== undefined && field.default_value !== null) {
         initialData[field.name] = field.default_value;
-        return; 
+        return;
       }
 
       // Trata APENAS checkboxes puros como booleano
@@ -157,9 +163,15 @@ const GenericForm = ({ modelName: propModelName }) => {
         const tabNameMap = {}; // Ex: { 'Dados Gerais': 0, 'Endereço': 1 }
 
         const isAdmin = user?.perfil === 'admin' || user?.perfil === 'Admin';
+        const isSingleRecordModel = meta.is_single_record ||
+          modelName === 'empresas' ||
+          modelName?.endsWith('_configuracoes') ||
+          modelName?.endsWith('_configuracao');
 
         meta.fields.forEach((field) => {
           if (field.name === 'id') return;
+          if (isSingleRecordModel && field.name === 'id_sequencial') return;
+          if (field.visible === false) return;
 
           const tabName = field.tab || 'Dados Gerais';
 
@@ -174,10 +186,10 @@ const GenericForm = ({ modelName: propModelName }) => {
 
           // Adiciona o campo na aba correta (pelo índice salvo)
           const tabIndex = tabNameMap[tabName];
-          
+
           // Se for admin e o campo for data_emissao, ou se for total/total_desconto do pedido, garante que não seja read_only para o FormRenderer
           const fieldToPush = (field.name === 'data_emissao' && isAdmin) || (modelName === 'pedidos' && (field.name === 'total' || field.name === 'total_desconto'))
-            ? { ...field, read_only: false } 
+            ? { ...field, read_only: false }
             : field;
 
           structuredTabs[tabIndex].fields.push(fieldToPush);
@@ -185,8 +197,18 @@ const GenericForm = ({ modelName: propModelName }) => {
 
         setTabs(structuredTabs);
 
+        // Pré-seleciona a primeira subaba de cada aba que possui sub_tabs
+        const initialSubTabMap = {};
+        structuredTabs.forEach(tab => {
+          const firstSubTab = tab.fields.find(f => f.sub_tab && f.visible !== false)?.sub_tab;
+          if (firstSubTab) {
+            initialSubTabMap[tab.name] = firstSubTab;
+          }
+        });
+        setActiveSubTabMap(initialSubTabMap);
+
         // Define a primeira aba VISÍVEL como ativa
-        const firstVisibleTab = structuredTabs.find(tab => 
+        const firstVisibleTab = structuredTabs.find(tab =>
           tab.fields.some(field => field.visible !== false)
         );
         if (firstVisibleTab) {
@@ -202,6 +224,17 @@ const GenericForm = ({ modelName: propModelName }) => {
     fetchMetadata();
   }, [modelName, user?.perfil]);
 
+  // Fecha o dropdown de subabas ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (subTabDropdownRef.current && !subTabDropdownRef.current.contains(e.target)) {
+        setOpenSubTabDropdown(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // useEffect para cálculo automático de totais (Pedidos)
   useEffect(() => {
     if (modelName === 'pedidos') {
@@ -213,13 +246,13 @@ const GenericForm = ({ modelName: propModelName }) => {
         const qtd = Number(item.quantidade) || 0;
         const preco = Number(item.valor_unitario) || 0;
         const ipiAliquota = Number(item.ipi_aliquota) || 0;
-        
+
         // Se o item já tiver o total calculado (com IPI), usa ele, 
         // senão calcula: (qtd * preco) + IPI
         const subtotal = qtd * preco;
         const valorIpi = Number(item.valor_ipi) || (subtotal * (ipiAliquota / 100));
         const totalItem = (item.total_com_ipi !== undefined && item.total_com_ipi !== null) ? Number(item.total_com_ipi) : (subtotal + valorIpi);
-        
+
         return acc + totalItem;
       }, 0);
 
@@ -326,7 +359,7 @@ const GenericForm = ({ modelName: propModelName }) => {
         try {
           const itemRes = await api.get(`/generic/${modelName}/${id}`);
           setFormData(itemRes.data);
-          
+
           // 🎯 CORREÇÃO: Evita que o preenchimento automático de endereço 
           // sobreponha o endereço já salvo no pedido ao carregar o formulário.
           if (modelName === 'pedidos' && itemRes.data.id_cliente) {
@@ -357,7 +390,7 @@ const GenericForm = ({ modelName: propModelName }) => {
       // 1. Busca dados do CEP (Rua, Bairro, Cidade, Estado)
       const res = await fetch(`https://brasilapi.com.br/api/cep/v2/${cep}`);
       if (!res.ok) return;
-      
+
       const data = await res.json();
 
       setFormData(prev => ({
@@ -377,9 +410,9 @@ const GenericForm = ({ modelName: propModelName }) => {
             // Normalização para comparação segura (remove acentos e uppercase)
             const normalize = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/-/g, " ").toUpperCase();
             const targetCity = normalize(data.city);
-            
+
             const found = cities.find(c => normalize(c.nome) === targetCity);
-            
+
             if (found) {
               setFormData(prev => ({
                 ...prev,
@@ -444,7 +477,7 @@ const GenericForm = ({ modelName: propModelName }) => {
   // Handler genérico para atualizar o estado do formulário
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    
+
     // Registra qual campo está sendo editado para a lógica de cálculo reverso
     lastEditedField.current = name;
 
@@ -471,7 +504,7 @@ const GenericForm = ({ modelName: propModelName }) => {
 
       // Clear classification when account type is changed
       if (modelName === 'contas' && name === 'tipo_conta') {
-         newData.id_classificacao_contabil = null;
+        newData.id_classificacao_contabil = null;
       }
 
       // Automação para Contas: Se marcar como Pago e não tiver data de baixa, define hoje
@@ -546,7 +579,7 @@ const GenericForm = ({ modelName: propModelName }) => {
       // 03: Cartão de Crédito, 05: Crédito Loja, 14: Duplicata, 15: Boleto
       const installmentTypes = ['03', '05', '14', '15'];
       const isInstallment = installmentTypes.includes(formData.pagamento);
-      
+
       setInstallmentConfig(prev => ({
         ...prev,
         active: isInstallment
@@ -567,9 +600,9 @@ const GenericForm = ({ modelName: propModelName }) => {
       if (field.required && field.visible !== false && field.read_only !== true) {
         const val = formData[field.name];
         if (
-          val === null || 
-          val === undefined || 
-          String(val).trim() === '' || 
+          val === null ||
+          val === undefined ||
+          String(val).trim() === '' ||
           (Array.isArray(val) && val.length === 0)
         ) {
           errors[field.name] = `${field.label} é obrigatório.`;
@@ -628,11 +661,11 @@ const GenericForm = ({ modelName: propModelName }) => {
           for (let i = 1; i <= num; i++) {
             const currentData = { ...formData };
             currentData.valor = valuePerInstallment;
-            
+
             // Formata descrição: "Descrição Original (Parcela 1/10)"
             const descBase = formData.descricao || '';
             currentData.descricao = num > 1 ? `${descBase} (Parcela ${i}/${num})` : descBase;
-            
+
             // Calcula data de vencimento
             let dueDate = new Date(baseDate);
             if (i > 1) {
@@ -679,7 +712,7 @@ const GenericForm = ({ modelName: propModelName }) => {
     if (e.key === 'Tab' && !e.shiftKey) {
       const currentTab = visibleTabs[tabIndex];
       if (!currentTab) return;
-      
+
       // Encontra o índice do último campo VISÍVEL desta aba
       let lastVisibleIndex = -1;
       for (let i = currentTab.fields.length - 1; i >= 0; i--) {
@@ -696,7 +729,7 @@ const GenericForm = ({ modelName: propModelName }) => {
           e.preventDefault();
           const nextTab = visibleTabs[tabIndex + 1];
           setActiveTab(nextTab.name);
-          
+
           // Foca no primeiro campo VISÍVEL da próxima aba
           setTimeout(() => {
             const firstVisibleField = nextTab.fields.find(f => f.type !== 'hidden' && f.visible !== false);
@@ -712,55 +745,115 @@ const GenericForm = ({ modelName: propModelName }) => {
     }
   };
 
+  const outletContext = useOutletContext();
+  const setPageHeader = outletContext?.setPageHeader;
+
+  // --- BREADCRUMB & HEADER: Hooks DEVEM ficar ANTES dos early returns (Rules of Hooks) ---
+  const pageTitle = useMemo(() => {
+    const singularName = metadata?.display_name_singular || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return isEditMode ? `Editar ${singularName}` : `Novo ${singularName}`;
+  }, [metadata, modelName, isEditMode]);
+
+  const breadcrumbCrumbs = useMemo(() => {
+    const entry = MODULE_MAP[modelName];
+    const crumbs = [{ label: 'Home', path: '/dashboard' }];
+
+    const singularName = metadata?.display_name_singular || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const currentPageLabel = isEditMode ? `Editar ${singularName}` : `Novo ${singularName}`;
+
+    if (entry) {
+      crumbs.push({ label: entry.module, path: entry.modulePath || `/${modelName}` });
+    }
+
+    crumbs.push({ label: currentPageLabel, path: null });
+    return crumbs;
+  }, [modelName, metadata, isEditMode]);
+
+  useEffect(() => {
+    if (setPageHeader && metadata) {
+      setPageHeader({
+        title: pageTitle,
+        crumbs: breadcrumbCrumbs
+      });
+    }
+  }, [pageTitle, breadcrumbCrumbs, setPageHeader, metadata]);
+
   if (loadingMetadata) {
     return <LoadingSpinner />;
   }
-
-  // Textos dos botões e título (MANTIDOS DO SEU CÓDIGO ORIGINAL)
-  const pageTitle = isEditMode
-    ? `Editar ${metadata?.display_name_singular || metadata?.display_name || modelName}`
-    : `Novo ${metadata?.display_name_singular || metadata?.display_name || modelName}`; 
 
   // --- INÍCIO DAS MUDANÇAS DE LAYOUT ---
 
   return (
     // Para replicar a imagem, adicionamos um fundo cinza à página
-    <div className="bg-gray-100 min-h-screen p-16">
+    <div className="bg-gray-100 min-h-screen p-8">
       <div className="container mx-auto max-w-7xl"> {/* Limita a largura máxima */}
         <form onSubmit={handleSubmit} autoComplete="off">
           <div className="">
 
-            {/* 1. CABEÇALHO DO CARD: Título e Separador */}
-            <h1 className="text-4xl font-bold text-gray-800 mb-6">
-              {/* Usamos o pageTitle dinâmico do seu código, 
-                  mas você pode travar para "Novo Cadastro" se preferir:
-                  {isEditMode ? `Editar ${metadata.display_name}` : "Novo Cadastro"}
-                */}
-              {pageTitle}
-            </h1>
+            {/* 1. CABEÇALHO DO CARD: Breadcrumb e Título */}
+            <div className="flex flex-col gap-1 mb-6">
+              <Breadcrumb crumbs={breadcrumbCrumbs} />
+              <h1 className="text-2xl font-bold text-gray-800 tracking-tight">
+                {pageTitle}
+              </h1>
+            </div>
 
-            {/* --- 3. RENDERIZAÇÃO DA BARRA DE ABAS --- */}
+            {/* --- 3. RENDERIZAÇÃO DA BARRA DE ABAS E SUBABAS --- */}
             {visibleTabs.length > 0 && (
               <div className="mb-4 border-b border-gray-200">
-                {/* Ajuste no espaçamento para ficar mais parecido com a imagem */}
-                <nav className="-mb-px flex space-x-2" aria-label="Tabs">
-                  {visibleTabs.map((tab) => (
-                    <button
-                      key={tab.name}
-                      type="button" // Importante: impede o submit do form
-                      onClick={() => setActiveTab(tab.name)}
-                      className={`whitespace-nowrap py-3 px-4 border-b-2 
-                                  font-medium text-base
-                                  ${activeTab === tab.name
-                          // (Ativo) Botão sólido com fundo, texto branco e borda da mesma cor
-                          ? 'bg-teal-600 text-white rounded-t-lg border-teal-600'
-                          // (Inativo) Apenas texto, com borda transparente
-                          : 'border-transparent text-gray-500 hover:text-gray-700'
-                        }`}
-                    >
-                      {tab.name}
-                    </button>
-                  ))}
+                <nav ref={subTabDropdownRef} className="-mb-px flex space-x-2" aria-label="Tabs">
+                  {visibleTabs.map((tab) => {
+                    const subTabs = Array.from(new Set(tab.fields.map(f => f.sub_tab).filter(Boolean)));
+                    const hasSubTabs = subTabs.length > 0;
+                    const isTabActive = activeTab === tab.name;
+
+                    return (
+                      <div key={tab.name} className="relative inline-block">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab(tab.name);
+                            if (hasSubTabs) {
+                              setOpenSubTabDropdown(prev => (prev === tab.name ? null : tab.name));
+                            } else {
+                              setOpenSubTabDropdown(null);
+                            }
+                          }}
+                          className={`whitespace-nowrap py-3 px-4 border-b-2 font-medium text-base flex items-center gap-1.5 cursor-pointer ${isTabActive
+                            ? 'bg-teal-600 text-white rounded-t-lg border-teal-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                            }`}
+                        >
+                          <span>{tab.name}</span>
+                          {hasSubTabs && (
+                            <ChevronDown className={`w-4 h-4 transition-transform ${openSubTabDropdown === tab.name ? 'rotate-180' : ''}`} />
+                          )}
+                        </button>
+
+                        {/* Dropdown de Subabas (aparece ao clicar na aba/setinha) */}
+                        {hasSubTabs && openSubTabDropdown === tab.name && (
+                          <div className="absolute left-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1 font-sans">
+                            {subTabs.map(subName => (
+                              <button
+                                key={subName}
+                                type="button"
+                                onClick={() => {
+                                  setActiveTab(tab.name);
+                                  setActiveSubTabMap(prev => ({ ...prev, [tab.name]: subName }));
+                                  setOpenSubTabDropdown(null);
+                                }}
+                                className={`w-full text-left px-4 py-2 text-xs font-semibold hover:bg-gray-50 transition-colors flex items-center justify-between ${activeSubTabMap[tab.name] === subName ? 'text-teal-600 font-bold bg-teal-50/50' : 'text-gray-700'
+                                  }`}
+                              >
+                                <span>{subName}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </nav>
               </div>
             )}
@@ -776,7 +869,20 @@ const GenericForm = ({ modelName: propModelName }) => {
               ) : (
                 // Itera sobre as abas e renderiza o conteúdo
                 visibleTabs.map((tab, tabIndex) => {
-                  const hasCol3 = tab.fields.some(f => f.col_span === 3);
+                  const currentSubTab = activeSubTabMap[tab.name] || null;
+                  const isSingleRecordModel = metadata?.is_single_record ||
+                    modelName === 'empresas' ||
+                    modelName?.endsWith('_configuracoes') ||
+                    modelName?.endsWith('_configuracao');
+                  const filteredFields = tab.fields.filter(field => {
+                    if (field.visible === false) return false;
+                    if (field.name === 'id') return false;
+                    if (isSingleRecordModel && field.name === 'id_sequencial') return false;
+                    if (currentSubTab && field.sub_tab && field.sub_tab !== currentSubTab) return false;
+                    return true;
+                  });
+
+                  const hasCol3 = filteredFields.some(f => f.col_span === 3);
                   const gridColsClass = hasCol3 ? 'grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4' : 'grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4';
 
                   return (
@@ -784,75 +890,73 @@ const GenericForm = ({ modelName: propModelName }) => {
                       key={tab.name}
                       className={activeTab !== tab.name ? 'hidden' : ''}
                     >
-                        <div className={gridColsClass}>
-                          {/* Renderiza apenas os campos da aba ativa */}
-                          {tab.fields.map((field, fieldIndex) => {
-                            if (field.visible === false) return null;
+                      <div className={gridColsClass}>
+                        {/* Renderiza apenas os campos da aba ativa e subaba selecionada */}
+                        {filteredFields.map((field, fieldIndex) => {
+                          let colSpanClass = '';
+                          if (field.col_span === 3) colSpanClass = 'md:col-span-3';
+                          else if (field.col_span === 2) colSpanClass = 'md:col-span-2';
 
-                            let colSpanClass = '';
-                            if (field.col_span === 3) colSpanClass = 'md:col-span-3';
-                            else if (field.col_span === 2) colSpanClass = 'md:col-span-2';
+                          // O FormRenderer é envolvido por uma div para aplicar o col-span.
+                          // A 'key' é movida para o elemento mais externo do loop.
+                          return (
+                            <React.Fragment key={field.name}>
+                              <div className={colSpanClass}>
+                                <FormRenderer
+                                  field={field.name === 'valor' && installmentConfig.active ? { ...field, label: 'Valor da Parcela' } : field}
+                                  value={formData[field.name] ?? ''}
+                                  onChange={handleChange}
+                                  error={formErrors[field.name]}
+                                  modelName={modelName}
+                                  formData={formData}
+                                  onKeyDown={(e) => handleTabPress(e, tabIndex, fieldIndex)}
+                                />
+                              </div>
 
-                        // O FormRenderer é envolvido por uma div para aplicar o col-span.
-                        // A 'key' é movida para o elemento mais externo do loop.
-                        return (
-                          <React.Fragment key={field.name}>
-                            <div className={colSpanClass}>
-                              <FormRenderer
-                                field={field.name === 'valor' && installmentConfig.active ? { ...field, label: 'Valor da Parcela' } : field}
-                                value={formData[field.name] ?? ''}
-                                onChange={handleChange}
-                                error={formErrors[field.name]}
-                                modelName={modelName}
-                                formData={formData}
-                                onKeyDown={(e) => handleTabPress(e, tabIndex, fieldIndex)}
-                              />
-                            </div>
-
-                            {/* Injeção dos campos de parcelamento logo após o campo 'valor' */}
-                            {modelName === 'contas' && !isEditMode && installmentConfig.active && field.name === 'valor' && (
-                              <>
-                                <div className="flex flex-col">
-                                  <label className="mb-1.5 text-sm font-medium text-gray-700">Nº de Parcelas</label>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={installmentConfig.count}
-                                    onChange={(e) => setInstallmentConfig({ ...installmentConfig, count: parseInt(e.target.value) || 1 })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                                  />
-                                </div>
-
-                                <div className="flex flex-col">
-                                  <label className="mb-1.5 text-sm font-medium text-gray-700">Tipo de Vencimento</label>
-                                  <select
-                                    value={installmentConfig.type}
-                                    onChange={(e) => setInstallmentConfig({ ...installmentConfig, type: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                                  >
-                                    <option value="monthly">Mensal (Mesmo dia de cada mês)</option>
-                                    <option value="days">Intervalo de Dias (ex: a cada 30 dias)</option>
-                                  </select>
-                                </div>
-
-                                {installmentConfig.type === 'days' && (
+                              {/* Injeção dos campos de parcelamento logo após o campo 'valor' */}
+                              {modelName === 'contas' && !isEditMode && installmentConfig.active && field.name === 'valor' && (
+                                <>
                                   <div className="flex flex-col">
-                                    <label className="mb-1.5 text-sm font-medium text-gray-700">Dias entre Parcelas</label>
+                                    <label className="mb-1.5 text-sm font-medium text-gray-700">Nº de Parcelas</label>
                                     <input
                                       type="number"
                                       min="1"
-                                      value={installmentConfig.interval}
-                                      onChange={(e) => setInstallmentConfig({ ...installmentConfig, interval: parseInt(e.target.value) || 30 })}
+                                      value={installmentConfig.count}
+                                      onChange={(e) => setInstallmentConfig({ ...installmentConfig, count: parseInt(e.target.value) || 1 })}
                                       className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                                     />
                                   </div>
-                                )}
-                              </>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                        </div>
+
+                                  <div className="flex flex-col">
+                                    <label className="mb-1.5 text-sm font-medium text-gray-700">Tipo de Vencimento</label>
+                                    <select
+                                      value={installmentConfig.type}
+                                      onChange={(e) => setInstallmentConfig({ ...installmentConfig, type: e.target.value })}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                    >
+                                      <option value="monthly">Mensal (Mesmo dia de cada mês)</option>
+                                      <option value="days">Intervalo de Dias (ex: a cada 30 dias)</option>
+                                    </select>
+                                  </div>
+
+                                  {installmentConfig.type === 'days' && (
+                                    <div className="flex flex-col">
+                                      <label className="mb-1.5 text-sm font-medium text-gray-700">Dias entre Parcelas</label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={installmentConfig.interval}
+                                        onChange={(e) => setInstallmentConfig({ ...installmentConfig, interval: parseInt(e.target.value) || 30 })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                      />
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })

@@ -335,10 +335,15 @@ class IntelipostService:
         seller_first = seller_parts[0]
         seller_last = seller_parts[1] if len(seller_parts) > 1 else "."
 
-        # Prefixo para o número do pedido (3 primeiras letras do Fantasia)
+        # Prefixo para o número do pedido (3 primeiras letras do Fantasia + ID Sequencial + 'N')
         nome_base = empresa.fantasia if empresa.fantasia else (empresa.razao or "")
         prefixo = nome_base.strip()[:3].upper()
-        numero_pedido_intelipost = f"{prefixo}{pedido.id}"
+        codigo_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
+        numero_pedido_intelipost = f"{prefixo}{codigo_pedido}N"
+
+        # Salva o id_pedido_intelipost no pedido
+        pedido.id_pedido_intelipost = numero_pedido_intelipost
+        self.db.commit()
 
         # -------------------------------------------------------------
         # CORREÇÃO 1: Datas sem microsegundos e Lógica de Estimativa
@@ -551,7 +556,12 @@ class IntelipostService:
             print("="*60 + "\n")
 
             response.raise_for_status()
-            return response.json()
+            res_json = response.json()
+            pedido.intelipost_criado = True
+            if isinstance(res_json.get("content"), dict) and res_json["content"].get("id"):
+                pedido.intelipost_id = str(res_json["content"]["id"])
+            self.db.commit()
+            return res_json
         except httpx.HTTPStatusError as e:
             # Tenta extrair a mensagem amigável do JSON da Intelipost
             try:

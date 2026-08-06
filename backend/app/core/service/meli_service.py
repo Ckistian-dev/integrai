@@ -1123,7 +1123,7 @@ class MeliService:
         logger.info(f"Tentando upload XML Mercado Livre com IDs: shipment_id={shipment_id}, pack_id={pack_id}, order_id={order_id}")
 
         params = {"siteId": "MLB", "site_id": "MLB"}
-        last_error_msg = None
+        errors_logged = []
 
         def is_already_sent_response(resp_status: int, resp_text: str) -> bool:
             txt = resp_text.lower()
@@ -1131,57 +1131,62 @@ class MeliService:
                 return True
             return False
 
-        # --- ESTRATÉGIA 1: POST /shipments/{shipment_id}/invoice_data com Raw XML (Mercado Envios ME2) ---
+        def check_biller_error(resp_status: int, resp_text: str):
+            if resp_status == 403 and "biller" in resp_text.lower():
+                return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
+            return None
+
+        # --- ESTRATÉGIA 1: POST /shipments/{shipment_id}/invoice_data com Raw XML (Content-Type: application/xml) ---
         if shipment_id:
             try:
                 url_ship = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
-                logger.debug(f"Tentativa 1 (Raw XML): {url_ship}")
+                logger.debug(f"Tentativa 1 (Raw application/xml): {url_ship}")
                 resp1 = await client.post(url_ship, content=xml_bytes, headers={"Content-Type": "application/xml"}, params=params)
                 
+                biller_warn = check_biller_error(resp1.status_code, resp1.text)
+                if biller_warn:
+                    return biller_warn
+
                 if resp1.status_code in [200, 201]:
                     logger.info(f"✅ XML anexado com sucesso via raw application/xml (shipment {shipment_id})")
                     return {"status": "success"}
                 elif is_already_sent_response(resp1.status_code, resp1.text):
                     logger.warning(f"XML já consta no ML para shipment {shipment_id}")
                     return {"status": "already_sent"}
-                elif resp1.status_code == 403 and "biller" in resp1.text.lower():
-                    return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
                 else:
-                    last_error_msg = f"Shipment Raw XML ({resp1.status_code}): {resp1.text}"
-                    logger.debug(f"Tentativa 1 não concluída: {last_error_msg}")
+                    err_str = f"Raw application/xml ({resp1.status_code}): {resp1.text}"
+                    errors_logged.append(err_str)
+                    logger.debug(f"Tentativa 1 não concluída: {err_str}")
             except Exception as e:
-                logger.debug(f"Falha na tentativa 1: {e}")
+                logger.debug(f"Exceção na tentativa 1: {e}")
+                errors_logged.append(f"Raw application/xml erro interno: {e}")
 
-        # --- ESTRATÉGIA 2: POST /packs/{pack_id}/fiscal_documents ou /orders/{order_id}/fiscal_documents com Multipart (Envio Próprio / Outras Transportadoras / Packs) ---
-        target_docs_url = None
-        if pack_id:
-            target_docs_url = f"{self.base_url}/packs/{pack_id}/fiscal_documents"
-        elif order_id:
-            target_docs_url = f"{self.base_url}/orders/{order_id}/fiscal_documents"
-
-        if target_docs_url:
+        # --- ESTRATÉGIA 2: POST /shipments/{shipment_id}/invoice_data com Raw XML (Content-Type: text/xml) ---
+        if shipment_id:
             try:
-                logger.debug(f"Tentativa 2 (Multipart Fiscal Docs): {target_docs_url}")
-                files = {
-                    'fiscal_document': ('nfe.xml', xml_bytes, 'application/xml')
-                }
-                resp2 = await client.post(target_docs_url, files=files, params=params)
+                url_ship_txt = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
+                logger.debug(f"Tentativa 2 (Raw text/xml): {url_ship_txt}")
+                resp2 = await client.post(url_ship_txt, content=xml_bytes, headers={"Content-Type": "text/xml; charset=utf-8"}, params=params)
                 
+                biller_warn = check_biller_error(resp2.status_code, resp2.text)
+                if biller_warn:
+                    return biller_warn
+
                 if resp2.status_code in [200, 201]:
-                    logger.info(f"✅ XML anexado com sucesso via multipart/form-data fiscal_documents ({target_docs_url})")
+                    logger.info(f"✅ XML anexado com sucesso via raw text/xml (shipment {shipment_id})")
                     return {"status": "success"}
                 elif is_already_sent_response(resp2.status_code, resp2.text):
-                    logger.warning(f"XML já consta no ML em fiscal_documents")
+                    logger.warning(f"XML já consta no ML para shipment {shipment_id}")
                     return {"status": "already_sent"}
-                elif resp2.status_code == 403 and "biller" in resp2.text.lower():
-                    return {"status": "warning", "message": "Upload ignorado: Sua conta está configurada para usar o Faturador do Mercado Livre. Desative-o no painel do ML para emitir pelo ERP."}
                 else:
-                    last_error_msg = f"Fiscal Documents ({resp2.status_code}): {resp2.text}"
-                    logger.debug(f"Tentativa 2 não concluída: {last_error_msg}")
+                    err_str = f"Raw text/xml ({resp2.status_code}): {resp2.text}"
+                    errors_logged.append(err_str)
+                    logger.debug(f"Tentativa 2 não concluída: {err_str}")
             except Exception as e:
-                logger.debug(f"Falha na tentativa 2: {e}")
+                logger.debug(f"Exceção na tentativa 2: {e}")
+                errors_logged.append(f"Raw text/xml erro interno: {e}")
 
-        # --- ESTRATÉGIA 3: POST /shipments/{shipment_id}/invoice_data com Multipart (Fallback Envio Próprio / ME1) ---
+        # --- ESTRATÉGIA 3: POST /shipments/{shipment_id}/invoice_data com Multipart (fiscal_document) ---
         if shipment_id:
             try:
                 url_ship_mp = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
@@ -1190,119 +1195,133 @@ class MeliService:
                     'fiscal_document': ('nfe.xml', xml_bytes, 'application/xml')
                 }
                 resp3 = await client.post(url_ship_mp, files=files, params=params)
+                
+                biller_warn = check_biller_error(resp3.status_code, resp3.text)
+                if biller_warn:
+                    return biller_warn
+
                 if resp3.status_code in [200, 201]:
                     logger.info(f"✅ XML anexado com sucesso via multipart em shipment {shipment_id}")
                     return {"status": "success"}
                 elif is_already_sent_response(resp3.status_code, resp3.text):
                     return {"status": "already_sent"}
                 else:
-                    last_error_msg = f"Shipment Multipart ({resp3.status_code}): {resp3.text}"
+                    err_str = f"Shipment Multipart ({resp3.status_code}): {resp3.text}"
+                    errors_logged.append(err_str)
+                    logger.debug(f"Tentativa 3 não concluída: {err_str}")
             except Exception as e:
-                logger.debug(f"Falha na tentativa 3: {e}")
+                logger.debug(f"Exceção na tentativa 3: {e}")
+                errors_logged.append(f"Shipment Multipart erro interno: {e}")
 
-        # --- ESTRATÉGIA 4: POST /shipments/{shipment_id}/invoice_data ou /orders/{order_id}/invoice_data com JSON Metadata ---
-        target_json_url = None
-        if shipment_id:
-            target_json_url = f"{self.base_url}/shipments/{shipment_id}/invoice_data"
-        elif order_id:
-            target_json_url = f"{self.base_url}/orders/{order_id}/invoice_data"
-
-        if target_json_url and chave_acesso and numero_nf:
+        # --- ESTRATÉGIA 4: POST /packs/{pack_id}/fiscal_documents com Multipart (Apenas quando pack_id existe) ---
+        if pack_id:
             try:
-                logger.debug(f"Tentativa 4 (JSON Metadata): {target_json_url}")
-                json_payload = {
-                    "fiscal_key": chave_acesso,
-                    "invoice_number": str(numero_nf),
-                    "invoice_series": str(serie),
-                    "issue_date": data_emissao
+                url_pack_mp = f"{self.base_url}/packs/{pack_id}/fiscal_documents"
+                logger.debug(f"Tentativa 4 (Pack Multipart): {url_pack_mp}")
+                files = {
+                    'fiscal_document': ('nfe.xml', xml_bytes, 'application/xml')
                 }
-                resp4 = await client.post(target_json_url, json=json_payload, params=params)
+                resp4 = await client.post(url_pack_mp, files=files, params=params)
+                
+                biller_warn = check_biller_error(resp4.status_code, resp4.text)
+                if biller_warn:
+                    return biller_warn
+
                 if resp4.status_code in [200, 201]:
-                    logger.info(f"✅ Dados da NF-e vinculados com sucesso via JSON metadata no ML!")
+                    logger.info(f"✅ XML anexado com sucesso via multipart em pack {pack_id}")
                     return {"status": "success"}
                 elif is_already_sent_response(resp4.status_code, resp4.text):
                     return {"status": "already_sent"}
                 else:
-                    last_error_msg = f"JSON Metadata ({resp4.status_code}): {resp4.text}"
+                    err_str = f"Pack Fiscal Documents ({resp4.status_code}): {resp4.text}"
+                    errors_logged.append(err_str)
+                    logger.debug(f"Tentativa 4 não concluída: {err_str}")
             except Exception as e:
-                logger.debug(f"Falha na tentativa 4: {e}")
+                logger.debug(f"Exceção na tentativa 4: {e}")
+                errors_logged.append(f"Pack Fiscal Documents erro interno: {e}")
 
-        # Se todas as tentativas falharam
-        logger.error(f"❌ Todas as tentativas de upload de XML para o pedido ML {order_id_ml} falharam. Último detalhe: {last_error_msg}")
-        return {"status": "error", "message": f"Erro na API do Mercado Livre ao anexar XML da NF-e: {last_error_msg or 'Envio recusado pelo Mercado Livre'}"}
+        # Se todas as tentativas válidas falharam
+        main_error = errors_logged[0] if errors_logged else "Envio recusado pelo Mercado Livre"
+        all_details = " | ".join(errors_logged)
+        logger.error(f"❌ Todas as tentativas de upload de XML para o pedido ML {order_id_ml} falharam. Detalhes: {all_details}")
+        return {"status": "error", "message": f"Erro na API do Mercado Livre ao anexar XML da NF-e: {main_error}"}
 
-    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None):
+    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None, target_ml_status: str = None):
         """
-        Atualiza o status do envio no Mercado Livre com base no status do ERP.
-        Mapeamento de status:
-        - despachado -> shipped (Envio próprio / custom)
-        - entregue / finalizado -> delivered
+        Busca a shipment associada ao pedido no ML e atualiza seu status.
         """
-        logger.info(f"Tentando atualizar status do pedido ML {order_id_ml} (Status ERP: {erp_status})")
-        
         try:
-            async with await self.get_client() as client:
-                # 1. Busca dados do pedido para encontrar o shipment_id
-                shipment_id = await self._resolve_shipment_id(client, order_id_ml)
-                if not shipment_id:
-                    logger.warning(f"Pedido ML {order_id_ml} não possui shipment_id associado.")
-                    return False
-                    
-                # 2. Busca dados do envio para verificar a modalidade logística
-                ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
-                if ship_resp.status_code != 200:
-                    logger.error(f"Erro ao buscar envio {shipment_id}: {ship_resp.status_code} - {ship_resp.text}")
-                    return False
-                    
-                shipment_details = ship_resp.json()
-                logistic_mode = shipment_details.get('logistic_type') or shipment_details.get('mode')
-                current_status = shipment_details.get('status')
+            client = await self.get_client()
+            
+            # 1. Busca dados do pedido no ML para obter o shipment_id
+            order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
+            if order_resp.status_code != 200:
+                logger.error(f"Erro ao buscar pedido {order_id_ml} no ML: {order_resp.status_code} - {order_resp.text}")
+                return False
                 
-                logger.info(f"Envio {shipment_id} - Modalidade: {logistic_mode} | Status ML Atual: {current_status}")
+            order_data = order_resp.json()
+            shipping_data = order_data.get('shipping', {})
+            shipment_id = shipping_data.get('id')
+            
+            if not shipment_id:
+                logger.warning(f"Pedido {order_id_ml} não possui shipment_id associado.")
+                return False
                 
-                # Se for Mercado Envios 2 (me2, fulfillment, etc.), o status é gerenciado automaticamente e não pode ser alterado manualmente.
-                is_manual_mode = logistic_mode in ['custom', 'not_specified', 'me1'] or not logistic_mode
+            # 2. Busca dados do envio para verificar a modalidade logística
+            ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
+            if ship_resp.status_code != 200:
+                logger.error(f"Erro ao buscar envio {shipment_id}: {ship_resp.status_code} - {ship_resp.text}")
+                return False
                 
-                if not is_manual_mode:
-                    logger.info(f"Envio {shipment_id} utiliza logística automatizada ({logistic_mode}). Status é controlado pelo Mercado Livre.")
-                    return False
-                    
-                # Mapeamento e atualização
-                new_ml_status = None
-                erp_status_lower = erp_status.lower()
+            shipment_details = ship_resp.json()
+            logistic_mode = shipment_details.get('logistic_type') or shipment_details.get('mode')
+            current_status = shipment_details.get('status')
+            
+            logger.info(f"Envio {shipment_id} - Modalidade: {logistic_mode} | Status ML Atual: {current_status}")
+            
+            # Se for Mercado Envios 2 (me2, fulfillment, etc.), o status é gerenciado automaticamente e não pode ser alterado manualmente.
+            is_manual_mode = logistic_mode in ['custom', 'not_specified', 'me1'] or not logistic_mode
+            
+            if not is_manual_mode:
+                logger.info(f"Envio {shipment_id} utiliza logística automatizada ({logistic_mode}). Status é controlado pelo Mercado Livre.")
+                return False
+                
+            # Mapeamento e atualização
+            new_ml_status = target_ml_status
+            if not new_ml_status:
+                erp_status_lower = (erp_status or "").lower()
                 if erp_status_lower == 'despachado':
                     new_ml_status = 'shipped'
                 elif erp_status_lower in ['faturamento', 'expedicao', 'embalagem', 'produção', 'producao']:
-                    # No Mercado Livre, o status intermediário pode ser handling
                     if current_status in ['pending', 'handling']:
                         new_ml_status = 'handling'
                 elif erp_status_lower in ['finalizado', 'entregue']:
                     new_ml_status = 'delivered'
                         
-                if not new_ml_status:
-                    logger.debug(f"Nenhum status correspondente para atualizar no ML para o status ERP {erp_status}.")
-                    return False
-                    
-                if current_status == new_ml_status:
-                    logger.info(f"Envio {shipment_id} já está no status {new_ml_status}.")
-                    return True
-                    
-                # 3. Executa a atualização do status do envio
-                payload = {"status": new_ml_status}
-                if tracking_number:
-                    payload["tracking_number"] = tracking_number
-                    
-                logger.info(f"Enviando atualização para envio {shipment_id}: {payload}")
-                url = f"{self.base_url}/shipments/{shipment_id}"
-                resp = await client.put(url, json=payload)
+            if not new_ml_status:
+                logger.debug(f"Nenhum status correspondente para atualizar no ML para o status ERP {erp_status}.")
+                return False
                 
-                if resp.status_code in [200, 201]:
-                    logger.info(f"Status do envio {shipment_id} atualizado com sucesso para {new_ml_status}!")
-                    return True
-                else:
-                    logger.error(f"Erro ao atualizar status do envio {shipment_id}: {resp.status_code} - {resp.text}")
-                    return False
-                    
+            if current_status == new_ml_status:
+                logger.info(f"Envio {shipment_id} já está no status {new_ml_status}.")
+                return True
+                
+            # 3. Executa a atualização do status do envio
+            payload = {"status": new_ml_status}
+            if tracking_number:
+                payload["tracking_number"] = tracking_number
+                
+            logger.info(f"Enviando atualização para envio {shipment_id}: {payload}")
+            url = f"{self.base_url}/shipments/{shipment_id}"
+            resp = await client.put(url, json=payload)
+            
+            if resp.status_code in [200, 201]:
+                logger.info(f"Status do envio {shipment_id} atualizado com sucesso para {new_ml_status}!")
+                return True
+            else:
+                logger.error(f"Erro ao atualizar status do envio {shipment_id}: {resp.status_code} - {resp.text}")
+                return False
+                
         except Exception as e:
             logger.exception(f"Erro ao atualizar status de envio no Mercado Livre: {e}")
             return False
@@ -1311,39 +1330,70 @@ class MeliService:
         """
         Atualiza o status dos envios no Mercado Livre associados a um pedido do ERP.
         """
-        # Extrai os IDs do Mercado Livre da observação do pedido
-        observacao = pedido.observacao or ""
+        # 1. Prioridade: novos campos dedicados
         ids = set()
-        match_pack = re.search(r"Pedido ML:\s*(\d+)", observacao)
-        if match_pack:
-            ids.add(match_pack.group(1))
-            
-        match_id = re.search(r"ID:\s*([\d,\s]+)", observacao)
-        if match_id:
-            raw_ids = match_id.group(1)
-            for part in raw_ids.split(','):
-                clean_part = part.strip()
-                if clean_part.isdigit():
-                    ids.add(clean_part)
-                    
+        if pedido.meli_order_id:
+            ids.add(str(pedido.meli_order_id).strip())
+        if pedido.meli_pack_id:
+            ids.add(str(pedido.meli_pack_id).strip())
+
+        # 2. Fallback: extração da observação
+        observacao = pedido.observacao or ""
+        if not ids:
+            match_pack = re.search(r"Pedido ML:\s*(\d+)", observacao)
+            if match_pack:
+                ids.add(match_pack.group(1))
+                
+            match_id = re.search(r"ID:\s*([\d,\s]+)", observacao)
+            if match_id:
+                raw_ids = match_id.group(1)
+                for part in raw_ids.split(','):
+                    clean_part = part.strip()
+                    if clean_part.isdigit():
+                        ids.add(clean_part)
+                        
         ml_order_ids = list(ids)
         if not ml_order_ids:
-            logger.info(f"Nenhum ID do Mercado Livre encontrado na observação do pedido {pedido.id}")
+            logger.info(f"Nenhum ID do Mercado Livre encontrado para o pedido {pedido.id}")
             return False
             
-        situacao_para_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao)
+        situacao_para_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
         
-        # Pega o código de rastreamento se houver na observação
-        tracking_number = None
-        match_track = re.search(r"Rastreio:\s*(\w+)", observacao)
-        if match_track:
-            tracking_number = match_track.group(1)
+        # 1. Prioridade: novo campo de rastreio
+        tracking_number = pedido.meli_tracking_number
+        # 2. Fallback: regex na observação
+        if not tracking_number:
+            match_track = re.search(r"Rastreio:\s*(\w+)", observacao)
+            if match_track:
+                tracking_number = match_track.group(1)
+
+        # Avaliação de Regras da MeliConfiguracao (se houver)
+        target_ml_status = None
+        regras = getattr(self.config, 'regras_atualizacao_status', None) or []
+        if isinstance(regras, list):
+            for regra in regras:
+                coluna = regra.get('coluna_pedido')
+                valor_esperado = str(regra.get('valor_coluna', '')).strip().lower()
+                status_alvo_ml = regra.get('status_meli')
+                
+                if coluna and valor_esperado and status_alvo_ml:
+                    val_atual = getattr(pedido, coluna, None)
+                    if hasattr(val_atual, 'value'):
+                        val_atual = val_atual.value
+                    elif hasattr(val_atual, 'name'):
+                        val_atual = val_atual.name
+                    val_atual_str = str(val_atual or '').strip().lower()
+                    
+                    if val_atual_str == valor_esperado:
+                        target_ml_status = status_alvo_ml
+                        logger.info(f"Regra ML casou! Coluna '{coluna}' = '{val_atual_str}' -> Status ML: '{target_ml_status}'")
+                        break
             
-        logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str}) -> IDs ML: {ml_order_ids}")
+        logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str}) -> IDs ML: {ml_order_ids} | Status ML Alvo: {target_ml_status or 'Auto/Padrão'}")
         
         success = True
         for ml_order_id in ml_order_ids:
-            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number)
+            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number, target_ml_status=target_ml_status)
             if not res:
                 success = False
         return success

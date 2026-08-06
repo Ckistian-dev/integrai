@@ -43,11 +43,13 @@ services:
       - app-network
 
   tunnel:
-    image: node:alpine
-    container_name: localtunnel_tunnel
+    image: alpine:latest
+    container_name: serveo_tunnel
     restart: always
+    volumes:
+      - ./ssh_keys:/root/.ssh
     command: >
-      sh -c "npm install -g localtunnel &&  lt --port 8000 --host http://localtunnel.me --subdomain ${DEV_SUBDOMAIN} --local-host api"
+      sh -c "apk add --no-cache openssh-client && mkdir -p /root/.ssh && [ -f /root/.ssh/id_rsa ] || ssh-keygen -t rsa -b 2048 -f /root/.ssh/id_rsa -N '' && ssh -i /root/.ssh/id_rsa -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R ${DEV_SUBDOMAIN}:80:api:8000 serveo.net"
     depends_on:
       - api
     networks:

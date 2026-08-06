@@ -3,6 +3,7 @@ from typing import Optional, List, Any, Dict, Type
 
 class BaseModel(PydanticBaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, from_attributes=True)
+    id_sequencial: Optional[int] = None
 from datetime import datetime, date
 from decimal import Decimal
 
@@ -53,6 +54,7 @@ class FieldMetadata(BaseModel):
     default_value: Optional[Any] = None
     format_mask: Optional[str] = None
     tab: Optional[str] = None
+    sub_tab: Optional[str] = None
     foreign_key_model: Optional[str] = None # Modelo que a FK aponta (ex: "cadastros")
     foreign_key_label_field: Optional[str] = None # Campo de label (ex: "nome_razao")
     filename_field: Optional[str] = None
@@ -67,6 +69,7 @@ class ModelMetadata(BaseModel):
     display_name_singular: Optional[str] = None
     display_name_plural: Optional[str] = None
     display_field: Optional[str] = None # O campo principal de display do modelo (ex: "nome_razao")
+    is_single_record: bool = False
     fields: List[FieldMetadata]
 
 
@@ -279,6 +282,7 @@ class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
 class EmbalagemBase(BaseModel):
     descricao: str
     regras: Optional[Dict[str, Any]] = None
+    simulacao_exemplo: Optional[Dict[str, Any]] = None
     situacao: bool = True
 
 class EmbalagemCreate(EmbalagemBase):
@@ -287,6 +291,7 @@ class EmbalagemCreate(EmbalagemBase):
 class EmbalagemUpdate(BaseModel):
     descricao: Optional[str] = None
     regras: Optional[Dict[str, Any]] = None
+    simulacao_exemplo: Optional[Dict[str, Any]] = None
     situacao: Optional[bool] = None
 
 class Embalagem(EmbalagemBase):  # RENOMEADO de EmbalagemRead para Embalagem
@@ -514,6 +519,16 @@ class PedidoBase(BaseModel):
     delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
     intelipost_id: Optional[str] = None
+    id_pedido_intelipost: Optional[str] = None
+    status_intelipost: Optional[str] = None
+
+    meli_order_id: Optional[str] = None
+    meli_pack_id: Optional[str] = None
+    meli_shipment_id: Optional[str] = None
+    meli_buyer_nickname: Optional[str] = None
+    meli_tracking_number: Optional[str] = None
+    meli_logistic_type: Optional[str] = None
+    meli_shipping_service: Optional[str] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -590,6 +605,16 @@ class PedidoUpdate(BaseModel):
     delivery_method_id_intelipost: Optional[str] = None
     quote_id: Optional[str] = None
     intelipost_id: Optional[str] = None
+    id_pedido_intelipost: Optional[str] = None
+    status_intelipost: Optional[str] = None
+
+    meli_order_id: Optional[str] = None
+    meli_pack_id: Optional[str] = None
+    meli_shipment_id: Optional[str] = None
+    meli_buyer_nickname: Optional[str] = None
+    meli_tracking_number: Optional[str] = None
+    meli_logistic_type: Optional[str] = None
+    meli_shipping_service: Optional[str] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -850,6 +875,7 @@ class MeliConfiguracaoBase(BaseModel):
     vendedor_padrao_id: Optional[int] = None
     situacao_pedido_inicial: Optional[str] = "Orçamento"
     caixa_padrao: Optional[str] = None
+    regras_atualizacao_status: Optional[List[Dict[str, Any]]] = []
 
 class MeliConfiguracaoCreate(MeliConfiguracaoBase):
     pass

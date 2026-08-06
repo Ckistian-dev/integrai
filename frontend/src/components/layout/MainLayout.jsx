@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axiosConfig';
 import {
@@ -20,14 +20,15 @@ import {
   BarChart2, // Ícone para Relatórios
 } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
-import { useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react'; // Ícone para o acordeão
+import { MODULE_MAP, Breadcrumb } from './breadcrumbUtils';
 
 const MainLayout = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   // O estado de expansão agora é controlado pelo novo layout
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const [isIntegraOpen, setIsIntegraOpen] = useState(false);
   const [isFinanceiroOpen, setIsFinanceiroOpen] = useState(false);
   const [isUsuariosOpen, setIsUsuariosOpen] = useState(false);
@@ -54,7 +55,7 @@ const MainLayout = () => {
   // Verifica se o usuário tem permissão para o módulo
   const hasPermission = (module) => {
     if (!module) return true; // Itens públicos
-    
+
     // Admin tem acesso total (fallback de segurança)
     if (user?.perfil === 'Admin' || user?.perfil === 'admin') return true;
 
@@ -66,14 +67,14 @@ const MainLayout = () => {
   // Verifica se o usuário tem permissão para uma subpágina específica
   const hasSubpagePermission = (module, subpageName) => {
     if (user?.perfil === 'Admin' || user?.perfil === 'admin') return true;
-    
+
     // Histórico é exceção, sempre visível se tiver acesso ao módulo
     if (module === 'pedidos' && subpageName === 'Histórico') return true;
     if (module === 'estoque' && (subpageName === 'Saldo' || subpageName === 'Movimentações' || subpageName === 'Inventário')) return true;
 
     const permissions = user?.permissoes || {};
     const modulePerms = permissions[module];
-    
+
     return modulePerms?.subpaginas?.includes(subpageName);
   };
 
@@ -82,8 +83,60 @@ const MainLayout = () => {
     navigate('/login');
   };
 
-  const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const location = useLocation(); // Hook para saber a rota atual
+  const [pageHeader, setPageHeader] = useState({ title: null, crumbs: null });
+
+  // Reseta o cabeçalho ao mudar de rota
+  useEffect(() => {
+    setPageHeader({ title: null, crumbs: null });
+  }, [location.pathname]);
+
+  // --- BREADCRUMB DINÂMICO E TÍTULO (fallback baseado na rota atual) ---
+  const defaultHeader = useMemo(() => {
+    const pathname = location.pathname;
+    // Remove a barra inicial e divide os segmentos
+    const parts = pathname.replace(/^\//, '').split('/');
+    const modelName = parts[0] || '';
+    const second = parts[1] || ''; // pode ser: new | edit | statusFilter
+    const third = parts[2] || ''; // pode ser: :id
+
+    if (!modelName || modelName === 'dashboard') {
+      return {
+        title: 'Dashboard',
+        crumbs: [{ label: 'Home', path: '/dashboard' }]
+      };
+    }
+
+    const entry = MODULE_MAP[modelName];
+    const crumbs = [{ label: 'Home', path: '/dashboard' }];
+
+    if (entry) {
+      crumbs.push({ label: entry.module, path: entry.modulePath });
+    }
+
+    const formattedModel = modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    let title = formattedModel;
+
+    if (second === 'new' || second === 'edit') {
+      crumbs.push({ label: entry?.module === modelName ? formattedModel : (entry?.module || formattedModel), path: `/${modelName}` });
+      const action = second === 'edit' ? 'Editar' : 'Novo';
+      crumbs.push({ label: `${action} (${third || '...'})`, path: null });
+      title = `${action} ${formattedModel}`;
+    } else if (second && second !== 'edit') {
+      const decoded = decodeURIComponent(second);
+      crumbs.push({ label: decoded, path: null });
+      title = `${formattedModel} (${decoded})`;
+    } else {
+      crumbs.push({ label: formattedModel, path: null });
+      title = formattedModel;
+    }
+
+    return { title, crumbs };
+  }, [location.pathname]);
+
+  const activeCrumbs = pageHeader.crumbs || defaultHeader.crumbs;
+  const activeTitle = pageHeader.title || defaultHeader.title;
+
 
   const pipelineStatus = useMemo(() => [
     { name: 'Orçamento', path: '/pedidos/Orçamento' },
@@ -325,7 +378,7 @@ const MainLayout = () => {
       {/* Sidebar (Layout copiado do seu exemplo, mas com dados e cores do ERP) */}
       <aside
         className={`relative h-screen text-white p-4 flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'w-64' : 'w-20'}`}
-        style={{ 
+        style={{
           backgroundColor: user?.cor_sidebar || '#1f2937',
           '--sidebar-bg': user?.cor_sidebar || '#1f2937'
         }}
@@ -356,7 +409,7 @@ const MainLayout = () => {
         <nav className={`flex-1 flex flex-col space-y-2 overflow-y-auto overflow-x-hidden ${isExpanded ? 'sidebar-scroll' : 'no-scrollbar'}`}>
           {menuItems.map(item => {
             const allowed = hasPermission(item.module);
-            
+
             // Estilo base para item desabilitado
             const disabledClass = "cursor-not-allowed opacity-40 grayscale bg-transparent text-gray-500 hover:bg-transparent";
 
@@ -415,21 +468,20 @@ const MainLayout = () => {
                         }
 
                         return (
-                        <NavLink
-                          key={subItem.name}
-                          to={subItem.path}
-                          className={({ isActive }) =>
-                            `flex items-center py-2 px-3 rounded-lg text-sm ${
-                              isActive
-                              ? 'bg-teal-600 text-white font-medium'
-                              : 'text-gray-300 hover:bg-gray-700'
-                            } ${!isExpanded ? 'justify-center' : ''}`
-                          }
-                        >
-                          <span className="whitespace-nowrap overflow-hidden">
-                            {subItem.name}
-                          </span>
-                        </NavLink>
+                          <NavLink
+                            key={subItem.name}
+                            to={subItem.path}
+                            className={({ isActive }) =>
+                              `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                ? 'bg-teal-600 text-white font-medium'
+                                : 'text-gray-300 hover:bg-gray-700'
+                              } ${!isExpanded ? 'justify-center' : ''}`
+                            }
+                          >
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {subItem.name}
+                            </span>
+                          </NavLink>
                         );
                       })}
                     </div>
@@ -481,7 +533,7 @@ const MainLayout = () => {
                     <div className="flex flex-col space-y-1 pt-2">
                       {pipelineStatus.map(status => {
                         const isAllowed = hasSubpagePermission('pedidos', status.name);
-                        
+
                         if (!isAllowed) {
                           return (
                             <div key={status.name} className={`flex items-center py-2 px-3 rounded-lg text-sm cursor-not-allowed opacity-40 grayscale bg-transparent text-gray-500 hover:bg-transparent ${!isExpanded ? 'justify-center' : ''}`}>
@@ -493,22 +545,22 @@ const MainLayout = () => {
                         }
 
                         return (
-                        <NavLink
-                          key={status.name}
-                          to={status.path}
-                          className={({ isActive }) =>
-                            `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
-                              ? 'bg-teal-600 text-white font-medium' // Sub-item ativo
-                              : 'text-gray-300 hover:bg-gray-700'
-                            } ${!isExpanded ? 'justify-center' : ''}` // Centraliza ícone se contraído
-                          }
-                        >
+                          <NavLink
+                            key={status.name}
+                            to={status.path}
+                            className={({ isActive }) =>
+                              `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                ? 'bg-teal-600 text-white font-medium' // Sub-item ativo
+                                : 'text-gray-300 hover:bg-gray-700'
+                              } ${!isExpanded ? 'justify-center' : ''}` // Centraliza ícone se contraído
+                            }
+                          >
 
-                          <span className="whitespace-nowrap overflow-hidden">
-                            {status.name}
-                          </span>
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {status.name}
+                            </span>
 
-                        </NavLink>
+                          </NavLink>
                         );
                       })}
                     </div>
@@ -572,21 +624,20 @@ const MainLayout = () => {
                         }
 
                         return (
-                        <NavLink
-                          key={subItem.name}
-                          to={subItem.path}
-                          className={({ isActive }) => {
-                            return `flex items-center py-2 px-3 rounded-lg text-sm ${
-                              isActive
-                              ? 'bg-teal-600 text-white font-medium'
-                              : 'text-gray-300 hover:bg-gray-700'
-                            } ${!isExpanded ? 'justify-center' : ''}`;
-                          }}
-                        >
-                          <span className="whitespace-nowrap overflow-hidden">
-                            {subItem.name}
-                          </span>
-                        </NavLink>
+                          <NavLink
+                            key={subItem.name}
+                            to={subItem.path}
+                            className={({ isActive }) => {
+                              return `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                  ? 'bg-teal-600 text-white font-medium'
+                                  : 'text-gray-300 hover:bg-gray-700'
+                                } ${!isExpanded ? 'justify-center' : ''}`;
+                            }}
+                          >
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {subItem.name}
+                            </span>
+                          </NavLink>
                         );
                       })}
                     </div>
@@ -649,20 +700,20 @@ const MainLayout = () => {
                           );
                         }
                         return (
-                        <NavLink
-                          key={subItem.name}
-                          to={subItem.path}
-                          className={({ isActive }) =>
-                            `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
-                              ? 'bg-teal-600 text-white font-medium'
-                              : 'text-gray-300 hover:bg-gray-700'
-                            } ${!isExpanded ? 'justify-center' : ''}`
-                          }
-                        >
-                          <span className="whitespace-nowrap overflow-hidden">
-                            {subItem.name}
-                          </span>
-                        </NavLink>
+                          <NavLink
+                            key={subItem.name}
+                            to={subItem.path}
+                            className={({ isActive }) =>
+                              `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                ? 'bg-teal-600 text-white font-medium'
+                                : 'text-gray-300 hover:bg-gray-700'
+                              } ${!isExpanded ? 'justify-center' : ''}`
+                            }
+                          >
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {subItem.name}
+                            </span>
+                          </NavLink>
                         );
                       })}
                     </div>
@@ -726,21 +777,20 @@ const MainLayout = () => {
                         }
 
                         return (
-                        <NavLink
-                          key={subItem.name}
-                          to={subItem.path}
-                          className={({ isActive }) =>
-                            `flex items-center py-2 px-3 rounded-lg text-sm ${
-                              isActive
-                              ? 'bg-teal-600 text-white font-medium'
-                              : 'text-gray-300 hover:bg-gray-700'
-                            } ${!isExpanded ? 'justify-center' : ''}`
-                          }
-                        >
-                          <span className="whitespace-nowrap overflow-hidden">
-                            {subItem.name}
-                          </span>
-                        </NavLink>
+                          <NavLink
+                            key={subItem.name}
+                            to={subItem.path}
+                            className={({ isActive }) =>
+                              `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                ? 'bg-teal-600 text-white font-medium'
+                                : 'text-gray-300 hover:bg-gray-700'
+                              } ${!isExpanded ? 'justify-center' : ''}`
+                            }
+                          >
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {subItem.name}
+                            </span>
+                          </NavLink>
                         );
                       })}
                     </div>
@@ -806,16 +856,13 @@ const MainLayout = () => {
 
       {/* Wrapper para Header e Conteúdo Principal */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header (NOVO) */}
-        <header className="bg-white shadow-md py-3 px-4 z-10">
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200 py-2 px-6 z-10">
           <div className="flex justify-end items-center">
-
-            {/* Ícones do Header - Ajustado o espaçamento para space-x-4 */}
+            {/* Ícones do Header */}
             <div className="flex items-center space-x-4 text-gray-600">
-
-              {/* ===== BOTÃO DE AJUDA (WHATSAPP) ADICIONADO ===== */}
+              {/* ===== BOTÃO DE AJUDA (WHATSAPP) ===== */}
               <a
-                // IMPORTANTE: Troque pelo seu número de WhatsApp
                 href="https://wa.me/5545999861237"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -829,10 +876,9 @@ const MainLayout = () => {
           </div>
         </header>
 
-        {/* Conteúdo Principal (Alterado) */}
-        {/* Adicionado bg-gray-100 aqui */}
+        {/* Conteúdo Principal */}
         <main className="flex-1 overflow-x-hidden overflow-y-scroll bg-gray-100">
-          <Outlet />
+          <Outlet context={{ setPageHeader }} />
         </main>
       </div>
 

@@ -720,7 +720,10 @@ def get_inventario_saldo(
         quantidade_expr.label("saldo_atual")
     ).outerjoin(
         models.Estoque,
-        and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+        and_(
+            or_(models.Estoque.id_produto == models.Produto.id_sequencial, models.Estoque.id_produto == models.Produto.id),
+            models.Estoque.id_empresa == current_user.id_empresa
+        )
     ).filter(
         models.Produto.id_empresa == current_user.id_empresa,
         models.Produto.situacao == True
@@ -977,7 +980,10 @@ def list_items(
             quantidade_expr.label("quantidade")
         ).outerjoin(
             models.Estoque, 
-            and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+            and_(
+                or_(models.Estoque.id_produto == models.Produto.id_sequencial, models.Estoque.id_produto == models.Produto.id),
+                models.Estoque.id_empresa == current_user.id_empresa
+            )
         ).filter(
             models.Produto.id_empresa == current_user.id_empresa
         ).group_by(models.Produto.id, models.Produto.descricao, models.Produto.sku, models.Produto.custo)
@@ -997,7 +1003,10 @@ def list_items(
             ), 0).label("total_valor")
         ).select_from(models.Produto).outerjoin(
             models.Estoque, 
-            and_(models.Estoque.id_produto == models.Produto.id, models.Estoque.id_empresa == current_user.id_empresa)
+            and_(
+                or_(models.Estoque.id_produto == models.Produto.id_sequencial, models.Estoque.id_produto == models.Produto.id),
+                models.Estoque.id_empresa == current_user.id_empresa
+            )
         ).filter(
             models.Produto.id_empresa == current_user.id_empresa
         )
@@ -1041,7 +1050,11 @@ def list_items(
             models.Estoque,
             models.Produto.custo.label("produto_custo")
         ).join(
-            models.Produto, models.Estoque.id_produto == models.Produto.id
+            models.Produto,
+            and_(
+                or_(models.Estoque.id_produto == models.Produto.id_sequencial, models.Estoque.id_produto == models.Produto.id),
+                models.Produto.id_empresa == current_user.id_empresa
+            )
         ).filter(
             models.Estoque.id_empresa == current_user.id_empresa,
             models.Estoque.situacao != 'Inventário'
@@ -1075,7 +1088,11 @@ def list_items(
                 ) * models.Produto.custo
             ), 0).label("total_valor")
         ).select_from(models.Estoque).join(
-            models.Produto, models.Estoque.id_produto == models.Produto.id
+            models.Produto,
+            and_(
+                or_(models.Estoque.id_produto == models.Produto.id_sequencial, models.Estoque.id_produto == models.Produto.id),
+                models.Produto.id_empresa == current_user.id_empresa
+            )
         ).filter(
             models.Estoque.id_empresa == current_user.id_empresa,
             models.Estoque.situacao != 'Inventário'
@@ -1375,79 +1392,127 @@ def get_distinct_values(
 ):
     """
     Retorna valores distintos de um campo para preencher dropdowns dinâmicos (CreatableSelect).
+    Sempre retorna List[{"value": str, "label": str}].
+    Suporta:
+      - Campos simples (String, Enum, Integer, Boolean, etc.)
+      - Campos FK (join automático com tabela relacionada, retornando label amigável)
+      - Campos de relacionamento via notação "relacionamento.campo" (ex: cliente.cidade)
     """
     registry = get_registry_entry(model_name)
     if not registry:
-        raise HTTPException(status_code=404, detail="Model not found")
-    
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' não encontrado.")
+
     model = registry["model"]
     mapper = inspect(model)
-    
-    # 🎯 NOVA LÓGICA: Suporte a campos de relacionamentos (ex: cliente.cidade)
+
+    # ── CASO 1: campo de relacionamento com notação "rel.campo" (ex: cliente.cidade) ──
     if "." in field_name:
         rel_name, col_name = field_name.split(".", 1)
         rel = mapper.relationships.get(rel_name)
         if not rel:
-            raise HTTPException(status_code=400, detail=f"Relationship {rel_name} not found in model {model_name}")
-            
+            raise HTTPException(status_code=400, detail=f"Relacionamento '{rel_name}' não encontrado em '{model_name}'.")
+
         related_model = rel.mapper.class_
         if not hasattr(related_model, col_name):
-            raise HTTPException(status_code=400, detail=f"Field {col_name} not found in related model {rel_name}")
-            
+            raise HTTPException(status_code=400, detail=f"Campo '{col_name}' não encontrado no modelo relacionado '{rel_name}'.")
+
         rel_alias = aliased(related_model)
         column = getattr(rel_alias, col_name)
-        
-        query = db.query(distinct(column)).\
-            outerjoin(rel_alias, getattr(model, rel_name)).\
-            filter(
-                model.id_empresa == current_user.id_empresa,
-                column.isnot(None)
-            ).order_by(column.asc())
-            
-        results = query.all()
-        
-        # Converte valores se necessário (Enum, boolean)
-        ret = []
+
+        results = (
+            db.query(distinct(column))
+            .outerjoin(rel_alias, getattr(model, rel_name))
+            .filter(model.id_empresa == current_user.id_empresa, column.isnot(None))
+            .order_by(column.asc())
+            .all()
+        )
+
+        out = []
+        seen = set()
         for r in results:
             val = r[0]
-            if hasattr(val, 'value'): val = val.value
-            if val != "" and val is not None:
-                ret.append(val)
-        return ret
-    
+            if hasattr(val, 'value'):
+                val = val.value
+            val_str = str(val).strip() if val is not None else ''
+            if val_str and val_str not in seen:
+                seen.add(val_str)
+                out.append({"value": val_str, "label": val_str})
+        return out
+
+    # ── CASO 2: campo direto no modelo ──
     if not hasattr(model, field_name):
-         raise HTTPException(status_code=400, detail=f"Field {field_name} not found in model {model_name}")
-         
+        raise HTTPException(status_code=400, detail=f"Campo '{field_name}' não encontrado em '{model_name}'.")
+
     column = getattr(model, field_name)
     col_obj = model.__table__.columns.get(field_name)
-    
+
+    # ── CASO 2A: FK — join com tabela relacionada para label amigável ──
     if col_obj is not None and col_obj.foreign_keys:
-        rel = next((r for r in mapper.relationships if col_obj in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+        rel = next(
+            (r for r in mapper.relationships if col_obj in r.local_columns and r.direction.name == 'MANYTOONE'),
+            None
+        )
         if rel:
             related_model = rel.mapper.class_
-            PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
+            PREFERRED_DISPLAY_FIELDS = [
+                "nome_razao", "fantasia", "nome", "descricao", "razao",
+                "sku", "email", "titulo", "increment_id", "chave_acesso"
+            ]
             display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
-            
+
             if display_field:
                 rel_alias = aliased(related_model)
-                query = db.query(column, getattr(rel_alias, display_field)).\
-                    outerjoin(rel_alias, getattr(model, rel.key)).\
-                    filter(
-                        model.id_empresa == current_user.id_empresa,
-                        column.isnot(None)
-                    ).distinct()
-                results = query.all()
-                return [{"value": str(r[0]), "label": str(r[1]) if r[1] else str(r[0])} for r in results]
+                results = (
+                    db.query(column, getattr(rel_alias, display_field))
+                    .outerjoin(rel_alias, getattr(model, rel.key))
+                    .filter(model.id_empresa == current_user.id_empresa, column.isnot(None))
+                    .distinct()
+                    .all()
+                )
+                out = []
+                seen = set()
+                for r in results:
+                    val_id = str(r[0]) if r[0] is not None else None
+                    val_label = str(r[1]).strip() if r[1] else val_id
+                    if val_id and val_id not in seen:
+                        seen.add(val_id)
+                        out.append({"value": val_id, "label": val_label})
+                return sorted(out, key=lambda x: x["label"])
 
-    unaccent_col = func.unaccent(cast(column, String))
-    query = db.query(column, unaccent_col).filter(
+    # ── CASO 2B: campo simples (String puro, Enum, Integer, Boolean, etc.) ──
+    col_type = col_obj.type if col_obj is not None else None
+
+    # Enum é subclasse de String no SQLAlchemy — não pode usar cast + != '' para Enum
+    is_plain_string = isinstance(col_type, (String, Text)) and not isinstance(col_type, Enum)
+
+    filters = [
         model.id_empresa == current_user.id_empresa,
         column.isnot(None),
-        cast(column, String) != ""
-    ).distinct().order_by(unaccent_col.asc())
-    
-    results = query.all()
-    return [r[0] for r in results]
+    ]
+    if is_plain_string:
+        # Só filtra string vazia em colunas puramente textuais
+        filters.append(cast(column, String) != "")
+
+    try:
+        unaccent_col = func.unaccent(cast(column, String))
+        results = db.query(column, unaccent_col).filter(*filters).distinct().order_by(unaccent_col.asc()).all()
+    except Exception:
+        # Fallback sem unaccent (ex: tipos não-texto)
+        results = db.query(column).filter(*filters).distinct().all()
+
+    out = []
+    seen = set()
+    for r in results:
+        val = r[0]
+        if hasattr(val, 'value'):
+            val = val.value
+        elif hasattr(val, 'name'):
+            val = str(val.name)
+        val_str = str(val).strip() if val is not None else ''
+        if val_str and val_str not in seen:
+            seen.add(val_str)
+            out.append({"value": val_str, "label": val_str})
+    return out
 
 @router.get("/generic/{model_name}/export")
 def export_items_to_csv(
@@ -2739,7 +2804,8 @@ def update_item(
                     _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
 
                 # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
-                if "Pedido ML:" in (item.observacao or ""):
+                is_ml_order = bool(getattr(item, 'meli_order_id', None) or getattr(item, 'meli_pack_id', None) or "Pedido ML:" in (item.observacao or ""))
+                if is_ml_order:
                     try:
                         import asyncio
                         from app.core.service.meli_service import MeliService

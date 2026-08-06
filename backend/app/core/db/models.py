@@ -2,7 +2,7 @@ import enum
 from sqlalchemy import (
     Boolean, Column, ForeignKey, Integer, String, Enum as SQLAlchemyEnum,
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
-    UniqueConstraint, event
+    UniqueConstraint, event, text
 )
 from sqlalchemy.orm import relationship, Mapper
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -391,6 +391,21 @@ def trim_strings(mapper, connection, target):
             if isinstance(value, str):
                 setattr(target, column.key, value.strip())
 
+@event.listens_for(Mapper, "before_insert")
+def set_id_sequencial(mapper, connection, target):
+    """Gera automaticamente o id_sequencial no escopo da empresa para novos registros."""
+    if hasattr(target, "id_sequencial"):
+        if getattr(target, "id_sequencial", None) is None:
+            id_empresa = getattr(target, "id_empresa", None)
+            table = mapper.mapped_table
+            if "id_empresa" in table.columns and id_empresa is not None:
+                stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}" WHERE id_empresa = :emp_id')
+                res = connection.execute(stmt, {"emp_id": id_empresa}).scalar()
+            else:
+                stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}"')
+                res = connection.execute(stmt).scalar()
+            setattr(target, "id_sequencial", res or 1)
+
 # --- Modelos (Tabelas) ---
 
 class Empresa(Base):
@@ -401,7 +416,8 @@ class Empresa(Base):
     __label__ = "Dados da Empresa"
     __label_plural__ = "Empresas"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, info={'visible': False})
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'visible': False})
     
     # --- Aba: Dados Gerais ---
     cnpj = Column(String(18), unique=True, nullable=False, index=True, 
@@ -472,9 +488,9 @@ class Empresa(Base):
         'options': [{'label': 'Produção', 'value': 1}, {'label': 'Homologação', 'value': 2}]
     })
     
-    id_classificacao_contabil_padrao = Column(Integer, ForeignKey("classificacao_contabil.id"), nullable=True, 
+    id_classificacao_contabil_padrao = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=True, 
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas Padrão (Vendas)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
-    id_classificacao_contabil_cancelamento = Column(Integer, ForeignKey("classificacao_contabil.id"), nullable=True, 
+    id_classificacao_contabil_cancelamento = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=True, 
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas (Cancelamento de Venda)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
     validade_orcamento = Column(Integer, default=7, 
                                 info={'tab': 'Fiscal', 'label': 'Validade do Orçamento (Dias)', 'placeholder': '7'})
@@ -515,8 +531,10 @@ class Perfil(Base):
     __tablename__ = "perfil"
     __label__ = "Perfil de Acesso"
     __label_plural__ = "Perfis de Acesso"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_perfil_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True})
     
     nome = Column(String, nullable=False, 
                   info={'tab': 'Geral', 'label': 'Nome do Perfil', 'placeholder': 'Ex: Gerente de Vendas'})
@@ -542,7 +560,7 @@ class Perfil(Base):
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     empresa = relationship("Empresa", back_populates="perfil")
-    usuarios = relationship("Usuario", back_populates="perfil_rel")
+    usuarios = relationship("Usuario", back_populates="perfil_rel", primaryjoin="and_(Perfil.id_empresa==Usuario.id_empresa, Perfil.id_sequencial==Usuario.id_perfil)")
 
 
 class Usuario(Base):
@@ -552,8 +570,10 @@ class Usuario(Base):
     __tablename__ = "usuarios"
     __label__ = "Usuário"
     __label_plural__ = "Usuários"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_usuarios_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Dados Gerais ---
     nome = Column(String, nullable=False, 
@@ -575,12 +595,12 @@ class Usuario(Base):
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     # Novo campo para vínculo com a tabela de Perfis
-    id_perfil = Column(Integer, ForeignKey("perfil.id"), nullable=True, 
+    id_perfil = Column(Integer, ForeignKey("perfil.id_sequencial"), nullable=True, 
                        info={'tab': 'Dados Gerais', 'label': 'Perfil de Acesso', 'placeholder': 'Selecione...', 'foreign_key_model': 'perfil', 'foreign_key_label_field': 'nome'})
     
     # Relacionamento (Many-to-One)
     empresa = relationship("Empresa", back_populates="usuarios")
-    perfil_rel = relationship("Perfil", back_populates="usuarios")
+    perfil_rel = relationship("Perfil", back_populates="usuarios", primaryjoin="and_(Usuario.id_empresa==Perfil.id_empresa, Usuario.id_perfil==Perfil.id_sequencial)")
 
 
 class Cadastro(Base):
@@ -591,8 +611,10 @@ class Cadastro(Base):
     __tablename__ = "cadastros"
     __label__ = "Cadastro"
     __label_plural__ = "Clientes e Fornecedores"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_cadastros_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Dados Gerais ---
     cpf_cnpj = Column(String(18), nullable=False, index=True, 
@@ -654,13 +676,13 @@ class Cadastro(Base):
     empresa = relationship("Empresa", back_populates="cadastros")
     
     # Relacionamentos (One-to-Many) para Pedidos
-    pedidos_como_cliente = relationship("Pedido", back_populates="cliente", foreign_keys="Pedido.id_cliente")
-    pedidos_como_vendedor = relationship("Pedido", back_populates="vendedor", foreign_keys="Pedido.id_vendedor")
-    pedidos_como_transportadora = relationship("Pedido", back_populates="transportadora", foreign_keys="Pedido.id_transportadora")
+    pedidos_como_cliente = relationship("Pedido", back_populates="cliente", foreign_keys="Pedido.id_cliente", primaryjoin="and_(Cadastro.id_empresa==Pedido.id_empresa, Cadastro.id_sequencial==Pedido.id_cliente)")
+    pedidos_como_vendedor = relationship("Pedido", back_populates="vendedor", foreign_keys="Pedido.id_vendedor", primaryjoin="and_(Cadastro.id_empresa==Pedido.id_empresa, Cadastro.id_sequencial==Pedido.id_vendedor)")
+    pedidos_como_transportadora = relationship("Pedido", back_populates="transportadora", foreign_keys="Pedido.id_transportadora", primaryjoin="and_(Cadastro.id_empresa==Pedido.id_empresa, Cadastro.id_sequencial==Pedido.id_transportadora)")
     
     # Relacionamentos (One-to-Many) para outros modelos
-    produtos_como_fornecedor = relationship("Produto", back_populates="fornecedor")
-    contas_como_fornecedor = relationship("Conta", back_populates="fornecedor")
+    produtos_como_fornecedor = relationship("Produto", back_populates="fornecedor", primaryjoin="and_(Cadastro.id_empresa==Produto.id_empresa, Cadastro.id_sequencial==Produto.id_fornecedor)")
+    contas_como_fornecedor = relationship("Conta", back_populates="fornecedor", primaryjoin="and_(Cadastro.id_empresa==Conta.id_empresa, Cadastro.id_sequencial==Conta.id_fornecedor)")
 
 
 class Embalagem(Base):
@@ -670,16 +692,25 @@ class Embalagem(Base):
     __tablename__ = "embalagens"
     __label__ = "Embalagem"
     __label_plural__ = "Embalagens"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_embalagens_empresa_sequencial"),)
     
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Dados Gerais ---
     descricao = Column(String, nullable=False, 
                        info={'tab': 'Dados Gerais', 'label': 'Descrição da Embalagem', 'placeholder': 'Ex: Caixa Padrão Correios'})
-    regras = Column(JSON,
-                    info={'tab': 'Regras de Empacotamento', 'label': 'Regras', 'placeholder': '', 'col_span': 2}) # JSON para flexibilidade
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais', 'label': 'Ativo?', 'placeholder': ''})
+
+    # --- Aba: Regras de Empacotamento ---
+    regras = Column(JSON, default=dict,
+                    info={'tab': 'Regras de Empacotamento', 'label': 'Regras de Empacotamento', 'component': 'rule_builder', 'placeholder': '', 'col_span': 3})
+
+    # --- Aba: Simulação de Empacotamento ---
+    simulacao_exemplo = Column(JSON, default=dict,
+                               info={'tab': 'Simulação de Empacotamento', 'label': 'Simulação em Tempo Real', 'component': 'packaging_simulation', 'placeholder': '', 'col_span': 3})
+
 
     # Campos Internos
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -692,7 +723,7 @@ class Embalagem(Base):
     empresa = relationship("Empresa", back_populates="embalagens")
     
     # Relacionamento (One-to-Many)
-    produtos = relationship("Produto", back_populates="embalagem")
+    produtos = relationship("Produto", back_populates="embalagem", primaryjoin="and_(Embalagem.id_empresa==Produto.id_empresa, Embalagem.id_sequencial==Produto.id_embalagem)")
 
 
 class Produto(Base):
@@ -702,8 +733,10 @@ class Produto(Base):
     __tablename__ = "produtos"
     __label__ = "Produto"
     __label_plural__ = "Produtos"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_produtos_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Dados Gerais ---
     sku = Column(String, nullable=False, unique=True, index=True, 
@@ -721,9 +754,9 @@ class Produto(Base):
                         info={'tab': 'Dados Gerais', 'label': 'URL da Imagem', 'placeholder': 'https://...'})
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais', 'label': 'Ativo?', 'placeholder': ''})
-    id_embalagem = Column(Integer, ForeignKey("embalagens.id"), nullable=True, 
+    id_embalagem = Column(Integer, ForeignKey("embalagens.id_sequencial"), nullable=True, 
                           info={'tab': 'Dados Gerais', 'label': 'Embalagem Padrão', 'placeholder': 'Selecione...'})
-    id_fornecedor = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
+    id_fornecedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
                            info={'tab': 'Dados Gerais', 'label': 'Fornecedor Principal', 'placeholder': 'Selecione...'}) # Referencia Cadastro (tipo_cadastro=fornecedor)
 
     # --- Aba: Categorização ---
@@ -779,11 +812,11 @@ class Produto(Base):
 
     # Relacionamentos (Many-to-One)
     empresa = relationship("Empresa", back_populates="produtos")
-    embalagem = relationship("Embalagem", back_populates="produtos")
-    fornecedor = relationship("Cadastro", back_populates="produtos_como_fornecedor", foreign_keys=[id_fornecedor])
+    embalagem = relationship("Embalagem", back_populates="produtos", primaryjoin="and_(Produto.id_empresa==Embalagem.id_empresa, Produto.id_embalagem==Embalagem.id_sequencial)")
+    fornecedor = relationship("Cadastro", back_populates="produtos_como_fornecedor", foreign_keys=[id_fornecedor], primaryjoin="and_(Produto.id_empresa==Cadastro.id_empresa, Produto.id_fornecedor==Cadastro.id_sequencial)")
     
     # Relacionamento (One-to-Many)
-    estoques = relationship("Estoque", back_populates="produto")
+    estoques = relationship("Estoque", back_populates="produto", primaryjoin="and_(Produto.id_empresa==Estoque.id_empresa, Produto.id_sequencial==Estoque.id_produto)")
 
 
 class Conta(Base):
@@ -793,8 +826,10 @@ class Conta(Base):
     __tablename__ = "contas"
     __label__ = "Lançamento Financeiro"
     __label_plural__ = "Contas a Pagar e Receber"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_contas_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Principal ---
     tipo_conta = Column(SQLAlchemyEnum(ContaTipoEnum, native_enum=False), nullable=False, default=ContaTipoEnum.a_receber, 
@@ -805,7 +840,7 @@ class Conta(Base):
                        info={'tab': 'Principal', 'label': 'Descrição', 'placeholder': 'Ex: Conta de Luz Referente Mês 05'})
     numero_conta = Column(String, 
                           info={'tab': 'Principal', 'label': 'Número do Documento', 'placeholder': ''})
-    id_fornecedor = Column(Integer, ForeignKey("cadastros.id"), nullable=False, 
+    id_fornecedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=False, 
                            info={'tab': 'Principal', 'label': 'Fornecedor / Cliente', 'placeholder': 'Selecione...'}) # Ref. Cadastro (tipo_cadastro=fornecedor)
 
     # --- Aba: Financeiro ---
@@ -813,7 +848,7 @@ class Conta(Base):
                  info={'tab': 'Financeiro', 'label': 'Forma de Pagamento', 'placeholder': 'Selecione...'})
     valor = Column(Currency(), nullable=False, 
                    info={'tab': 'Financeiro', 'label': 'Valor Total', 'placeholder': '0,00'})
-    id_classificacao_contabil = Column(Integer, ForeignKey("classificacao_contabil.id"), nullable=False,
+    id_classificacao_contabil = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=False,
                                        info={'tab': 'Financeiro', 'label': 'Plano de Contas', 'placeholder': 'Selecione...'})
     caixa_destino_origem = Column(String, 
                  info={'tab': 'Financeiro', 'component': 'creatable_select', 'label': 'Conta Bancária / Caixa', 'placeholder': 'Ex: Caixa Geral ou Banco Itaú'})
@@ -840,8 +875,8 @@ class Conta(Base):
 
     # Relacionamentos (Many-to-One)
     empresa = relationship("Empresa", back_populates="contas")
-    fornecedor = relationship("Cadastro", back_populates="contas_como_fornecedor", foreign_keys=[id_fornecedor])
-    classificacao_contabil = relationship("ClassificacaoContabil")
+    fornecedor = relationship("Cadastro", back_populates="contas_como_fornecedor", foreign_keys=[id_fornecedor], primaryjoin="and_(Conta.id_empresa==Cadastro.id_empresa, Conta.id_fornecedor==Cadastro.id_sequencial)")
+    classificacao_contabil = relationship("ClassificacaoContabil", primaryjoin="and_(Conta.id_empresa==ClassificacaoContabil.id_empresa, Conta.id_classificacao_contabil==ClassificacaoContabil.id_sequencial)")
 
 
 class Estoque(Base):
@@ -851,11 +886,13 @@ class Estoque(Base):
     __tablename__ = "estoque"
     __label__ = "Movimentação de Estoque"
     __label_plural__ = "Movimentações de Estoque"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_estoque_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Principal ---
-    id_produto = Column(Integer, ForeignKey("produtos.id"), nullable=False, 
+    id_produto = Column(Integer, ForeignKey("produtos.id_sequencial"), nullable=False, 
                         info={'tab': 'Principal', 'label': 'Produto', 'placeholder': 'Selecione...'})
     lote = Column(String, 
                   info={'tab': 'Principal', 'label': 'Lote / Série', 'placeholder': ''})
@@ -895,7 +932,7 @@ class Estoque(Base):
 
     # Relacionamentos (Many-to-One)
     empresa = relationship("Empresa", back_populates="estoques")
-    produto = relationship("Produto", back_populates="estoques")
+    produto = relationship("Produto", back_populates="estoques", primaryjoin="and_(Estoque.id_empresa==Produto.id_empresa, Estoque.id_produto==Produto.id_sequencial)")
 
 
 class Pedido(Base):
@@ -905,13 +942,15 @@ class Pedido(Base):
     __tablename__ = "pedidos"
     __label__ = "Pedido de Venda"
     __label_plural__ = "Pedidos de Venda"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_pedidos_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Principal ---
-    id_cliente = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
+    id_cliente = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
                         info={'tab': 'Principal', 'label': 'Cliente', 'placeholder': 'Busque o cliente...'}) # Ref. Cadastro (tipo_cadastro=cliente)
-    id_vendedor = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
+    id_vendedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
                          info={'tab': 'Principal', 'label': 'Vendedor', 'placeholder': 'Busque o vendedor...'}) # Ref. Cadastro (tipo_cadastro=vendedor)
     origem_venda = Column(String, 
                           info={'tab': 'Principal', 'component': 'creatable_select', 'label': 'Canal de Venda', 'placeholder': 'Ex: Site, Balcão'})
@@ -949,7 +988,7 @@ class Pedido(Base):
     endereco_complemento = Column(String, info={'tab': 'Endereço de Entrega', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
 
     # --- Aba: Frete ---
-    id_transportadora = Column(Integer, ForeignKey("cadastros.id"), nullable=True, 
+    id_transportadora = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
                                info={'tab': 'Frete', 'label': 'Transportadora', 'placeholder': 'Busque a transportadora...'}) # Ref. Cadastro (tipo_cadastro=transportadora)
     modalidade_frete = Column(SQLAlchemyEnum(PedidoModalidadeFreteEnum, native_enum=False, values_callable=lambda x: [e.value for e in x]), default=PedidoModalidadeFreteEnum.cif, 
                               info={'tab': 'Frete', 'label': 'Modalidade de Frete', 'placeholder': 'Selecione...'})
@@ -1037,14 +1076,25 @@ class Pedido(Base):
     }, default=55) # 55=NFe, 65=NFCe
 
     # Campos Integração Intelipost
-    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)'})
-    quote_id = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Cotação (Intelipost)'})
-    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Ordem Envio (Intelipost)'})
+    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Método Entrega (Intelipost)'})
+    quote_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Cotação (Intelipost)'})
+    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Ordem Envio (Intelipost)'})
+    id_pedido_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Pedido (Intelipost)'})
+    status_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Status (Intelipost)'})
+    intelipost_criado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Criado Intelipost?'})
     
-    # Campos de Status de Integração
-    meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'label': 'XML enviado ML?'})
-    intelipost_criado = Column(Boolean, default=False, info={'tab': 'Integrações', 'label': 'Criado Intelipost?'})
-    email_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'label': 'E-mail enviado?'})
+    # Campos Integração Mercado Livre (Aba Integrações)
+    meli_order_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'ID Pedido ML'})
+    meli_pack_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'ID Pacote ML'})
+    meli_shipment_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'ID Envio ML'})
+    meli_buyer_nickname = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Comprador ML (Nickname)'})
+    meli_tracking_number = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Código Rastreio ML'})
+    meli_logistic_type = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Tipo Logística ML'})
+    meli_shipping_service = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Serviço Frete ML'})
+    meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'XML enviado ML?'})
+    
+    # Campos de Status de Integração (Elastic Email)
+    email_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Elastic Email', 'label': 'E-mail enviado?'})
     
     # --- Aba: Observações ---
     observacao = Column(Text, info={'tab': 'Observações', 'label': 'Observações Internas', 'placeholder': '', 'col_span': 2})
@@ -1059,9 +1109,9 @@ class Pedido(Base):
 
     # Relacionamentos (Many-to-One)
     empresa = relationship("Empresa", back_populates="pedidos")
-    cliente = relationship("Cadastro", back_populates="pedidos_como_cliente", foreign_keys=[id_cliente])
-    vendedor = relationship("Cadastro", back_populates="pedidos_como_vendedor", foreign_keys=[id_vendedor])
-    transportadora = relationship("Cadastro", back_populates="pedidos_como_transportadora", foreign_keys=[id_transportadora])
+    cliente = relationship("Cadastro", back_populates="pedidos_como_cliente", foreign_keys=[id_cliente], primaryjoin="and_(Pedido.id_empresa==Cadastro.id_empresa, Pedido.id_cliente==Cadastro.id_sequencial)")
+    vendedor = relationship("Cadastro", back_populates="pedidos_como_vendedor", foreign_keys=[id_vendedor], primaryjoin="and_(Pedido.id_empresa==Cadastro.id_empresa, Pedido.id_vendedor==Cadastro.id_sequencial)")
+    transportadora = relationship("Cadastro", back_populates="pedidos_como_transportadora", foreign_keys=[id_transportadora], primaryjoin="and_(Pedido.id_empresa==Cadastro.id_empresa, Pedido.id_transportadora==Cadastro.id_sequencial)")
 
 
 class Tributacao(Base):
@@ -1071,8 +1121,10 @@ class Tributacao(Base):
     __tablename__ = "regras_tributarias"
     __label__ = "Regra de Imposto"
     __label_plural__ = "Regras Tributárias"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_regras_tributarias_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Configuração', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Configuração ---
     descricao = Column(String, 
@@ -1156,8 +1208,10 @@ class ClassificacaoContabil(Base):
     __tablename__ = "classificacao_contabil"
     __label__ = "Plano de Contas"
     __label_plural__ = "Plano de Contas"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_classificacao_contabil_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True})
     
     grupo = Column(String, nullable=False, 
                    info={'tab': 'Geral', 'component': 'creatable_select', 'label': 'Grupo', 'placeholder': 'Ex: Despesas'})
@@ -1196,6 +1250,7 @@ class IntelipostConfiguracao(Base):
     __label_plural__ = "Configurações Intelipost"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True, 'visible': False})
     api_key = Column(EncryptedString, nullable=False, info={'tab': 'Dados Gerais', 'ui_type': 'password', 'label': 'Chave de API (Intelipost)', 'placeholder': 'Cole sua chave aqui'})
     origin_zip_code = Column(String(9), nullable=False, info={'tab': 'Dados Gerais', 'format_mask': 'cep', 'label': 'CEP de Origem', 'placeholder': '00000-000'})
     origin_warehouse_code = Column(String, nullable=True, info={'tab': 'Dados Gerais', 'label': 'Código do CD (Warehouse)', 'placeholder': 'Ex: CD01'})
@@ -1220,6 +1275,7 @@ class MeliConfiguracao(Base):
     __label_plural__ = "Configurações Mercado Livre"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
     
     # Aba: Geral
     app_id = Column(String, nullable=True, info={'tab': 'Geral', 'label': 'App ID', 'placeholder': ''})
@@ -1227,12 +1283,16 @@ class MeliConfiguracao(Base):
     redirect_uri = Column(String, nullable=True, info={'tab': 'Geral', 'label': 'Redirect URI', 'placeholder': ''})
     
     # Aba: Preferências
-    cliente_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Cliente Padrão (Fallback)', 'placeholder': 'Selecione...'})
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    cliente_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Cliente Padrão (Fallback)', 'placeholder': 'Selecione...'})
+    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     caixa_padrao = Column(String, nullable=True, 
                  info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
+
+    # Aba: Atualização de Status ML
+    regras_atualizacao_status = Column(JSON, nullable=True, default=list, 
+                                       info={'tab': 'Atualização de Status ML', 'label': 'Regras para Atualizar Situação no Mercado Livre', 'component': 'meli_status_rules', 'col_span': 2})
 
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
@@ -1267,6 +1327,7 @@ class MagentoConfiguracao(Base):
     __label_plural__ = "Configurações Magento"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
     
     # Aba: Conexão
     base_url = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'URL da Loja (Base URL)', 'placeholder': 'https://minhaloja.com.br'})
@@ -1277,7 +1338,7 @@ class MagentoConfiguracao(Base):
     store_view_code = Column(String, default='default', info={'tab': 'Conexão', 'label': 'Código da Store View (ex: default)', 'placeholder': 'default'})
     
     # Aba: Preferências
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     
@@ -1302,6 +1363,7 @@ class TiktokConfiguracao(Base):
     __label_plural__ = "Configurações Tiktok Shop"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
     
     # Aba: Conexão
     app_key = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'App Key', 'placeholder': ''})
@@ -1311,7 +1373,7 @@ class TiktokConfiguracao(Base):
     shop_id = Column(String, nullable=True, info={'tab': 'Conexão', 'label': 'Shop ID', 'placeholder': ''})
     
     # Aba: Preferências
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     
@@ -1341,6 +1403,7 @@ class ElasticEmailConfiguracao(Base):
     __label_plural__ = "Configurações Elastic Email"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
     api_key = Column(EncryptedString, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'API Key (Elastic Email)', 'placeholder': 'Sua API Key'})
     from_email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail do Remetente', 'placeholder': 'exemplo@suaempresa.com.br'})
     from_name = Column(String, info={'tab': 'Geral', 'label': 'Nome do Remetente', 'placeholder': 'Minha Loja'})
@@ -1364,6 +1427,7 @@ class AtendaiConfiguracao(Base):
     __label_plural__ = "Configurações AtendAI"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
     url_webhook = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'URL do Webhook', 'placeholder': 'https://api.atendai.com/webhook'})
     webhook_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Token de Autenticação (X-Webhook-Token)', 'placeholder': 'Cole o token X-Webhook-Token'})
 
@@ -1386,6 +1450,7 @@ class OutrasEmpresasConfiguracao(Base):
     __label_plural__ = "Configurações Outras Empresas"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
     nome = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'Nome de Identificação', 'placeholder': 'Ex: Filial SP'})
     email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail da Empresa', 'placeholder': 'email@empresa.com'})
     senha = Column(EncryptedString, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Senha', 'placeholder': 'Senha de acesso'})
@@ -1429,6 +1494,7 @@ class EmailRegra(Base):
     ]
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True})
 
     # Identificação da regra
     nome = Column(String, nullable=False,
@@ -1509,6 +1575,7 @@ class OpcaoCampo(Base):
     __tablename__ = "opcoes_campos"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True)
     model_name = Column(String, nullable=False, index=True)
     field_name = Column(String, nullable=False, index=True)
     valor = Column(String, nullable=False)
@@ -1525,7 +1592,7 @@ class UsuarioPreferencia(Base):
     __tablename__ = "usuario_preferencias"
 
     id = Column(Integer, primary_key=True, index=True)
-    id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    id_usuario = Column(Integer, ForeignKey("usuarios.id_sequencial"), nullable=False)
     model_name = Column(String, nullable=False, index=True) # Ex: 'pedidos', 'produtos'
     
     # Armazena JSON com: { visible_columns: [], sort_by: str, sort_order: str, filters: [] }
@@ -1540,7 +1607,7 @@ class DashboardPreferencia(Base):
     __tablename__ = "dashboard_preferencias"
 
     id = Column(Integer, primary_key=True, index=True)
-    id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    id_usuario = Column(Integer, ForeignKey("usuarios.id_sequencial"), nullable=False)
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     # O layout exato exigido pelo react-grid-layout (x, y, w, h, i)
@@ -1561,6 +1628,7 @@ class Relatorio(Base):
     __label_plural__ = "Relatórios Personalizados"
 
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True})
     
     nome = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'Nome do Relatório', 'placeholder': 'Ex: Vendas por Estado'})
     descricao = Column(String, info={'tab': 'Geral', 'label': 'Descrição', 'placeholder': 'Ex: Relatório mensal de vendas agrupado por UF'})
@@ -1588,6 +1656,7 @@ class NotaFiscalRecebida(Base):
     __label__ = "Nota Fiscal Recebida"
     __label_plural__ = "Notas Fiscais Recebidas (DF-e)"
     id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'label': 'Código'})
     chave_acesso = Column(String(44), index=True, nullable=True, info={'label': 'Chave de Acesso'})
     nsu = Column(String, index=True, info={'label': 'NSU'})
     tipo_documento = Column(String, index=True, info={'label': 'Tipo do Documento'})

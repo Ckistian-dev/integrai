@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info, Plus, X, Palette } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info, Plus, X, Palette, Brackets, Binary, Calculator } from 'lucide-react';
 import AsyncSelect from 'react-select/async';
 import Select from 'react-select';
 import api from '../../api/axiosConfig';
@@ -220,7 +220,7 @@ export const TextInput = React.forwardRef(({
   // ************ CORREÇÃO PARA ATRIBUTOS INVÁLIDOS E WARNINGS ************
   // Lista de props do IMask e outras customizadas que NÃO devem ir para o DOM <input>
   const invalidDomProps = [
-    'modelName', 'unmaskedValue', 'mask', 'radix', 'thousandsSeparator',
+    'modelName', 'formData', 'unmaskedValue', 'mask', 'radix', 'thousandsSeparator',
     'mapToRadix', 'scale', 'padFractionalZeros', 'normalizeZeros', 'typedValue',
     'lazy', 'suffix', 'blocks', 'autofix', 'definitions', 'overwrite'
   ];
@@ -299,26 +299,14 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
   const trueLabel = isSituacaoField ? 'Ativo' : 'Sim';
   const falseLabel = isSituacaoField ? 'Inativo' : 'Não';
 
-  const options = React.useMemo(() => [
-    { value: 'true', label: trueLabel },
-    { value: 'false', label: falseLabel }
-  ], [trueLabel, falseLabel]);
+  const isTrue = value === true || value === 'true' || value === 1 || value === '1';
 
-  const selectedOption = React.useMemo(() => {
-    if (value === true || value === 'true') return { value: 'true', label: trueLabel };
-    if (value === false || value === 'false') return { value: 'false', label: falseLabel };
-    return null;
-  }, [value, trueLabel, falseLabel]);
-
-  const handleChange = (selected) => {
-    let booleanValue = null;
-    if (selected) {
-      booleanValue = selected.value === 'true';
-    }
+  const handleToggle = () => {
+    if (disabled) return;
     onChange({
       target: {
         name: name,
-        value: booleanValue,
+        value: !isTrue,
       },
     });
   };
@@ -330,21 +318,33 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
           {label} {required && <span className="text-red-500">*</span>}
         </label>
       )}
-      <Select
-        id={name}
-        name={name}
-        autoComplete="off"
-        isDisabled={disabled}
-        options={options}
-        value={selectedOption}
-        onChange={handleChange}
-        placeholder={placeholder || field?.placeholder || ''}
-        classNamePrefix="react-select"
-        menuPortalTarget={document.body}
-        styles={REACT_SELECT_CUSTOM_STYLES(!!error)}
-        isClearable={!required}
-        {...props}
-      />
+
+      {/* Caixa do Campo no Padrão do Sistema */}
+      <div
+        onClick={handleToggle}
+        className={`w-full h-[38px] px-3 border border-gray-300 rounded-md shadow-2xs bg-white flex items-center justify-between cursor-pointer select-none hover:border-gray-400 focus-within:ring-2 focus-within:ring-teal-500 ${
+          disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+        } ${error ? 'border-red-500' : ''}`}
+      >
+        {/* Rótulo de Status na Esquerda */}
+        <span className={`text-sm ${isTrue ? 'text-gray-800' : 'text-gray-500'}`}>
+          {isTrue ? trueLabel : falseLabel}
+        </span>
+
+        {/* Toggle Switch Elegante em Teal no canto direito */}
+        <div
+          className={`relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-200 ease-in-out ${
+            isTrue ? 'bg-teal-600' : 'bg-gray-200 border border-gray-300'
+          }`}
+        >
+          <span
+            className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+              isTrue ? 'translate-x-3.5' : 'translate-x-0'
+            }`}
+          />
+        </div>
+      </div>
+
       {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
@@ -413,8 +413,27 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
     };
   };
 
+  const calculateFromValorIpi = (item) => {
+    if (isComplemento) {
+      return item;
+    }
+    const qtd = Number(item.quantidade || 0);
+    const unitPrice = Number(item.valor_unitario || 0);
+    const valorIpi = Number(item.valor_ipi || 0);
+    const subtotal = qtd * unitPrice;
+    const newTotal = subtotal + valorIpi;
+    const newIpiRate = subtotal > 0 ? (valorIpi / subtotal) * 100 : Number(item.ipi_aliquota || 0);
+
+    return {
+      ...item,
+      ipi_aliquota: parseFloat(newIpiRate.toFixed(4)),
+      valor_ipi: valorIpi,
+      total_com_ipi: parseFloat(newTotal.toFixed(2))
+    };
+  };
+
   const handleAddItem = () => {
-    const newItem = calculateTotals({ id_produto: null, quantidade: 1, valor_unitario: 0, ipi_aliquota: 0 });
+    const newItem = calculateTotals({ id_produto: null, quantidade: 1, valor_unitario: 0, ipi_aliquota: 0, valor_ipi: 0 });
     const newItems = [...items, newItem];
     triggerChange(newItems);
   };
@@ -430,6 +449,8 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
 
     if (key === 'total_com_ipi') {
       item = calculateFromTotal(item);
+    } else if (key === 'valor_ipi') {
+      item = calculateFromValorIpi(item);
     } else {
       item = calculateTotals(item);
     }
@@ -494,9 +515,9 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
 
       <div className="space-y-3">
         {items.map((item, index) => (
-          <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-x-4 gap-y-3 items-start">
-            {/* Produto (5 cols) */}
-            <div className="md:col-span-5 flex flex-col">
+          <div key={index} className="grid grid-cols-1 md:grid-cols-7 gap-x-3 gap-y-3 items-start">
+            {/* Produto (3 cols) */}
+            <div className="md:col-span-3 flex flex-col">
               {index === 0 && (
                 <label className="mb-1.5 text-sm font-medium text-gray-700">
                   Produto
@@ -509,8 +530,8 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
               />
             </div>
 
-            {/* Quantidade (2 cols) */}
-            <div className="md:col-span-2 flex flex-col">
+            {/* Quantidade (1 col) */}
+            <div className="md:col-span-1 flex flex-col">
               {index === 0 && (
                 <label className="mb-1.5 text-sm font-medium text-gray-700">
                   Qtd
@@ -526,8 +547,8 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
               />
             </div>
 
-            {/* Valor Unitário (2 cols) */}
-            <div className="md:col-span-2 flex flex-col">
+            {/* Valor Unitário (1 col) */}
+            <div className="md:col-span-1 flex flex-col">
               {index === 0 && (
                 <label className="mb-1.5 text-sm font-medium text-gray-700">
                   Valor Unit. (R$)
@@ -557,15 +578,36 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
               />
             </div>
 
-            {/* Total com IPI + Lixeira (3 cols) */}
-            <div className="md:col-span-3 flex flex-col">
+            {/* Valor IPI (1 col) */}
+            <div className="md:col-span-1 flex flex-col">
+              {index === 0 && (
+                <label className="mb-1.5 text-sm font-medium text-gray-700">
+                  Valor IPI (R$)
+                </label>
+              )}
+              <IMaskInput
+                mask={MASKS['currency'].mask}
+                blocks={{
+                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                }}
+                lazy={MASKS['currency'].lazy}
+                value={item.valor_ipi !== undefined && item.valor_ipi !== null && item.valor_ipi !== '' && item.valor_ipi !== 0 ? String(item.valor_ipi).replace('.', ',') : ''}
+                unmask={true}
+                readOnly={true}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-800 bg-white"
+                placeholder="0,00"
+              />
+            </div>
+
+            {/* Total com IPI + Lixeira (1 col) */}
+            <div className="md:col-span-1 flex flex-col">
               {index === 0 && (
                 <label className="mb-1.5 text-sm font-medium text-gray-700">
                   Total c/ IPI (R$)
                 </label>
               )}
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 min-w-0">
                   <IMaskInput
                     mask={MASKS['currency'].mask}
                     blocks={{
@@ -631,7 +673,7 @@ const AsyncProductSelect = ({ value, onChange, error }) => {
       params: { search_term: inputValue, limit: 1000, situacao: 'true' }
     }).then(response => {
       const options = response.data.items.map(item => ({
-        value: item.id,
+        value: item.id_sequencial ?? item.id,
         label: item.descricao,
         original: item
       }));
@@ -644,9 +686,9 @@ const AsyncProductSelect = ({ value, onChange, error }) => {
       api.get(`/generic/produtos/${value}`)
         .then(response => {
           const item = response.data;
-          setSelectedOption({ value: item.id, label: item.descricao, original: item });
+          setSelectedOption({ value: item.id_sequencial ?? item.id, label: item.descricao, original: item });
         })
-        .catch(() => setSelectedOption({ value, label: `ID ${value}` }));
+        .catch(() => setSelectedOption({ value, label: `Código #${value}` }));
     } else if (!value) {
       setSelectedOption(null);
     }
@@ -946,7 +988,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
       }
       return razao;
     }
-    return item[foreign_key_label_field] || `ID ${item.id}`;
+    return item[foreign_key_label_field] || `Código #${item.id_sequencial ?? item.id}`;
   };
 
   // 1. Função para carregar opções (busca)
@@ -993,7 +1035,7 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
       params
     }).then(response => {
       const options = response.data.items.map(item => ({
-        value: item.id,
+        value: item.id_sequencial ?? item.id,
         label: getOptionLabel(item)
       }));
       callback(options);
@@ -1095,8 +1137,8 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, formDa
   // Se o valor for um hash bcrypt antigo ($2b$ ou $2a$), esconde a hash e pede nova senha se desejar alterar
   const isLegacyBcryptHash = value && (String(value).startsWith('$2b$') || String(value).startsWith('$2a$'));
   const inputValue = isLegacyBcryptHash ? '' : (value || '');
-  const activePlaceholder = isLegacyBcryptHash 
-    ? '(Senha salva - digite nova para alterar)' 
+  const activePlaceholder = isLegacyBcryptHash
+    ? '(Senha salva - digite nova para alterar)'
     : (placeholder || field?.placeholder || '');
 
   const toggleShowPassword = () => {
@@ -1649,4 +1691,354 @@ export const ColorInput = ({ field, value, onChange, error, disabled, placeholde
     </div>
   );
 };
-
+
+// --- Componente de Construtor de Fórmulas Simples e Genérico (Linha Única) ---
+
+const VAR_FRIENDLY_NAMES = {
+  'QTD_A_PROCESSAR': 'Qtd. Restante a Embalar',
+  'QTD_TOTAL_PEDIDO': 'Qtd. Total do Pedido',
+  'QTD_NESTE_VOLUME': 'Qtd. Neste Volume',
+  'PESO_ITEM_UNICO': 'Peso do Item',
+  'ALTURA_ITEM_UNICO': 'Altura do Item',
+  'LARGURA_ITEM_UNICO': 'Largura do Item',
+  'COMPRIMENTO_ITEM_UNICO': 'Comprimento do Item',
+  'ACRESCIMO_EMBALAGEM': 'Acréscimo Embalagem'
+};
+
+const parseStringToTokens = (str) => {
+  if (!str || !str.trim()) return [];
+  const regex = /([a-zA-Z_][a-zA-Z0-9_]*)|(\d+(?:\.\d+)?)|(>=|<=|==|!=|[+\-*/()><=!])/g;
+  const tokens = [];
+  let match;
+
+  while ((match = regex.exec(str)) !== null) {
+    const val = match[0];
+    if (match[1]) {
+      tokens.push({ tipo: 'variavel', valor: val });
+    } else if (match[2]) {
+      tokens.push({ tipo: 'numero', valor: val });
+    } else if (match[3]) {
+      tokens.push({ tipo: 'operador', valor: val });
+    }
+  }
+  return tokens;
+};
+
+export const FormulaBuilderInput = ({ label, formula = [], onChange, variaveisDisponiveis = [] }) => {
+  const [typedValue, setTypedValue] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Normaliza a prop 'formula' para um array de tokens
+  const tokens = useMemo(() => {
+    if (!formula) return [];
+    if (Array.isArray(formula)) return formula;
+    if (typeof formula === 'string') {
+      const regex = /([a-zA-Z_][a-zA-Z0-9_]*)|(\d+(?:\.\d+)?)|(>=|<=|==|!=|[+\-*/()><=!])/g;
+      const parsed = [];
+      let match;
+      while ((match = regex.exec(formula)) !== null) {
+        if (match[1]) parsed.push({ tipo: 'variavel', valor: match[1] });
+        else if (match[2]) parsed.push({ tipo: 'numero', valor: match[2] });
+        else if (match[3]) parsed.push({ tipo: 'operador', valor: match[3] });
+      }
+      return parsed;
+    }
+    return [];
+  }, [formula]);
+
+  // Posicao do cursor de inserção no array de tokens (0 <= cursorIndex <= tokens.length)
+  const [cursorIndex, setCursorIndex] = useState(tokens.length);
+
+  // Garante que o cursorIndex não ultrapasse os limites ao alterar tokens externamente
+  useEffect(() => {
+    setCursorIndex((prev) => Math.min(prev, tokens.length));
+  }, [tokens.length]);
+
+  // Filtra as variáveis disponíveis baseado no texto digitado
+  const filteredVars = useMemo(() => {
+    if (!typedValue || !/[a-zA-Z_]/.test(typedValue)) return variaveisDisponiveis;
+    const term = typedValue.toLowerCase().trim();
+    return variaveisDisponiveis.filter((v) => {
+      const friendlyName = (VAR_FRIENDLY_NAMES[v] || '').toLowerCase();
+      const rawName = v.toLowerCase();
+      return friendlyName.includes(term) || rawName.includes(term);
+    });
+  }, [typedValue, variaveisDisponiveis]);
+
+  // Abre o dropdown se houver letras digitadas
+  useEffect(() => {
+    if (typedValue && /[a-zA-Z_]/.test(typedValue)) {
+      setIsDropdownOpen(true);
+    }
+  }, [typedValue]);
+
+  // Fecha o dropdown ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const addTokenAtCursor = (token) => {
+    const newTokens = [
+      ...tokens.slice(0, cursorIndex),
+      token,
+      ...tokens.slice(cursorIndex)
+    ];
+    setTypedValue('');
+    setIsDropdownOpen(false);
+    setCursorIndex((prev) => prev + 1);
+    onChange(newTokens);
+  };
+
+  const removeTokenAt = (index) => {
+    if (index < 0 || index >= tokens.length) return;
+    const newTokens = tokens.filter((_, i) => i !== index);
+    if (cursorIndex > index) {
+      setCursorIndex((prev) => Math.max(0, prev - 1));
+    }
+    onChange(newTokens);
+  };
+
+  // Trata navegação por setas (Left/Right/Home/End) e teclas Backspace/Delete
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowLeft') {
+      const isCaretAtStart = !inputRef.current || inputRef.current.selectionStart === 0;
+      if (typedValue === '' || isCaretAtStart) {
+        e.preventDefault();
+        setCursorIndex((prev) => Math.max(0, prev - 1));
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowRight') {
+      const isCaretAtEnd = !inputRef.current || inputRef.current.selectionEnd === typedValue.length;
+      if (typedValue === '' || isCaretAtEnd) {
+        e.preventDefault();
+        setCursorIndex((prev) => Math.min(tokens.length, prev + 1));
+      }
+      return;
+    }
+
+    if (e.key === 'Home') {
+      e.preventDefault();
+      setCursorIndex(0);
+      return;
+    }
+
+    if (e.key === 'End') {
+      e.preventDefault();
+      setCursorIndex(tokens.length);
+      return;
+    }
+
+    if (e.key === 'Backspace' && typedValue === '' && cursorIndex > 0) {
+      e.preventDefault();
+      removeTokenAt(cursorIndex - 1);
+      return;
+    }
+
+    if (e.key === 'Delete' && typedValue === '' && cursorIndex < tokens.length) {
+      e.preventDefault();
+      removeTokenAt(cursorIndex);
+      return;
+    }
+
+    const allowedKeys = [
+      'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End', 'Enter',
+      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', ',', '+', '-', '*', '/', '(', ')',
+      '>', '<', '=', '!', '&', '|', ' '
+    ];
+
+    const isLetter = e.key.length === 1 && /[a-zA-Z_]/.test(e.key);
+
+    if (!allowedKeys.includes(e.key) && !isLetter && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    const cleanVal = val.replace(/[^a-zA-Z0-9+\-*/().,><=!&|_ ]/g, '');
+
+    const validOps = ['+', '-', '*', '/', '(', ')', '>=', '<=', '==', '!=', '>', '<', '='];
+    if (cleanVal && validOps.includes(cleanVal.trim())) {
+      addTokenAtCursor({ tipo: 'operador', valor: cleanVal.trim() });
+      return;
+    }
+
+    setTypedValue(cleanVal);
+  };
+
+  const flushTypedNumberOrOp = () => {
+    const trimmed = typedValue.trim();
+    const validOps = ['+', '-', '*', '/', '(', ')', '>=', '<=', '==', '!=', '>', '<', '='];
+
+    if (trimmed && !isNaN(parseFloat(trimmed)) && !/[a-zA-Z_]/.test(trimmed)) {
+      addTokenAtCursor({ tipo: 'numero', valor: trimmed });
+    } else if (trimmed && validOps.includes(trimmed)) {
+      addTokenAtCursor({ tipo: 'operador', valor: trimmed });
+    } else {
+      setTypedValue('');
+    }
+  };
+
+  const handleInputBlur = () => {
+    setTimeout(() => {
+      flushTypedNumberOrOp();
+      setIsDropdownOpen(false);
+    }, 150);
+  };
+
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (isDropdownOpen && filteredVars.length > 0) {
+        addTokenAtCursor({ tipo: 'variavel', valor: filteredVars[0] });
+      } else {
+        flushTypedNumberOrOp();
+      }
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      flushTypedNumberOrOp();
+    } else {
+      handleKeyDown(e);
+    }
+  };
+
+  const renderTokenItem = (token, index) => {
+    if (token.tipo === 'variavel') {
+      return (
+        <span
+          key={index}
+          onClick={(e) => {
+            e.stopPropagation();
+            setCursorIndex(index + 1);
+            inputRef.current?.focus();
+          }}
+          className="font-bold text-gray-900 bg-gray-100 border border-gray-300 rounded px-2 py-0.5 text-xs inline-flex items-center shadow-2xs select-none cursor-pointer hover:bg-gray-200 transition-colors"
+        >
+          {VAR_FRIENDLY_NAMES[token.valor] || token.valor}
+        </span>
+      );
+    }
+
+    if (token.tipo === 'operador') {
+      return (
+        <span
+          key={index}
+          onClick={(e) => {
+            e.stopPropagation();
+            setCursorIndex(index + 1);
+            inputRef.current?.focus();
+          }}
+          className="font-mono font-bold text-gray-700 px-0.5 cursor-pointer hover:text-blue-600 transition-colors text-sm"
+        >
+          {token.valor}
+        </span>
+      );
+    }
+
+    return (
+      <span
+        key={index}
+        onClick={(e) => {
+          e.stopPropagation();
+          setCursorIndex(index + 1);
+          inputRef.current?.focus();
+        }}
+        className="font-mono text-gray-800 font-medium px-0.5 cursor-pointer hover:text-blue-600 transition-colors text-sm"
+      >
+        {token.valor}
+      </span>
+    );
+  };
+
+  const renderInput = (isEnd = false) => (
+    <input
+      ref={inputRef}
+      type="text"
+      value={typedValue}
+      onChange={handleInputChange}
+      onKeyDown={handleInputKeyDown}
+      onBlur={handleInputBlur}
+      placeholder={tokens.length === 0 ? "Digite para buscar ou selecione..." : ""}
+      style={!isEnd ? { width: typedValue ? `${typedValue.length * 8 + 4}px` : '2px' } : undefined}
+      className={`${isEnd ? 'flex-1 min-w-[40px]' : 'inline-block min-w-0 shrink-0'} bg-transparent border-none outline-none focus:outline-none focus:ring-0 p-0 text-sm font-mono text-gray-800 placeholder-gray-400`}
+      autoFocus
+    />
+  );
+
+  return (
+    <div className="flex flex-col" ref={dropdownRef}>
+      {label && <label className="mb-1.5 text-sm font-medium text-gray-700">{label}</label>}
+
+      {/* Único Campo de Fórmula com Estilo Padrão do Sistema */}
+      <div className="relative">
+        <div
+          onClick={() => {
+            setCursorIndex(tokens.length);
+            inputRef.current?.focus();
+          }}
+          className="w-full min-h-[38px] px-3 py-1.5 border border-gray-300 rounded-md shadow-2xs bg-white flex flex-wrap items-center gap-1 text-sm cursor-text focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-all"
+        >
+          {tokens.map((token, index) => (
+            <React.Fragment key={index}>
+              {cursorIndex === index && renderInput(false)}
+              {renderTokenItem(token, index)}
+            </React.Fragment>
+          ))}
+
+          {cursorIndex >= tokens.length && renderInput(true)}
+        </div>
+
+        {/* Setinha Chevron no canto direito dentro do próprio input */}
+        <button
+          type="button"
+          onClick={() => setIsDropdownOpen((prev) => !prev)}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+          title="Variáveis disponíveis"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </button>
+
+        {/* Menu Dropdown anexado logo abaixo cobrindo a largura do campo (idêntico à imagem enviada) */}
+        {isDropdownOpen && (
+          <div className="absolute left-0 right-0 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg z-50 max-h-56 overflow-y-auto text-sm">
+            {filteredVars.length > 0 ? (
+              filteredVars.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    addTokenAtCursor({ tipo: 'variavel', valor: v });
+                  }}
+                  className="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50 font-medium transition-colors block text-sm border-b border-gray-100 last:border-b-0 cursor-pointer"
+                >
+                  {VAR_FRIENDLY_NAMES[v] || v}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-gray-400 italic text-center">
+                Nenhuma variável encontrada
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export { RuleBuilderInput } from './RuleBuilderInput';
+export { PackagingSimulationInput } from './PackagingSimulationInput';
+
+
+
