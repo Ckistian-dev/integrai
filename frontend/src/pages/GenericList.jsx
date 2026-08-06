@@ -519,7 +519,7 @@ const GenericList = () => {
   // --- ESTADOS PARA EDIÇÃO DE TABELA ---
   const [isEditMode, setIsEditMode] = useState(false);
   const [addColumnSearch, setAddColumnSearch] = useState("");
-  const [userPreferences, setUserPreferences] = useState({ visibleColumns: [], filters: [], sort: [{ field: 'id', direction: 'desc' }] });
+  const [userPreferences, setUserPreferences] = useState({ visibleColumns: null, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
   const [draggedColName, setDraggedColName] = useState(null);
   const [dragTargetColName, setDragTargetColName] = useState(null);
@@ -572,7 +572,7 @@ const GenericList = () => {
       setDropdownFilterValue("");
 
       // Reseta estados que podem persistir entre navegações e causar conflitos
-      setUserPreferences({ visibleColumns: [], filters: [], sort: [{ field: 'id', direction: 'desc' }] });
+      setUserPreferences({ visibleColumns: null, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
       setColumnsToDisplay([]);
       setMagentoDynamicFilters([]);
       setQuickFilterValues({}); // Limpa filtros da tela anterior para evitar busca com parâmetros errados
@@ -606,6 +606,85 @@ const GenericList = () => {
     return metadata.fields.filter(f => f.type === 'select' && f.options && f.options.length > 0);
   }, [metadata]);
 
+  // --- OBTER CONFIGURAÇÃO PADRÃO DE PREFERÊNCIAS ---
+  const getDefaultPreferences = () => {
+    if (!metadata?.fields || metadata.fields.length === 0) {
+      return {
+        visibleColumns: null,
+        quickFilterFields: [],
+        quickFilterValues: {},
+        sort: [{ field: 'id', direction: 'desc' }],
+        filters: [],
+        customColumnLabels: {},
+        isExplicitlyCleared: false
+      };
+    }
+
+    const allCols = metadata.fields
+      .map(f => f.name)
+      .filter(c => c !== 'id' && c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json');
+
+    if (allCols.includes('id_sequencial')) {
+      const idSeqIdx = allCols.indexOf('id_sequencial');
+      if (idSeqIdx > -1) {
+        allCols.splice(idSeqIdx, 1);
+        allCols.unshift('id_sequencial');
+      }
+    }
+
+    const defaultQuickFields = [];
+    const defaultQuickValues = {};
+    const now = Date.now();
+
+    const searchKey = `__search__:${now}`;
+    defaultQuickFields.push(searchKey);
+    defaultQuickValues[searchKey] = { column: "", term: "" };
+
+    if (dropdownColumns.length > 0) {
+      const dropdownKey = `__dropdown__:${now + 1}`;
+      defaultQuickFields.push(dropdownKey);
+      defaultQuickValues[dropdownKey] = { column: dropdownColumns[0].name, value: "" };
+    }
+
+    if (dateColumns.length > 0) {
+      const dateKey = `__date__:${now + 2}`;
+      defaultQuickFields.push(dateKey);
+      const preferred = dateColumns.find(c => ['data_orcamento', 'data_emissao', 'data', 'created_at', 'criado_em'].includes(c.name));
+      defaultQuickValues[dateKey] = {
+        column: preferred ? preferred.name : dateColumns[0].name,
+        start: "",
+        end: ""
+      };
+    }
+
+    return {
+      visibleColumns: allCols,
+      quickFilterFields: defaultQuickFields,
+      quickFilterValues: defaultQuickValues,
+      sort: [{ field: 'id', direction: 'desc' }],
+      filters: [],
+      customColumnLabels: {},
+      isExplicitlyCleared: false
+    };
+  };
+
+  const handleResetTablePreferences = async () => {
+    const resetConfig = {
+      ...getDefaultPreferences(),
+      visibleColumns: [],
+      isExplicitlyCleared: true
+    };
+    setUserPreferences(resetConfig);
+    setQuickFilterValues(resetConfig.quickFilterValues || {});
+    setColumnsToDisplay([]);
+    try {
+      await api.post(`/preferences/${modelName}`, resetConfig);
+      toast.success("Todos os campos da tabela foram excluídos!");
+    } catch (err) {
+      toast.error("Erro ao resetar configurações da tabela.");
+    }
+  };
+
   // --- CARREGAR PREFERÊNCIAS DO USUÁRIO ---
   useEffect(() => {
     if (!modelName || !metadata) return; // Aguarda os metadados para evitar carregamento prematuro ou sem fallback
@@ -620,53 +699,9 @@ const GenericList = () => {
             setQuickFilterValues(res.data.config.quickFilterValues);
           }
         } else {
-          // Se não tiver config salva, usa padrão baseado nos metadados carregados
-          const allCols = metadata.fields.map(f => f.name).filter(c => c !== 'id' && c !== 'itens' && c !== 'retiradas_detalhadas');
-          if (allCols.includes('id_sequencial')) {
-            const idSeqIdx = allCols.indexOf('id_sequencial');
-            if (idSeqIdx > -1) {
-              allCols.splice(idSeqIdx, 1);
-              allCols.unshift('id_sequencial');
-            }
-          }
-
-          // --- CONFIGURAÇÃO PADRÃO DE FILTROS RÁPIDOS ---
-          const defaultQuickFields = [];
-          const defaultQuickValues = {};
-          const now = Date.now();
-
-          // 1. Busca Global (Esquerda)
-          const searchKey = `__search__:${now}`;
-          defaultQuickFields.push(searchKey);
-          defaultQuickValues[searchKey] = { column: "", term: "" };
-
-          // 2. Dropdown (Centro - se houver colunas do tipo select)
-          if (dropdownColumns.length > 0) {
-            const dropdownKey = `__dropdown__:${now + 1}`;
-            defaultQuickFields.push(dropdownKey);
-            defaultQuickValues[dropdownKey] = { column: dropdownColumns[0].name, value: "" };
-          }
-
-          // 3. Data (Direita - se houver colunas de data)
-          if (dateColumns.length > 0) {
-            const dateKey = `__date__:${now + 2}`;
-            defaultQuickFields.push(dateKey);
-            const preferred = dateColumns.find(c => ['data_orcamento', 'data_emissao', 'data', 'created_at', 'criado_em'].includes(c.name));
-            defaultQuickValues[dateKey] = {
-              column: preferred ? preferred.name : dateColumns[0].name,
-              start: "",
-              end: ""
-            };
-          }
-
-          setUserPreferences({
-            visibleColumns: allCols,
-            quickFilterFields: defaultQuickFields,
-            quickFilterValues: defaultQuickValues,
-            sort: [{ field: 'id', direction: 'desc' }],
-            filters: []
-          });
-          setQuickFilterValues(defaultQuickValues);
+          const defaultConfig = getDefaultPreferences();
+          setUserPreferences(defaultConfig);
+          setQuickFilterValues(defaultConfig.quickFilterValues || {});
         }
       } catch (err) {
         // Silencioso ou toast se crítico
@@ -999,13 +1034,27 @@ const GenericList = () => {
 
           setMetadata(prev => ({ ...prev, fields: dynamicFields }));
 
-          // CORREÇÃO: Só aplica colunas padrão se o usuário ainda não tiver preferências salvas
-          // ou se a lista de colunas visíveis estiver vazia.
+          // Define colunas visíveis iniciais mais limpas por padrão para as integrações (ML, Magento, TikTok, etc.)
+          let defaultCols = dynamicFields.map(f => f.name);
+          if (isMagentoView) {
+            const magentoMainCols = ['increment_id', 'created_at', 'status', 'grand_total', 'ja_importado', 'customer_firstname', 'customer_lastname', 'customer_email'];
+            const foundMain = magentoMainCols.filter(c => defaultCols.includes(c));
+            if (foundMain.length > 0) defaultCols = foundMain;
+          } else if (isMeliView) {
+            const meliMainCols = ['id', 'date_created', 'status', 'total_amount', 'ja_importado', 'buyer_nickname', 'buyer_name'];
+            const foundMain = meliMainCols.filter(c => defaultCols.includes(c));
+            if (foundMain.length > 0) defaultCols = foundMain;
+          } else if (isTiktokView) {
+            const tiktokMainCols = ['id', 'create_time', 'order_status', 'payment_amount', 'ja_importado', 'buyer_email'];
+            const foundMain = tiktokMainCols.filter(c => defaultCols.includes(c));
+            if (foundMain.length > 0) defaultCols = foundMain;
+          }
+
           setUserPreferences(prev => ({
             ...prev,
-            visibleColumns: (prev.visibleColumns && prev.visibleColumns.length > 0)
+            visibleColumns: (Array.isArray(prev.visibleColumns) && prev.visibleColumns.length > 0 && prev.isExplicitlyCleared !== true)
               ? prev.visibleColumns
-              : dynamicFields.map(f => f.name)
+              : (prev.isExplicitlyCleared ? [] : defaultCols)
           }));
         }
         // ---------------------------------
@@ -1022,10 +1071,15 @@ const GenericList = () => {
         lastFetchedParamsRef.current = paramsKey;
         isInitialLoad.current = false;
       } catch (err) {
+        console.error('[fetchData] Erro ao buscar dados:', err?.response?.data || err?.message || err);
         // Só define o erro se já não houver um erro de metadados
         if (!error) {
           if (err.response && err.response.status === 403 && isMeliView) {
             setError("Não conectado ao Mercado Livre. Clique em 'Sincronizar' para conectar.");
+          } else if (isMagentoView) {
+            const detail = err.response?.data?.detail || err?.message || 'Erro ao conectar com o Magento.';
+            setError(detail);
+            toast.error(`Magento: ${detail}`);
           } else {
             setError(err.response?.data?.detail || `Não foi possível carregar os dados.`);
             toast.error(err.response?.data?.detail || "Erro ao carregar dados.");
@@ -1064,31 +1118,34 @@ const GenericList = () => {
 
   // Calcula as colunas a exibir baseado nas preferências
   useEffect(() => {
-    if (!metadata) return;
+    // Aguarda o carregamento das preferências terminar para evitar calcular colunas temporárias
+    if (!metadata || loadingPreferences) return;
 
     let cols = [];
-    // Se tiver preferência salva, usa ela (que já tem a ordem)
-    if (userPreferences.visibleColumns && userPreferences.visibleColumns.length > 0) {
+    // Se tiver preferência salva válida de colunas, usa ela.
+    // Se for um Array VAZIO ([]), só considera limpo se isExplicitlyCleared for true.
+    if (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared)) {
       cols = userPreferences.visibleColumns;
     } else {
-      // Fallback padrão: todas as colunas do metadata
+      // Fallback padrão: todas as colunas do metadata, garantindo id_sequencial sempre em primeiro lugar
       cols = metadata.fields.map((field) => field.name);
+      if (cols.includes('id_sequencial')) {
+        const idSeqIdx = cols.indexOf('id_sequencial');
+        if (idSeqIdx > -1) {
+          cols.splice(idSeqIdx, 1);
+          cols.unshift('id_sequencial');
+        }
+      }
     }
 
     // --- FILTRO DE PERMISSÕES DE COLUNA ---
-    // Se o usuário tiver uma lista de colunas permitidas definida (e não vazia), filtramos.
-    // Se a lista estiver vazia, assumimos que ele pode ver todas (comportamento padrão "selecionar todas")
-    // ou que ele é admin.
     if (user?.perfil !== 'admin' && userPermissions.colunas && userPermissions.colunas.length > 0) {
       cols = cols.filter(col => userPermissions.colunas.includes(col));
-      // Sempre garante que o ID apareça para funcionalidades básicas, a menos que explicitamente removido? 
-      // Melhor deixar estrito: se não tá na lista, não vê.
     }
-    // --------------------------------------
 
     // Filtra colunas complexas que quebram a tabela (JSONs grandes), ID primário e valores nulos
     const finalCols = cols.filter((col) =>
-      col && // Garante que a coluna não seja nula ou vazia
+      col &&
       col !== 'id' &&
       col !== 'itens' &&
       col !== 'retiradas_detalhadas' &&
@@ -1096,7 +1153,7 @@ const GenericList = () => {
     );
 
     setColumnsToDisplay(finalCols);
-  }, [metadata, userPreferences, isMagentoView]);
+  }, [metadata, userPreferences, isMagentoView, loadingPreferences]);
 
   const magentoFilterOptions = useMemo(() => {
     if (!isMagentoView) return [];
@@ -2437,13 +2494,21 @@ const GenericList = () => {
 
   const removeColumn = (colName) => {
     const newCols = (userPreferences.visibleColumns || []).filter(c => c !== colName);
-    handleSavePreferences({ ...userPreferences, visibleColumns: newCols });
+    handleSavePreferences({
+      ...userPreferences,
+      visibleColumns: newCols,
+      isExplicitlyCleared: newCols.length === 0
+    });
   };
 
   const addColumn = (colName) => {
     if ((userPreferences.visibleColumns || []).includes(colName)) return;
     const newCols = [...(userPreferences.visibleColumns || []), colName];
-    handleSavePreferences({ ...userPreferences, visibleColumns: newCols });
+    handleSavePreferences({
+      ...userPreferences,
+      visibleColumns: newCols,
+      isExplicitlyCleared: false
+    });
   };
 
   const moveColumn = (from, to) => {
@@ -3016,6 +3081,17 @@ const GenericList = () => {
               );
             })}
             {/* BOTÃO CONFIGURAR TABELA (MODO EDIÇÃO) */}
+            {isEditMode && (
+              <button
+                type="button"
+                onClick={handleResetTablePreferences}
+                className="flex items-center px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md shadow-sm text-sm font-medium transition-colors"
+                title="Resetar tabela para a configuração padrão"
+              >
+                <RotateCcw size={16} className="mr-2" />
+                Resetar Tabela
+              </button>
+            )}
             <button
               onClick={() => setIsEditMode(!isEditMode)}
               className={`flex items-center px-4 py-2 rounded-md shadow-sm text-sm font-medium transition-colors ${isEditMode ? 'bg-blue-800 text-white' : 'bg-blue-600 text-white hover:bg-blue-800'
@@ -3024,6 +3100,7 @@ const GenericList = () => {
               {isEditMode ? <Check size={16} className="mr-2" /> : <SlidersHorizontal size={16} className="mr-2" />}
               {isEditMode ? 'Configurar' : 'Configurar'}
             </button>
+
           </div>
         </div>
 
@@ -3529,6 +3606,11 @@ const GenericList = () => {
             <table className="w-full min-w-max">
               <thead className="bg-gray-50">
                 <tr className="border-b border-gray-200">
+                  {displayColumns.length === 0 && !isFetchingData && !loadingPreferences && (
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left">
+                      {isEditMode ? 'Adicionar Campos à Tabela' : 'Sem Campos Selecionados'}
+                    </th>
+                  )}
                   {/* Colunas Dinâmicas com Pré-Visualização em Tempo Real */}
                   {displayColumns.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
@@ -3662,20 +3744,40 @@ const GenericList = () => {
                                 </div>
                               </div>
                               <div className="max-h-60 overflow-y-auto p-1">
-                                {metadata.fields
-                                  .filter(f => !displayColumns.includes(f.name))
-                                  .filter(f => f.label.toLowerCase().includes(addColumnSearch.toLowerCase()) || f.name.toLowerCase().includes(addColumnSearch.toLowerCase()))
-                                  .map(f => (
-                                    <button
-                                      key={f.name}
-                                      type="button"
-                                      onClick={() => { addColumn(f.name); setAddColumnSearch(''); }}
-                                      className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-blue-50 rounded transition-colors flex flex-col"
-                                    >
-                                      <span className="font-medium">{f.label}</span>
-                                      <span className="text-[10px] text-gray-400 font-mono">{f.name}</span>
-                                    </button>
-                                  ))}
+                                {(() => {
+                                  const availableFields = (metadata?.fields || [])
+                                    .filter(f => f && f.name && f.name !== 'id' && f.name !== 'itens' && f.name !== 'retiradas_detalhadas' && f.name !== 'retiradas_detalhadas_json')
+                                    .filter(f => !displayColumns.includes(f.name))
+                                    .filter(f => {
+                                      const label = f.label || formatLabel(f.name) || '';
+                                      const name = f.name || '';
+                                      const search = (addColumnSearch || '').toLowerCase();
+                                      return label.toLowerCase().includes(search) || name.toLowerCase().includes(search);
+                                    });
+
+                                  if (availableFields.length === 0) {
+                                    return (
+                                      <div className="p-4 text-center text-xs text-gray-400 font-medium">
+                                        Nenhum campo disponível para adicionar.
+                                      </div>
+                                    );
+                                  }
+
+                                  return availableFields.map(f => {
+                                    const label = f.label || formatLabel(f.name);
+                                    return (
+                                      <button
+                                        key={f.name}
+                                        type="button"
+                                        onClick={() => { addColumn(f.name); setAddColumnSearch(''); }}
+                                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-blue-50 rounded transition-colors flex flex-col"
+                                      >
+                                        <span className="font-medium">{label}</span>
+                                        <span className="text-[10px] text-gray-400 font-mono">{f.name}</span>
+                                      </button>
+                                    );
+                                  });
+                                })()}
                               </div>
                             </div>
                           </Popover.Panel>
@@ -3845,6 +3947,7 @@ const GenericList = () => {
                               navigate(`/${modelName}/edit/${item.id}`);
                             }
                           }}
+                          style={{ height: '53px' }}
                           className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
                             ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
                             : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
@@ -3855,7 +3958,7 @@ const GenericList = () => {
                             return (
                               <td
                                 key={colName}
-                                className={`px-6 py-4 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
+                                className={`px-6 py-0 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
                                   ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
                                   : ''
                                   }`}
@@ -3872,6 +3975,36 @@ const GenericList = () => {
                         ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
                         : data.length) + (hasTotalsField && data.length > 0 ? 1 : 0);
                       const emptyRowsCount = Math.max(0, limit - totalRowsRendered);
+
+                      if (displayColumns.length === 0 && !isFetchingData && !loadingPreferences) {
+                        return (
+                          <tr style={{ height: `${limit * 53}px` }}>
+                            <td colSpan={100} className="px-6 py-12 text-center align-middle text-gray-500 bg-gray-50/20">
+                              <div className="flex flex-col items-center justify-center gap-3 max-w-md mx-auto py-6">
+                                <div className="p-3 bg-blue-50 text-blue-600 rounded-full shadow-sm">
+                                  <SlidersHorizontal size={24} />
+                                </div>
+                                <h3 className="text-base font-bold text-gray-800 tracking-tight">Nenhum campo selecionado</h3>
+                                <p className="text-xs text-gray-500 max-w-sm leading-relaxed">
+                                  {isEditMode
+                                    ? 'Sua tabela não possui nenhum campo visível. Clique no botão "+" no canto superior direito para adicionar os campos desejados.'
+                                    : 'Sua tabela está sem campos visíveis no momento. Clique no botão abaixo para configurar quais campos deseja visualizar.'}
+                                </p>
+                                {!isEditMode && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsEditMode(true)}
+                                    className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                                  >
+                                    <SlidersHorizontal size={14} />
+                                    Configurar Tabela
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
 
                       return (
                         <>
@@ -3920,9 +4053,9 @@ const GenericList = () => {
 
                           {/* Linhas vazias para preencher o card (sem bordas internas) */}
                           {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
-                            <tr key={`empty-${i}`} className="h-[53px]">
+                            <tr key={`empty-${i}`} style={{ height: '53px' }}>
                               {displayColumns.map((colName) => (
-                                <td key={`empty-${i}-${colName}`} className="px-6 py-4 whitespace-nowrap text-sm">
+                                <td key={`empty-${i}-${colName}`} className="px-6 whitespace-nowrap text-sm">
                                   &nbsp;
                                 </td>
                               ))}
@@ -3966,40 +4099,95 @@ const GenericList = () => {
           </div>
         </div>
 
-        {/* Paginação (Estilizada como na imagem) */}
-        <div className="flex items-center justify-between mt-6">
-          {/* Mostra o total de registros (Condicional) */}
-          {totalCount > 0 ? (
-            <span className="text-sm text-gray-700">
-              Mostrando {data.length} de {totalCount} registros
-            </span>
-          ) : (
-            /* Um placeholder para manter o justify-between funcionando */
-            <span></span>
-          )}
+        {/* Paginação - só renderiza quando há mais de uma página */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-6">
+            {/* Total de registros */}
+            {totalCount > 0 ? (
+              <span className="text-sm text-gray-500">
+                Mostrando <span className="font-semibold text-gray-700">{((page - 1) * effectiveLimit) + 1}–{Math.min(page * effectiveLimit, totalCount)}</span> de <span className="font-semibold text-gray-700">{totalCount}</span> registros
+              </span>
+            ) : (
+              <span />
+            )}
 
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setPage(p => p - 1)}
-              disabled={page <= 1 || isFetchingData} // <-- Atualizado
-              className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
-            >
-              <ChevronLeft size={16} className="mr-1" />
-              Anterior
-            </button>
-            <span className="text-sm text-gray-700">
-              Página {page} de {totalPages}
-            </span>
-            <button
-              onClick={() => setPage(p => p + 1)}
-              disabled={page >= totalPages || isFetchingData} // <-- Atualizado
-              className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
-            >
-              Próxima
-              <ChevronRight size={16} className="ml-1" />
-            </button>
+            {/* Controles de navegação */}
+            <div className="flex items-center gap-1">
+              {/* Botão Anterior */}
+              <button
+                onClick={() => setPage(p => p - 1)}
+                disabled={page <= 1 || isFetchingData}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft size={16} />
+                Anterior
+              </button>
+
+              {/* Páginas numeradas */}
+              <div className="flex items-center gap-1 mx-1">
+                {(() => {
+                  const pages = [];
+                  const delta = 2;
+                  const left = Math.max(2, page - delta);
+                  const right = Math.min(totalPages - 1, page + delta);
+
+                  // Primeira página sempre
+                  pages.push(1);
+
+                  // Ellipsis esquerdo
+                  if (left > 2) pages.push('...');
+
+                  // Páginas ao redor da atual
+                  for (let i = left; i <= right; i++) pages.push(i);
+
+                  // Ellipsis direito
+                  if (right < totalPages - 1) pages.push('...');
+
+                  // Última página sempre (se > 1)
+                  if (totalPages > 1) pages.push(totalPages);
+
+                  return pages.map((p, idx) =>
+                    p === '...' ? (
+                      <span key={`ellipsis-${idx}`} className="px-2 text-gray-400 text-sm select-none">…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        disabled={isFetchingData}
+                        className={`w-9 h-9 rounded-lg text-sm font-medium transition-colors ${
+                          page === p
+                            ? 'bg-teal-600 text-white shadow-sm'
+                            : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  );
+                })()}
+              </div>
+
+              {/* Botão Próxima */}
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={page >= totalPages || isFetchingData}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Próxima
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Quando há apenas uma página, exibe só o contador de registros */}
+        {totalPages <= 1 && totalCount > 0 && (
+          <div className="flex items-center justify-end mt-4">
+            <span className="text-sm text-gray-500">
+              <span className="font-semibold text-gray-700">{totalCount}</span> {totalCount === 1 ? 'registro' : 'registros'}
+            </span>
+          </div>
+        )}
 
         {/* --- MODAL --- */}
         <Modal

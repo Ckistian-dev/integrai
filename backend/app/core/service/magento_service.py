@@ -413,7 +413,7 @@ class MagentoService:
             total_ipi_global += valor_ipi
 
             itens_erp.append({
-                "id_produto": produto.id,
+                "id_produto": produto.id_sequencial,
                 "sku": produto.sku,
                 "descricao": produto.descricao,
                 "gtin": produto.gtin or "SEM GTIN",
@@ -436,7 +436,7 @@ class MagentoService:
         shipping_desc = order_data.get('shipping_description', '')
         data_entrega = self._calculate_delivery_date(shipping_desc, order_data.get('created_at'))
         transportadora = self._find_carrier(shipping_desc)
-        id_transportadora = transportadora.id if transportadora else None
+        id_transportadora = transportadora.id_sequencial if transportadora else None
         
         carrier_warning = None
         if shipping_desc and not transportadora:
@@ -471,7 +471,7 @@ class MagentoService:
         # 4. Cria Pedido
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
-            id_cliente=cliente_erp.id,
+            id_cliente=cliente_erp.id_sequencial,
             id_vendedor=self.config.vendedor_padrao_id,
             situacao=self.config.situacao_pedido_inicial,
             data_orcamento=datetime.now(),

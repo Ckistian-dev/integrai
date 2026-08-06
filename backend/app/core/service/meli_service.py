@@ -723,7 +723,7 @@ class MeliService:
             total_ipi_global += valor_ipi
 
             itens_erp.append({
-                "id_produto": produto.id,
+                "id_produto": produto.id_sequencial,
                 "sku": produto.sku,
                 "descricao": produto.descricao,
                 "gtin": produto.gtin or "SEM GTIN",
@@ -781,7 +781,7 @@ class MeliService:
 
         # Transportadora
         carrier_erp = self._find_or_create_carrier(shipment_details)
-        transportadora_id = carrier_erp.id if carrier_erp else None
+        transportadora_id = carrier_erp.id_sequencial if carrier_erp else None
             
         # --- Preenchimento de Campos de Volumes (Logística) ---
         tracking_number = shipment_details.get('tracking_number')
@@ -922,7 +922,7 @@ class MeliService:
         
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
-            id_cliente=cliente_erp.id,
+            id_cliente=cliente_erp.id_sequencial,
             id_vendedor=self.config.vendedor_padrao_id,
             situacao=self.config.situacao_pedido_inicial or PedidoSituacaoEnum.orcamento,
             data_orcamento=data_ml.date(),
