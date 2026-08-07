@@ -30,8 +30,8 @@ import { PackagingSimulationInput } from '../ui/PackagingSimulationInput';
  * Renderiza o input correto baseado nos metadados do campo.
  */
 const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...rest }) => {
-  // Se o campo estiver explicitamente marcado como não visível, não renderiza
-  if (field.visible === false) {
+  // Se o campo estiver explicitamente marcado como não visível ou for id/id_sequencial/código, não renderiza
+  if (field.visible === false || field.name === 'id' || field.name === 'id_sequencial' || field.name === 'codigo') {
     return null;
   }
 

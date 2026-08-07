@@ -115,29 +115,40 @@ def run_one_time_id_sequencial_migration(engine: Engine, base):
 
                 if "id_empresa" in cols:
                     result = conn.execute(text(f"""
-                        WITH seqs AS (
-                            SELECT id,
-                                   ROW_NUMBER() OVER (PARTITION BY id_empresa ORDER BY id) AS new_seq
+                        WITH max_seqs AS (
+                            SELECT id_empresa, COALESCE(MAX(id_sequencial), 0) AS max_s
                             FROM "{tbl}"
+                            GROUP BY id_empresa
+                        ),
+                        null_rows AS (
+                            SELECT id, id_empresa,
+                                   ROW_NUMBER() OVER (PARTITION BY id_empresa ORDER BY id) AS rn
+                            FROM "{tbl}"
+                            WHERE id_sequencial IS NULL
                         )
                         UPDATE "{tbl}" t
-                        SET id_sequencial = seqs.new_seq
-                        FROM seqs
-                        WHERE t.id = seqs.id
-                          AND t.id_sequencial IS NULL
+                        SET id_sequencial = COALESCE(m.max_s, 0) + nr.rn
+                        FROM null_rows nr
+                        LEFT JOIN max_seqs m ON nr.id_empresa = m.id_empresa
+                        WHERE t.id = nr.id
                     """))
                 else:
                     result = conn.execute(text(f"""
-                        WITH seqs AS (
-                            SELECT id,
-                                   ROW_NUMBER() OVER (ORDER BY id) AS new_seq
+                        WITH max_seqs AS (
+                            SELECT COALESCE(MAX(id_sequencial), 0) AS max_s
                             FROM "{tbl}"
+                        ),
+                        null_rows AS (
+                            SELECT id,
+                                   ROW_NUMBER() OVER (ORDER BY id) AS rn
+                            FROM "{tbl}"
+                            WHERE id_sequencial IS NULL
                         )
                         UPDATE "{tbl}" t
-                        SET id_sequencial = seqs.new_seq
-                        FROM seqs
-                        WHERE t.id = seqs.id
-                          AND t.id_sequencial IS NULL
+                        SET id_sequencial = m.max_s + nr.rn
+                        FROM null_rows nr
+                        CROSS JOIN max_seqs m
+                        WHERE t.id = nr.id
                     """))
 
                 if result.rowcount:
@@ -214,6 +225,10 @@ def _migrate_fks_with_replication_role(engine, inspector, existing_tables, fk_ma
                 if fk_col.lower() not in source_col_info:
                     continue
 
+                source_cols = {c["name"].lower() for c in inspector.get_columns(source_tbl)}
+                target_cols = {c["name"].lower() for c in inspector.get_columns(target_tbl)}
+                emp_clause = 'AND s."id_empresa" = target.id_empresa' if ("id_empresa" in source_cols and "id_empresa" in target_cols) else ''
+
                 logger.info(f"[MIGRAÇÃO] FK: '{source_tbl}.{fk_col}' -> '{target_tbl}.id_sequencial'")
                 col_type = str(source_col_info[fk_col.lower()]["type"]).upper()
                 is_varchar = any(t in col_type for t in ["VARCHAR", "CHARACTER", "TEXT", "CHAR"])
@@ -226,6 +241,7 @@ def _migrate_fks_with_replication_role(engine, inspector, existing_tables, fk_ma
                         WHERE s."{fk_col}" ~ '^[0-9]+$'
                           AND s."{fk_col}"::INTEGER = target.id
                           AND s."{fk_col}" IS NOT NULL
+                          {emp_clause}
                     """))
                 else:
                     conn.execute(text(f"""
@@ -234,6 +250,7 @@ def _migrate_fks_with_replication_role(engine, inspector, existing_tables, fk_ma
                         FROM "{target_tbl}" target
                         WHERE s."{fk_col}" = target.id
                           AND s."{fk_col}" IS NOT NULL
+                          {emp_clause}
                     """))
 
             conn.execute(text("SET session_replication_role = 'origin'"))
@@ -291,6 +308,10 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
                 if fk_col.lower() not in source_col_info:
                     continue
 
+                source_cols = {c["name"].lower() for c in inspector.get_columns(source_tbl)}
+                target_cols = {c["name"].lower() for c in inspector.get_columns(target_tbl)}
+                emp_clause = 'AND s."id_empresa" = target.id_empresa' if ("id_empresa" in source_cols and "id_empresa" in target_cols) else ''
+
                 logger.info(f"[MIGRAÇÃO] FK (DROP): '{source_tbl}.{fk_col}' -> '{target_tbl}.id_sequencial'")
                 col_type = str(source_col_info[fk_col.lower()]["type"]).upper()
                 is_varchar = any(t in col_type for t in ["VARCHAR", "CHARACTER", "TEXT", "CHAR"])
@@ -303,6 +324,7 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
                         WHERE s."{fk_col}" ~ '^[0-9]+$'
                           AND s."{fk_col}"::INTEGER = target.id
                           AND s."{fk_col}" IS NOT NULL
+                          {emp_clause}
                     """))
                 else:
                     conn.execute(text(f"""
@@ -311,6 +333,7 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
                         FROM "{target_tbl}" target
                         WHERE s."{fk_col}" = target.id
                           AND s."{fk_col}" IS NOT NULL
+                          {emp_clause}
                     """))
 
             # Recria constraints apontando para id_sequencial

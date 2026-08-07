@@ -322,9 +322,8 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
       {/* Caixa do Campo no Padrão do Sistema */}
       <div
         onClick={handleToggle}
-        className={`w-full h-[38px] px-3 border border-gray-300 rounded-md shadow-2xs bg-white flex items-center justify-between cursor-pointer select-none hover:border-gray-400 focus-within:ring-2 focus-within:ring-teal-500 ${
-          disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
-        } ${error ? 'border-red-500' : ''}`}
+        className={`w-full h-[38px] px-3 border border-gray-300 rounded-md shadow-2xs bg-white flex items-center justify-between cursor-pointer select-none hover:border-gray-400 focus-within:ring-2 focus-within:ring-teal-500 ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+          } ${error ? 'border-red-500' : ''}`}
       >
         {/* Rótulo de Status na Esquerda */}
         <span className={`text-sm ${isTrue ? 'text-gray-800' : 'text-gray-500'}`}>
@@ -333,14 +332,12 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
 
         {/* Toggle Switch Elegante em Teal no canto direito */}
         <div
-          className={`relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-200 ease-in-out ${
-            isTrue ? 'bg-teal-600' : 'bg-gray-200 border border-gray-300'
-          }`}
+          className={`relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-200 ease-in-out ${isTrue ? 'bg-teal-600' : 'bg-gray-200 border border-gray-300'
+            }`}
         >
           <span
-            className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
-              isTrue ? 'translate-x-3.5' : 'translate-x-0'
-            }`}
+            className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${isTrue ? 'translate-x-3.5' : 'translate-x-0'
+              }`}
           />
         </div>
       </div>
@@ -362,6 +359,7 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
   const isComplemento = formData?.tipo_operacao === 'complemento' || formData?.tipo_operacao === 'Complementar';
 
   const [expandedItems, setExpandedItems] = useState({});
+  const [focusedInput, setFocusedInput] = useState(null);
   const toggleExpand = (index) => {
     setExpandedItems(prev => ({ ...prev, [index]: !prev[index] }));
   };
@@ -370,8 +368,15 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
     if (isComplemento) {
       return item;
     }
-    const qtd = Number(item.quantidade || 0);
     const unitPrice = Number(item.valor_unitario || 0);
+    if (!unitPrice) {
+      return {
+        ...item,
+        valor_ipi: null,
+        total_com_ipi: null
+      };
+    }
+    const qtd = Number(item.quantidade || 0);
     const ipiRate = Number(item.ipi_aliquota || 0);
 
     const subtotal = qtd * unitPrice;
@@ -379,8 +384,8 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
 
     return {
       ...item,
-      valor_ipi: parseFloat(ipiValue.toFixed(2)),
-      total_com_ipi: parseFloat((subtotal + ipiValue).toFixed(2))
+      valor_ipi: ipiValue > 0 ? parseFloat(ipiValue.toFixed(2)) : null,
+      total_com_ipi: subtotal > 0 ? parseFloat((subtotal + ipiValue).toFixed(2)) : null
     };
   };
 
@@ -433,7 +438,7 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
   };
 
   const handleAddItem = () => {
-    const newItem = calculateTotals({ id_produto: null, quantidade: 1, valor_unitario: 0, ipi_aliquota: 0, valor_ipi: 0 });
+    const newItem = { id_produto: null, quantidade: 1, valor_unitario: null, ipi_aliquota: 0, valor_ipi: null, total_com_ipi: null };
     const newItems = [...items, newItem];
     triggerChange(newItems);
   };
@@ -462,13 +467,14 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
   const handleProductChange = (index, option) => {
     const newItems = [...items];
     const product = option ? option.original : null;
+    const productPrice = (product && Number(product.preco) > 0) ? Number(product.preco) : null;
 
     let item = {
       ...newItems[index],
       id_produto: option ? option.value : null,
       sku: product ? product.sku : '',
       descricao: product ? product.descricao : '',
-      valor_unitario: product ? Number(product.preco) : 0,
+      valor_unitario: productPrice,
       peso: product ? Number(product.peso) : 0,
       ipi_aliquota: product ? Number(product.ipi_aliquota) : 0
     };
@@ -557,11 +563,21 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
               <IMaskInput
                 mask={MASKS['currency'].mask}
                 blocks={{
-                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: false }
                 }}
                 lazy={MASKS['currency'].lazy}
-                value={item.valor_unitario !== undefined && item.valor_unitario !== null && item.valor_unitario !== '' && item.valor_unitario !== 0 ? String(item.valor_unitario).replace('.', ',') : ''}
+                value={
+                  focusedInput?.index === index && focusedInput?.key === 'valor_unitario'
+                    ? undefined
+                    : (item.valor_unitario !== undefined && item.valor_unitario !== null && item.valor_unitario !== '' && Number(item.valor_unitario) !== 0
+                      ? (!isNaN(Number(item.valor_unitario))
+                        ? Number(item.valor_unitario).toFixed(2).replace('.', ',')
+                        : String(item.valor_unitario).replace('.', ','))
+                      : '')
+                }
                 unmask={true}
+                onFocus={() => setFocusedInput({ index, key: 'valor_unitario' })}
+                onBlur={() => setFocusedInput(null)}
                 onAccept={(val, mask) => {
                   let rawVal = mask.unmaskedValue;
                   if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
@@ -588,10 +604,16 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
               <IMaskInput
                 mask={MASKS['currency'].mask}
                 blocks={{
-                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                  num: { ...MASKS['currency'].blocks.num, padFractionalZeros: false }
                 }}
                 lazy={MASKS['currency'].lazy}
-                value={item.valor_ipi !== undefined && item.valor_ipi !== null && item.valor_ipi !== '' && item.valor_ipi !== 0 ? String(item.valor_ipi).replace('.', ',') : ''}
+                value={
+                  item.valor_ipi !== undefined && item.valor_ipi !== null && item.valor_ipi !== '' && Number(item.valor_ipi) !== 0
+                    ? (!isNaN(Number(item.valor_ipi))
+                      ? Number(item.valor_ipi).toFixed(2).replace('.', ',')
+                      : String(item.valor_ipi).replace('.', ','))
+                    : ''
+                }
                 unmask={true}
                 readOnly={true}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-800 bg-white"
@@ -611,11 +633,21 @@ export const OrderItemsInput = ({ field, value, onChange, error, formData }) => 
                   <IMaskInput
                     mask={MASKS['currency'].mask}
                     blocks={{
-                      num: { ...MASKS['currency'].blocks.num, padFractionalZeros: true }
+                      num: { ...MASKS['currency'].blocks.num, padFractionalZeros: false }
                     }}
                     lazy={MASKS['currency'].lazy}
-                    value={item.total_com_ipi !== undefined && item.total_com_ipi !== null && item.total_com_ipi !== '' && item.total_com_ipi !== 0 ? String(item.total_com_ipi).replace('.', ',') : ''}
+                    value={
+                      focusedInput?.index === index && focusedInput?.key === 'total_com_ipi'
+                        ? undefined
+                        : (item.total_com_ipi !== undefined && item.total_com_ipi !== null && item.total_com_ipi !== '' && Number(item.total_com_ipi) !== 0
+                          ? (!isNaN(Number(item.total_com_ipi))
+                            ? Number(item.total_com_ipi).toFixed(2).replace('.', ',')
+                            : String(item.total_com_ipi).replace('.', ','))
+                          : '')
+                    }
                     unmask={true}
+                    onFocus={() => setFocusedInput({ index, key: 'total_com_ipi' })}
+                    onBlur={() => setFocusedInput(null)}
                     onAccept={(val, mask) => {
                       let rawVal = mask.unmaskedValue;
                       if (rawVal !== undefined && rawVal !== null && rawVal !== '') {

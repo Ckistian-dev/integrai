@@ -53,7 +53,8 @@ import {
   ArrowUp,
   ArrowDown,
   FileCode,
-  Download
+  Download,
+  ClipboardList
 } from 'lucide-react';
 import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 

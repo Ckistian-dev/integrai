@@ -11,9 +11,12 @@ def get_user_by_email(db: Session, email: str) -> Optional[models. Usuario]:
     """Busca um usuário pelo email."""
     return db.query(models. Usuario).filter(models. Usuario.email == email).first()
 
-def get_user(db: Session, user_id: int) -> Optional[models. Usuario]:
-    """Busca um usuário pelo ID."""
-    return db.query(models. Usuario).filter(models. Usuario.id == user_id).first()
+def get_user(db: Session, user_id: int) -> Optional[models.Usuario]:
+    """Busca um usuário pelo ID Sequencial ou ID primário."""
+    user = db.query(models.Usuario).filter(models.Usuario.id_sequencial == user_id).first()
+    if user:
+        return user
+    return db.query(models.Usuario).filter(models.Usuario.id == user_id).first()
 
 def create_user(db: Session, *, obj_in: UsuarioCreate, id_empresa: int) -> models.Usuario:
     """Cria um novo usuário no banco de dados com senha criptografada via EncryptedString."""
@@ -79,12 +82,16 @@ def update_user(db: Session, *, db_obj: models.Usuario, obj_in: UsuarioUpdate) -
 # (ex: delete_user, get_users_by_business, etc.)
 
 def get(db: Session, model: Any, id: int, id_empresa: int) -> Optional[models.Usuario]:
-    """Generic get for user, compatible with generic endpoint signature."""
-    return db.query(models.Usuario).filter(models.Usuario.id == id, models.Usuario.id_empresa == id_empresa).first()
+    """Generic get for user, compatible with generic endpoint signature. Busca por id_sequencial prioritariamente."""
+    query = db.query(models.Usuario).filter(models.Usuario.id_empresa == id_empresa)
+    item = query.filter(models.Usuario.id_sequencial == id).first()
+    if item:
+        return item
+    return query.filter(models.Usuario.id == id).first()
 
 def delete(db: Session, model: Any, id: int, id_empresa: int) -> Optional[models.Usuario]:
     """Generic delete for user, compatible with generic endpoint signature."""
-    obj = db.query(models.Usuario).filter(models.Usuario.id == id, models.Usuario.id_empresa == id_empresa).first()
+    obj = get(db, model=model, id=id, id_empresa=id_empresa)
     if obj:
         db.delete(obj)
         db.commit()

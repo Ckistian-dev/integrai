@@ -176,6 +176,7 @@ class PerfilUpdate(BaseModel):
 
 class Perfil(PerfilBase):
     id: int
+    id_sequencial: Optional[int] = None
     id_empresa: int
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
@@ -209,6 +210,7 @@ class UsuarioUpdate(BaseModel):
 
 class Usuario(UsuarioBase):  # RENOMEADO de UsuarioRead para Usuario
     id: int
+    id_sequencial: Optional[int] = None
     id_empresa: int
     situacao: Optional[bool] = None
     criado_em: datetime

@@ -131,10 +131,10 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
         initialData[field.name] = [{
           id_produto: null,
           quantidade: 1,
-          valor_unitario: 0,
+          valor_unitario: null,
           ipi_aliquota: 0,
-          valor_ipi: 0,
-          total_com_ipi: 0
+          valor_ipi: null,
+          total_com_ipi: null
         }];
       } else {
         // Todo o resto (text, select, etc.) começa como string vazia
@@ -170,8 +170,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           modelName?.endsWith('_configuracao');
 
         meta.fields.forEach((field) => {
-          if (field.name === 'id') return;
-          if (isSingleRecordModel && field.name === 'id_sequencial') return;
+          if (field.name === 'id' || field.name === 'id_sequencial' || field.name === 'codigo') return;
           if (field.visible === false) return;
 
           const tabName = field.tab || 'Dados Gerais';
@@ -877,8 +876,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
                     modelName?.endsWith('_configuracao');
                   const filteredFields = tab.fields.filter(field => {
                     if (field.visible === false) return false;
-                    if (field.name === 'id') return false;
-                    if (isSingleRecordModel && field.name === 'id_sequencial') return false;
+                    if (field.name === 'id' || field.name === 'id_sequencial' || field.name === 'codigo') return false;
                     if (currentSubTab && field.sub_tab && field.sub_tab !== currentSubTab) return false;
                     return true;
                   });

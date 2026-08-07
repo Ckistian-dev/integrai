@@ -2721,7 +2721,7 @@ def update_item(
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
                 models.Cadastro.id_empresa == current_user.id_empresa,
-                models.Cadastro.id != id
+                models.Cadastro.id != db_obj.id
             ).first()
             if existing:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Já existe outro cadastro com o CPF/CNPJ {cpf_cnpj}.")

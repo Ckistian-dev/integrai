@@ -148,7 +148,7 @@ def get_model_metadata(model_name: str):
             if not format_mask:
                 format_mask = get_format_mask(col.name, col.type)
             
-            required = not col.nullable and not col.primary_key
+            required = col.info.get('required') if col.info.get('required') is not None else (not col.nullable and not col.primary_key)
             
             foreign_key_model = None
             foreign_key_label_field = None

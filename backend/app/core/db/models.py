@@ -658,8 +658,8 @@ class Cadastro(Base):
                     info={'tab': 'Endereço', 'label': 'Bairro', 'placeholder': 'Nome do bairro'})
     logradouro = Column(String, 
                         info={'tab': 'Endereço', 'label': 'Logradouro', 'placeholder': 'Rua, Avenida, etc.'})
-    numero = Column(String, 
-                    info={'tab': 'Endereço', 'label': 'Número', 'placeholder': '123'})
+    numero = Column(String, nullable=False, default="", 
+                    info={'tab': 'Endereço', 'label': 'Nº', 'placeholder': '123', 'required': True})
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
     
