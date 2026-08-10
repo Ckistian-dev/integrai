@@ -31,8 +31,10 @@ const PermissionRoute = ({ children, module: propModule }) => {
     'atendai_configuracoes': 'integracoes',
     'meli_configuracoes': 'integracoes',
     'magento_configuracoes': 'integracoes',
+    'shopee_configuracoes': 'integracoes',
     'mercadolivre_pedidos': 'integracoes',
     'magento_pedidos': 'integracoes',
+    'shopee_pedidos': 'integracoes',
     'intelipost': 'integracoes'
   };
 
@@ -63,6 +65,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
       } else if (currentModule === 'integracoes') {
           if (modelName.includes('intelipost')) requiredSubpage = 'Intelipost';
           if (modelName.includes('mercadolivre') || modelName.includes('meli')) requiredSubpage = 'Mercado Livre';
+          if (modelName.includes('shopee')) requiredSubpage = 'Shopee';
           if (modelName.includes('magento')) requiredSubpage = 'Magento';
       }
   } else {

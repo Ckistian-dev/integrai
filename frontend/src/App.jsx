@@ -11,6 +11,7 @@ import GenericForm from './pages/GenericForm';
 import GenericDispatcher from './pages/GenericDispatcher';
 import PermissionRoute from './components/layout/PermissionRoute';
 import MeliCallback from './pages/MeliCallback';
+import ShopeeCallback from './pages/ShopeeCallback';
 import { useAuth } from './contexts/AuthContext';
 
 // Componente para redirecionar para a primeira aba disponível
@@ -91,8 +92,9 @@ function App() {
             </PermissionRoute>
           } />
 
-          {/* ROTA PARA O CALLBACK DO ML */}
+          {/* ROTA PARA O CALLBACK DO ML E SHOPEE */}
           <Route path="/mercadolivre/callback" element={<MeliCallback />} />
+          <Route path="/shopee/callback" element={<ShopeeCallback />} />
           
           {/* ROTAS DE CONFIGURAÇÃO (FORM) */}
           {/* Certifique-se que meli_configuracoes usa o GenericForm */}

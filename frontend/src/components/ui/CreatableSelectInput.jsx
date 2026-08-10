@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
+import CreatableSelect from 'react-select/creatable';
 import { components } from 'react-select';
 import api from '../../api/axiosConfig';
 import { Plus, Trash2, Edit2, Check, X } from 'lucide-react';
@@ -68,7 +69,7 @@ const CustomOption = (props) => {
           </div>
         ) : (
           <>
-            <span className="truncate pr-2 flex-1 text-sm">{data.label}</span>
+            <span className={`truncate pr-2 flex-1 text-sm ${props.isSelected ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{data.label}</span>
             {isAdmin && (
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={handleEditClick} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-50 rounded-md transition-colors" title="Editar">
@@ -279,6 +280,171 @@ export const CreatableSelectInput = ({ field, value, onChange, error, modelName,
         noOptionsMessage={() => isAdmin ? "Digite para buscar ou criar..." : "Nenhum resultado encontrado"}
       />
       
+      {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
+    </div>
+  );
+};
+
+export const MultiCreatableSelectInput = ({ field, value, onChange, error, modelName, disabled, ...props }) => {
+  const { user } = useAuth();
+  const isAdmin = user?.perfil === 'admin' || user?.perfil === 'Admin';
+
+  const [options, setOptions] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [isAdding, setIsAdding] = useState(false);
+
+  const fetchOptions = async () => {
+    if (!modelName || !field?.name) return;
+    setIsLoading(true);
+    try {
+      const response = await api.get(`/options/${modelName}/${field.name}`);
+      const loadedOptions = response.data.map(item => ({
+        label: item.valor,
+        value: item.valor,
+        id: item.id
+      }));
+      setOptions(loadedOptions);
+    } catch (err) {
+      console.error(`Erro ao carregar opções para ${field.name}:`, err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOptions();
+  }, [modelName, field?.name]);
+
+  const currentArray = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' && value.trim() !== '' ? value.split(',').map(s => s.trim()) : []);
+
+  const selectedOptions = currentArray.map(v => {
+    const found = options.find(o => String(o.value) === String(v));
+    return found ? found : { label: v, value: v };
+  });
+
+  const handleChange = (newOpts) => {
+    const vals = newOpts ? newOpts.map(o => o.value) : [];
+    onChange({
+      target: {
+        name: field.name,
+        value: vals
+      }
+    });
+  };
+
+  const handleCreate = async (inputValue) => {
+    if (!inputValue || !inputValue.trim()) return;
+    const trimmed = inputValue.trim();
+    setIsLoading(true);
+    try {
+      if (modelName && field?.name) {
+        await api.post('/options', {
+          model_name: modelName,
+          field_name: field.name,
+          valor: trimmed
+        });
+        await fetchOptions();
+      }
+      const newVals = [...currentArray, trimmed];
+      onChange({
+        target: {
+          name: field.name,
+          value: newVals
+        }
+      });
+    } catch (err) {
+      console.error("Erro ao criar opção:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdate = async (id, newValue) => {
+    setIsLoading(true);
+    try {
+      await api.put(`/options/${id}`, { valor: newValue });
+      await fetchOptions();
+      const oldVal = options.find(o => o.id === id)?.value;
+      if (oldVal && currentArray.includes(oldVal)) {
+        const updatedArray = currentArray.map(v => v === oldVal ? newValue : v);
+        onChange({ target: { name: field.name, value: updatedArray } });
+      }
+    } catch (err) {
+      console.error("Erro ao atualizar:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setIsLoading(true);
+    try {
+      await api.delete(`/options/${id}`);
+      await fetchOptions();
+      const deletedVal = options.find(o => o.id === id)?.value;
+      if (deletedVal && currentArray.includes(deletedVal)) {
+        const updatedArray = currentArray.filter(v => v !== deletedVal);
+        onChange({ target: { name: field.name, value: updatedArray } });
+      }
+    } catch (err) {
+      console.error("Erro ao deletar:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const isInteracting = editingId !== null || isAdding;
+
+  return (
+    <div className="flex flex-col">
+      {field?.label && (
+        <label className="mb-1.5 text-sm font-medium text-gray-700 block">
+          {field.label}
+          {field.required && <span className="text-red-500 ml-1">*</span>}
+        </label>
+      )}
+
+      <Select
+        isMulti
+        isClearable={false}
+        hideSelectedOptions={false}
+        closeMenuOnSelect={false}
+        isDisabled={isLoading || disabled}
+        isLoading={isLoading}
+        menuIsOpen={isInteracting ? true : undefined}
+        value={selectedOptions}
+        options={options}
+        onChange={handleChange}
+        placeholder={field?.placeholder || "Selecione as opções..."}
+        classNamePrefix="react-select"
+        menuPortalTarget={document.body}
+        styles={{
+          ...REACT_SELECT_CUSTOM_STYLES(!!error),
+          multiValueRemove: () => ({
+            display: 'none'
+          })
+        }}
+        components={{
+          Option: CustomOption,
+          MenuList: CustomMenuList
+        }}
+        customProps={{
+          onCreate: handleCreate,
+          onUpdate: handleUpdate,
+          onDelete: handleDelete,
+          editingId,
+          setEditingId,
+          isAdding,
+          setIsAdding,
+          isAdmin
+        }}
+        noOptionsMessage={() => "Nenhuma opção encontrada"}
+        {...props}
+      />
+
       {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
     </div>
   );

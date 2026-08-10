@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import { ChevronDown } from 'lucide-react'; // Ícone para o acordeão
-import { MODULE_MAP, Breadcrumb } from './breadcrumbUtils';
+import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from './breadcrumbUtils';
 
 const MainLayout = () => {
   const { user, logout } = useAuth();
@@ -110,15 +110,21 @@ const MainLayout = () => {
     const entry = MODULE_MAP[modelName];
     const crumbs = [{ label: 'Home', path: '/dashboard' }];
 
+    const formattedModel = HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
     if (entry) {
-      crumbs.push({ label: entry.module, path: entry.modulePath });
+      const isSameLabel = entry.module.toLowerCase() === formattedModel.toLowerCase();
+      if (!isSameLabel) {
+        crumbs.push({ label: entry.module, path: entry.modulePath });
+      }
     }
 
-    const formattedModel = modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     let title = formattedModel;
 
     if (second === 'new' || second === 'edit') {
-      crumbs.push({ label: entry?.module === modelName ? formattedModel : (entry?.module || formattedModel), path: `/${modelName}` });
+      if (!modelName.endsWith('_configuracoes') && entry?.module.toLowerCase() !== formattedModel.toLowerCase()) {
+        crumbs.push({ label: formattedModel, path: `/${modelName}` });
+      }
       const action = second === 'edit' ? 'Editar' : 'Novo';
       crumbs.push({ label: `${action} (${third || '...'})`, path: null });
       title = `${action} ${formattedModel}`;
@@ -155,6 +161,7 @@ const MainLayout = () => {
   const integraItems = useMemo(() => [
     { name: 'Intelipost', path: '/intelipost' },
     { name: 'Mercado Livre', path: '/mercadolivre_pedidos' },
+    { name: 'Shopee', path: '/shopee_pedidos' },
     { name: 'Magento', path: '/magento_pedidos' },
     { name: 'Tiktok Shop', path: '/tiktok_pedidos' },
     { name: 'AtendAI', path: '/atendai_configuracoes' },
@@ -205,7 +212,7 @@ const MainLayout = () => {
   );
 
   const isPedidosActive = location.pathname.startsWith('/pedidos');
-  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/atendai_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/email_regras') || location.pathname.startsWith('/outras_empresas_configuracoes');
+  const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/atendai_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/shopee_configuracoes') || location.pathname.startsWith('/shopee_pedidos') || location.pathname.startsWith('/email_regras') || location.pathname.startsWith('/outras_empresas_configuracoes');
   const isFinanceiroActive = location.pathname.startsWith('/contas') || location.pathname.startsWith('/classificacao_contabil');
   const isUsuariosActive = location.pathname.startsWith('/usuarios') || location.pathname.startsWith('/perfis');
   const isEstoqueActive = location.pathname.startsWith('/estoque');

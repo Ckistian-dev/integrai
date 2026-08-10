@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+import app.core.db.models as models
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ def run_one_time_id_sequencial_migration(engine: Engine, base):
         "empresas", "perfil", "usuarios", "cadastros", "embalagens", "produtos",
         "contas", "estoque", "pedidos", "regras_tributarias", "classificacao_contabil",
         "intelipost_configuracoes", "meli_configuracoes", "meli_credentials",
-        "magento_configuracoes", "tiktok_configuracoes", "elastic_email_configuracoes",
+        "magento_configuracoes", "tiktok_configuracoes", "shopee_configuracoes", "elastic_email_configuracoes",
         "atendai_configuracoes", "outras_empresas_configuracoes", "email_regras",
         "opcoes_campos", "relatorios", "nfe_recebidas"
     ]
@@ -45,6 +46,7 @@ def run_one_time_id_sequencial_migration(engine: Engine, base):
         ("meli_configuracoes",   "vendedor_padrao_id",                 "cadastros"),
         ("magento_configuracoes","vendedor_padrao_id",                 "cadastros"),
         ("tiktok_configuracoes", "vendedor_padrao_id",                 "cadastros"),
+        ("shopee_configuracoes", "vendedor_padrao_id",                 "cadastros"),
         ("usuario_preferencias", "id_usuario",                        "usuarios"),
         ("dashboard_preferencias","id_usuario",                       "usuarios"),
     ]

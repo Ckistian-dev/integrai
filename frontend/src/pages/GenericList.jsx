@@ -54,7 +54,8 @@ import {
   ArrowDown,
   FileCode,
   Download,
-  ClipboardList
+  ClipboardList,
+  AlertCircle
 } from 'lucide-react';
 import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 
@@ -295,11 +296,16 @@ const statusChangeActions = {
   ]
 };
 
-const getSortArray = (sort) => {
+const getSortArray = (sort, hasIdSeq = false) => {
   if (!sort) return [];
-  if (Array.isArray(sort)) return sort;
-  if (sort.field) return [sort];
-  return [];
+  let arr = [];
+  if (Array.isArray(sort)) arr = [...sort];
+  else if (sort.field) arr = [sort];
+
+  if (hasIdSeq) {
+    arr = arr.map(s => (s && s.field === 'id' ? { ...s, field: 'id_sequencial' } : s));
+  }
+  return arr;
 };
 
 const GenericList = () => {
@@ -308,12 +314,14 @@ const GenericList = () => {
   const isMeliView = paramModelName === 'mercadolivre_pedidos';
   const isMagentoView = paramModelName === 'magento_pedidos';
   const isTiktokView = paramModelName === 'tiktok_pedidos';
+  const isShopeeView = paramModelName === 'shopee_pedidos';
   const isEmailRulesView = paramModelName === 'email_regras';
 
   const modelName = isMeliView ? 'mercadolivre_pedidos' :
     isMagentoView ? 'magento_pedidos' :
       isTiktokView ? 'tiktok_pedidos' :
-        (paramModelName === 'intelipost' ? 'pedidos' : paramModelName);
+        isShopeeView ? 'shopee_pedidos' :
+          (paramModelName === 'intelipost' ? 'pedidos' : paramModelName);
 
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -322,7 +330,7 @@ const GenericList = () => {
   // Mapeia o modelName da rota para a chave de permissão correta
   const permissionKey = useMemo(() => {
     // Para as visualizações de integração, a chave de permissão é 'integracoes'
-    if (isMeliView || isMagentoView || isTiktokView || isIntelipostView) {
+    if (isMeliView || isMagentoView || isTiktokView || isShopeeView || isIntelipostView) {
       return 'integracoes';
     }
     if (paramModelName === 'perfis') {
@@ -607,14 +615,19 @@ const GenericList = () => {
     return metadata.fields.filter(f => f.type === 'select' && f.options && f.options.length > 0);
   }, [metadata]);
 
+  const hasIdSeq = useMemo(() => {
+    return metadata?.fields?.some(f => f.name === 'id_sequencial');
+  }, [metadata]);
+
   // --- OBTER CONFIGURAÇÃO PADRÃO DE PREFERÊNCIAS ---
   const getDefaultPreferences = () => {
+    const defaultSortField = metadata?.fields?.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id';
     if (!metadata?.fields || metadata.fields.length === 0) {
       return {
         visibleColumns: null,
         quickFilterFields: [],
         quickFilterValues: {},
-        sort: [{ field: 'id', direction: 'desc' }],
+        sort: [{ field: defaultSortField, direction: 'desc' }],
         filters: [],
         customColumnLabels: {},
         isExplicitlyCleared: false
@@ -662,7 +675,7 @@ const GenericList = () => {
       visibleColumns: allCols,
       quickFilterFields: defaultQuickFields,
       quickFilterValues: defaultQuickValues,
-      sort: [{ field: 'id', direction: 'desc' }],
+      sort: [{ field: defaultSortField, direction: 'desc' }],
       filters: [],
       customColumnLabels: {},
       isExplicitlyCleared: false
@@ -695,9 +708,13 @@ const GenericList = () => {
       try {
         const res = await api.get(`/preferences/${modelName}`);
         if (res.data && res.data.config && Object.keys(res.data.config).length > 0) {
-          setUserPreferences(res.data.config);
-          if (res.data.config.quickFilterValues) {
-            setQuickFilterValues(res.data.config.quickFilterValues);
+          const config = { ...res.data.config };
+          if (hasIdSeq && config.sort) {
+            config.sort = getSortArray(config.sort, true);
+          }
+          setUserPreferences(config);
+          if (config.quickFilterValues) {
+            setQuickFilterValues(config.quickFilterValues);
           }
         } else {
           const defaultConfig = getDefaultPreferences();
@@ -923,11 +940,12 @@ const GenericList = () => {
         // CORREÇÃO 1: Declarar a variável url
         let url = '';
 
-        const sortList = getSortArray(userPreferences.sort);
+        const sortList = getSortArray(userPreferences.sort, hasIdSeq);
+        const defaultSortField = hasIdSeq ? 'id_sequencial' : 'id';
         const params = {
           skip,
           limit: effectiveLimit,
-          sort_by: sortList.length > 0 ? sortList.map(s => s.field).join(',') : 'id',
+          sort_by: sortList.length > 0 ? sortList.map(s => s.field).join(',') : defaultSortField,
           sort_order: sortList.length > 0 ? sortList.map(s => s.direction).join(',') : 'desc'
         };
 
@@ -940,6 +958,9 @@ const GenericList = () => {
         } else if (isTiktokView) {
           // ROTA ESPECÍFICA PROXY DO TIKTOK
           url = `/tiktok/pedidos`;
+        } else if (isShopeeView) {
+          // ROTA ESPECÍFICA PROXY DA SHOPEE
+          url = `/shopee/pedidos`;
         } else {
           // ROTA PADRÃO GENÉRICA
           url = `/generic/${modelName}`;
@@ -1049,6 +1070,10 @@ const GenericList = () => {
             const tiktokMainCols = ['id', 'create_time', 'order_status', 'payment_amount', 'ja_importado', 'buyer_email'];
             const foundMain = tiktokMainCols.filter(c => defaultCols.includes(c));
             if (foundMain.length > 0) defaultCols = foundMain;
+          } else if (isShopeeView) {
+            const shopeeMainCols = ['order_sn', 'create_time', 'order_status', 'total_amount', 'ja_importado', 'buyer_user_name'];
+            const foundMain = shopeeMainCols.filter(c => defaultCols.includes(c));
+            if (foundMain.length > 0) defaultCols = foundMain;
           }
 
           setUserPreferences(prev => ({
@@ -1077,6 +1102,10 @@ const GenericList = () => {
         if (!error) {
           if (err.response && err.response.status === 403 && isMeliView) {
             setError("Não conectado ao Mercado Livre. Clique em 'Sincronizar' para conectar.");
+          } else if (err.response && err.response.status === 403 && isShopeeView) {
+            setError(err.response?.data?.detail || "Shopee não autorizada. Conecte sua conta Shopee.");
+          } else if (err.response && err.response.status === 403 && isTiktokView) {
+            setError(err.response?.data?.detail || "TikTok Shop não autorizado. Conecte sua conta TikTok Shop.");
           } else if (isMagentoView) {
             const detail = err.response?.data?.detail || err?.message || 'Erro ao conectar com o Magento.';
             setError(detail);
@@ -1402,6 +1431,18 @@ const GenericList = () => {
     }
   };
 
+  const handleMagentoSyncClick = async () => {
+    try {
+      setIsFetchingData(true);
+      setRefreshTrigger(prev => prev + 1);
+      toast.success("Pedidos sincronizados com a Magento!");
+    } catch (err) {
+      toast.error("Erro ao sincronizar com Magento.");
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
   const handleOpenMagentoFilters = async () => {
     setIsFetchingData(true);
     try {
@@ -1479,7 +1520,9 @@ const GenericList = () => {
             ? `/mercadolivre/pedidos/${orderId}/importar`
             : isTiktokView
               ? `/tiktok/pedidos/${orderId}/importar`
-              : `/magento/pedidos/${orderId}/importar`;
+              : isShopeeView
+                ? `/shopee/pedidos/${orderId}/importar`
+                : `/magento/pedidos/${orderId}/importar`;
 
           await api.post(endpoint);
           successCount++;
@@ -1673,6 +1716,49 @@ const GenericList = () => {
       } else {
         toast.error("Erro ao sincronizar conexão com Tiktok Shop.");
       }
+      setIsFetchingData(false);
+    }
+  };
+
+  const handleShopeeConfigClick = async () => {
+    try {
+      setIsFetchingData(true);
+      const response = await api.get('/generic/shopee_configuracoes');
+      const items = response.data.items;
+      if (items && items.length > 0) {
+        navigate(`/shopee_configuracoes/edit/${items[0].id_sequencial ?? items[0].id}`);
+      } else {
+        navigate(`/shopee_configuracoes/new`);
+      }
+    } catch (err) {
+      navigate(`/shopee_configuracoes/new`);
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
+  const handleShopeeSyncClick = async () => {
+    try {
+      setIsFetchingData(true);
+      await api.post('/shopee/sync');
+      setRefreshTrigger(prev => prev + 1);
+      toast.success("Conexão com a Shopee sincronizada com sucesso!");
+    } catch (err) {
+      if (err.response && err.response.status === 403) {
+        try {
+          const res = await api.get('/shopee/auth_url');
+          if (res.data && res.data.url) {
+            window.location.href = res.data.url;
+          } else {
+            toast.error("URL de autorização da Shopee indisponível. Verifique as credenciais.");
+          }
+        } catch (authErr) {
+          toast.error("Configure Partner ID e Partner Key primeiro em Integrações.");
+        }
+      } else {
+        toast.error("Erro ao sincronizar conexão com a Shopee.");
+      }
+    } finally {
       setIsFetchingData(false);
     }
   };
@@ -2118,8 +2204,9 @@ const GenericList = () => {
       }
 
       // Adiciona ordenação
-      const sortList = getSortArray(userPreferences.sort);
-      params.sort_by = sortList.length > 0 ? sortList.map(s => s.field).join(',') : 'id';
+      const sortList = getSortArray(userPreferences.sort, hasIdSeq);
+      const defaultSortField = hasIdSeq ? 'id_sequencial' : 'id';
+      params.sort_by = sortList.length > 0 ? sortList.map(s => s.field).join(',') : defaultSortField;
       params.sort_order = sortList.length > 0 ? sortList.map(s => s.direction).join(',') : 'desc';
 
       // Adiciona colunas visíveis (Respeitando a configuração da tabela)
@@ -2474,14 +2561,18 @@ const GenericList = () => {
   };
 
   const toggleSort = (field) => {
-    const sortList = getSortArray(userPreferences.sort);
-    const idx = sortList.findIndex(s => s.field === field);
+    let targetField = field;
+    if (hasIdSeq && targetField === 'id') {
+      targetField = 'id_sequencial';
+    }
+    const sortList = getSortArray(userPreferences.sort, hasIdSeq);
+    const idx = sortList.findIndex(s => s.field === targetField);
     let newSort;
     if (idx === -1) {
       if (sortList.length >= 2) {
-        newSort = [sortList[0], { field, direction: 'asc' }];
+        newSort = [sortList[0], { field: targetField, direction: 'asc' }];
       } else {
-        newSort = [...sortList, { field, direction: 'asc' }];
+        newSort = [...sortList, { field: targetField, direction: 'asc' }];
       }
     } else {
       const current = sortList[idx];
@@ -3111,7 +3202,7 @@ const GenericList = () => {
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           {/* Botões Lado Esquerdo */}
           <div className="flex gap-2">
-            {!isIntelipostView && !isMeliView && !isMagentoView && modelName !== 'nfe_rece_bidas' && canCreate && (
+            {!isIntelipostView && !isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && modelName !== 'nfe_rece_bidas' && canCreate && (
               <Link
                 to={`/${modelName}/new`}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium"
@@ -3204,6 +3295,18 @@ const GenericList = () => {
               </button>
             )}
 
+            {/* BOTÃO SINCRONIZAR MAGENTO */}
+            {isMagentoView && (
+              <button
+                onClick={handleMagentoSyncClick}
+                disabled={isFetchingData}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-70"
+              >
+                <RefreshCw size={16} className={`mr-2 ${isFetchingData ? 'animate-spin' : ''}`} />
+                Sincronizar Magento
+              </button>
+            )}
+
             {/* BOTÃO CONFIG TIKTOK */}
             {isTiktokView && (
               <button
@@ -3227,8 +3330,31 @@ const GenericList = () => {
               </button>
             )}
 
-            {/* BOTÃO EXPORTAR CSV (Escondido para proxy views ML e Magento) */}
-            {!isMeliView && !isMagentoView && canExport && (
+            {/* BOTÃO CONFIG SHOPEE */}
+            {isShopeeView && (
+              <button
+                onClick={handleShopeeConfigClick}
+                className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium"
+              >
+                <Settings size={16} className="mr-2" />
+                Configurações Shopee
+              </button>
+            )}
+
+            {/* BOTÃO SINCRONIZAR SHOPEE */}
+            {isShopeeView && (
+              <button
+                onClick={handleShopeeSyncClick}
+                disabled={isFetchingData}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-70"
+              >
+                <RefreshCw size={16} className={`mr-2 ${isFetchingData ? 'animate-spin' : ''}`} />
+                Sincronizar Shopee
+              </button>
+            )}
+
+            {/* BOTÃO EXPORTAR CSV (Escondido para proxy views ML, Magento, TikTok e Shopee) */}
+            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canExport && (
               <button
                 onClick={handleExportCSV}
                 disabled={exportingFormat !== null || isFetchingData} // Desabilita se estiver exportando ou buscando dados
@@ -3296,7 +3422,7 @@ const GenericList = () => {
             )}
 
             {/* Botão Editar Atualizado */}
-            {!isMeliView && !isMagentoView && canEdit && modelName !== 'estoque' && (
+            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canEdit && modelName !== 'estoque' && (
               <button
                 onClick={handleEditClick}
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -3308,7 +3434,7 @@ const GenericList = () => {
             )}
 
             {/* Novo Botão Deletar / Cancelar */}
-            {!isMeliView && !isMagentoView && canDelete && modelName !== 'estoque' && (
+            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canDelete && modelName !== 'estoque' && (
               <button
                 onClick={handleDeleteClick} // Chama a função que abre o modal
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -3617,7 +3743,7 @@ const GenericList = () => {
                   {displayColumns.map((colName, idx) => {
                     const field = fieldMetaMap.get(colName);
                     const isCurrency = field?.format_mask === 'currency';
-                    const sortList = getSortArray(userPreferences.sort);
+                    const sortList = getSortArray(userPreferences.sort, hasIdSeq);
                     const sortIdx = sortList.findIndex(s => s.field === colName);
                     const sort = sortIdx !== -1 ? sortList[sortIdx] : null;
                     const sortPriority = sortIdx !== -1 ? sortIdx + 1 : null;
@@ -3632,7 +3758,8 @@ const GenericList = () => {
                         onDragOver={(e) => handleColumnDragOver(e, colName)}
                         onDrop={(e) => handleColumnDrop(e, colName)}
                         onDragEnd={handleColumnDragEnd}
-                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-all duration-200 ease-in-out ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : ''
+                        onClick={() => { if (!isEditMode) toggleSort(colName); }}
+                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-all duration-200 ease-in-out ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : 'cursor-pointer hover:bg-gray-100 group'
                           } ${isDraggingThis
                             ? 'bg-blue-100/90 text-blue-900 border-2 border-dashed border-blue-500 shadow-lg scale-[0.98] opacity-80 z-20'
                             : ''
@@ -3794,308 +3921,349 @@ const GenericList = () => {
               <tbody className="bg-white">
                 {isFetchingData && data.length === 0 ? (
                   <TableSkeleton columns={isEditMode ? [...displayColumns, ''] : displayColumns} rows={limit} />
-                ) : (
-                  <>
-                    {/* 8. Feedback de 'Nenhum resultado' ou 'Erro de dados' */}
-                    {!isFetchingData && error && data.length === 0 && (
-                      <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={displayColumns.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-red-500">
+                ) : error && data.length === 0 ? (
+                  <tr style={{ height: `${limit * 53}px` }}>
+                    <td colSpan={Math.max(1, displayColumns.length + (isEditMode ? 1 : 0))} className="px-6 py-12 text-center align-middle text-gray-500 bg-gray-50/20">
+                      <div className="flex flex-col items-center justify-center gap-3 max-w-md mx-auto py-6">
+                        <div className="p-3 bg-red-50 text-red-600 rounded-full shadow-sm">
+                          <AlertCircle size={24} />
+                        </div>
+                        <h3 className="text-base font-bold text-gray-800 tracking-tight">
+                          {isShopeeView ? 'Shopee Não Autorizada' : isMeliView ? 'Mercado Livre Não Autorizado' : isTiktokView ? 'TikTok Shop Não Autorizado' : 'Erro ao Carregar Dados'}
+                        </h3>
+                        <p className="text-xs text-red-600 max-w-sm leading-relaxed font-medium">
                           {error}
-                        </td>
-                      </tr>
-                    )}
-                    {!isFetchingData && !error && data.length === 0 && (
-                      <tr style={{ height: `${limit * 53}px` }}>
-                        <td colSpan={displayColumns.length + 1 + (isEditMode ? 1 : 0)} className="px-6 py-4 text-center align-middle text-gray-500">
-                          Nenhum registro encontrado.
-                        </td>
-                      </tr>
-                    )}
-                    {(() => {
-                      const renderCellContent = (item, colName) => {
-                        if (!colName) return null; // Proteção contra colName nulo
+                        </p>
+                        {isShopeeView && (
+                          <button
+                            type="button"
+                            onClick={handleShopeeSyncClick}
+                            className="mt-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                          >
+                            <RefreshCw size={14} />
+                            Conectar / Sincronizar Shopee
+                          </button>
+                        )}
+                        {isMeliView && (
+                          <button
+                            type="button"
+                            onClick={handleMeliSyncClick}
+                            className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                          >
+                            <RefreshCw size={14} />
+                            Conectar / Sincronizar Mercado Livre
+                          </button>
+                        )}
+                        {isMagentoView && (
+                          <button
+                            type="button"
+                            onClick={handleMagentoSyncClick}
+                            className="mt-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                          >
+                            <RefreshCw size={14} />
+                            Conectar / Sincronizar Magento
+                          </button>
+                        )}
+                        {isTiktokView && (
+                          <button
+                            type="button"
+                            onClick={handleTiktokSyncClick}
+                            className="mt-2 px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                          >
+                            <RefreshCw size={14} />
+                            Conectar / Sincronizar TikTok
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ) : displayColumns.length === 0 && !loadingPreferences ? (
+                  <tr style={{ height: `${limit * 53}px` }}>
+                    <td colSpan={100} className="px-6 py-12 text-center align-middle text-gray-500 bg-gray-50/20">
+                      <div className="flex flex-col items-center justify-center gap-3 max-w-md mx-auto py-6">
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-full shadow-sm">
+                          <SlidersHorizontal size={24} />
+                        </div>
+                        <h3 className="text-base font-bold text-gray-800 tracking-tight">Nenhum campo selecionado</h3>
+                        <p className="text-xs text-gray-500 max-w-sm leading-relaxed">
+                          {isEditMode
+                            ? 'Sua tabela não possui nenhum campo visível. Clique no botão "+" no canto superior direito para adicionar os campos desejados.'
+                            : 'Sua tabela está sem campos visíveis no momento. Clique no botão abaixo para configurar quais campos deseja visualizar.'}
+                        </p>
+                        {!isEditMode && (
+                          <button
+                            type="button"
+                            onClick={() => setIsEditMode(true)}
+                            className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
+                          >
+                            <SlidersHorizontal size={14} />
+                            Configurar Tabela
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ) : data.length === 0 ? (
+                  <tr style={{ height: `${limit * 53}px` }}>
+                    <td colSpan={Math.max(1, displayColumns.length + (isEditMode ? 1 : 0))} className="px-6 py-4 text-center align-middle text-gray-500">
+                      Nenhum registro encontrado.
+                    </td>
+                  </tr>
+                ) : (
+                  (() => {
+                    const renderCellContent = (item, colName) => {
+                      if (!colName) return null; // Proteção contra colName nulo
 
-                        let value = item[colName];
-                        const field = fieldMetaMap.get(colName);
+                      let value = item[colName];
+                      const field = fieldMetaMap.get(colName);
 
-                        // 1. Tenta resolver relacionamento (FK) primeiro para garantir o nome amigável
-                        let relationProp = colName;
-                        if (relationProp.startsWith('id_')) relationProp = relationProp.substring(3);
-                        else if (relationProp.endsWith('_id')) relationProp = relationProp.slice(0, -3);
+                      // 1. Tenta resolver relacionamento (FK) primeiro para garantir o nome amigável
+                      let relationProp = colName;
+                      if (relationProp.startsWith('id_')) relationProp = relationProp.substring(3);
+                      else if (relationProp.endsWith('_id')) relationProp = relationProp.slice(0, -3);
 
-                        if (item[relationProp] && typeof item[relationProp] === 'object') {
-                          const possibleLabels = [field?.foreign_key_label_field, 'nome_razao', 'nome', 'descricao', 'razao_social', 'titulo'];
-                          for (const label of possibleLabels) {
-                            if (label && item[relationProp][label] !== undefined) {
-                              value = item[relationProp][label];
-                              break;
-                            }
+                      if (item[relationProp] && typeof item[relationProp] === 'object') {
+                        const possibleLabels = [field?.foreign_key_label_field, 'nome_razao', 'nome', 'descricao', 'razao_social', 'titulo'];
+                        for (const label of possibleLabels) {
+                          if (label && item[relationProp][label] !== undefined) {
+                            value = item[relationProp][label];
+                            break;
                           }
                         }
+                      }
 
-                        if (colName === 'id_sequencial') {
-                          return <span className="font-semibold text-gray-700">{value ?? item.id}</span>;
-                        }
+                      if (colName === 'id_sequencial') {
+                        return <span className="font-semibold text-gray-700">{value ?? item.id}</span>;
+                      }
 
-                        if (colName === 'trigger' && modelName === 'email_regras' && value) {
-                          const parts = String(value).split('→');
-                          return (
-                            <div className="flex items-center gap-1.5">
-                              {parts.map((p, idx) => (
-                                <React.Fragment key={idx}>
-                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-tight ${idx === 0 ? 'bg-gray-100 text-gray-600' : 'bg-teal-100 text-teal-700'
-                                    }`}>
-                                    {p.trim()}
-                                  </span>
-                                  {idx < parts.length - 1 && <span className="text-gray-300 font-bold">→</span>}
-                                </React.Fragment>
-                              ))}
-                            </div>
-                          );
-                        }
-
-                        if (modelName === 'estoque' && (colName === 'custo' || colName === 'valor_total')) {
-                          return <span className="font-medium text-gray-900">{formatCurrency(value || 0)}</span>;
-                        }
-
-                        if (colName === 'ja_importado') {
-                          return <BooleanDisplay value={value} trueLabel="Importado" falseLabel="Não Importado" trueColor="blue" falseColor="gray" />;
-                        }
-
-                        if (colName === 'tipo_documento' && modelName === 'nfe_recebidas') {
-                          let docLabel = value; let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
-                          if (String(value) === 'nfeProc') { docLabel = 'NFe Completa'; bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
-                          else if (String(value) === 'resNFe') { docLabel = 'Resumo NFe'; bgColor = 'bg-blue-100'; textColor = 'text-blue-800'; borderColor = 'border-blue-300'; }
-                          else if (String(value).includes('210210')) { docLabel = 'Ciência da Operação'; bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
-                          else if (String(value).includes('110111')) { docLabel = 'Cancelamento'; bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
-                          else if (String(value).includes('Evento')) { const evCode = String(value).split('_').pop(); docLabel = `Evento (${evCode})`; bgColor = 'bg-orange-100'; textColor = 'text-orange-800'; borderColor = 'border-orange-300'; }
-                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{docLabel}</span>;
-                        }
-
-                        if (colName === 'tipo_conta') {
-                          const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                          const isReceber = String(value) === 'A Receber'; const isPagar = String(value) === 'A Pagar';
-                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${isReceber ? 'bg-green-100 text-green-800 border-green-300' : isPagar ? 'bg-red-100 text-red-800 border-red-300' : 'bg-gray-100 text-gray-800 border-gray-200'}`}>{label}</span>;
-                        }
-
-                        if (colName === 'situacao') {
-                          if (modelName === 'contas') {
-                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                            let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
-                            if (String(value) === 'Pago') { bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
-                            else if (String(value) === 'Vencido') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
-                            else if (String(value) === 'Cancelado') { bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
-                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
-                          }
-                          if (modelName === 'pedidos') {
-                            const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
-                            let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
-                            if (String(value) === 'Cancelado') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
-                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
-                          }
-                          if (modelName === 'estoque') {
-                            const colors = { 'Inventário': 'bg-indigo-100 text-indigo-800 border-indigo-200', 'Entrada': 'bg-green-100 text-green-800 border-green-200', 'Saída': 'bg-red-100 text-red-800 border-red-200' };
-                            return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colors[value] || 'bg-gray-100 text-gray-800 border-gray-200'}`}>{value}</span>;
-                          }
-                        }
-
-                        if (colName === 'data_entrega' && modelName === 'pedidos') {
-                          if (!value) return "Não informado";
-                          const dataInicioStr = item.data_pedido || item.data_orcamento || (item.criado_em ? item.criado_em.split('T')[0] : null);
-                          if (!dataInicioStr) return "Não informado";
-
-                          const date1 = new Date(dataInicioStr + 'T00:00:00');
-                          const date2 = new Date(value + 'T00:00:00');
-                          if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return "Não informado";
-                          if (date1 > date2) return "0 dias úteis";
-
-                          let count = 0;
-                          let curDate = new Date(date1.getTime());
-                          while (curDate < date2) {
-                            curDate.setDate(curDate.getDate() + 1);
-                            const dayOfWeek = curDate.getDay();
-                            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-                              count++;
-                            }
-                          }
-                          return `${count} dias úteis`;
-                        }
-
-                        // 3. Formatações por tipo de campo
-                        if (field?.type === 'boolean') return <BooleanDisplay value={value} />;
-                        if (field?.format_mask === 'currency') return <span className="font-medium text-gray-900">{formatCurrency(value)}</span>;
-                        if (field?.type === 'datetime') return <span className="text-gray-500">{formatDate(value)}</span>;
-
-                        if (field?.type === 'select' || field?.component === 'creatable_select') {
-                          const label = (field.options || []).find(opt => String(opt.value) === String(value))?.label;
-                          if (label) value = label;
-                        }
-
-                        // Proteção final para objetos
-                        if (typeof value === 'object' && value !== null && !React.isValidElement(value)) {
-                          return <span className="text-gray-400 text-xs italic">{`[Dados: ${Object.keys(value).join(', ')}]`}</span>;
-                        }
-
-                        const isPassword = field?.ui_type === 'password' || colName.toLowerCase().includes('senha') || colName.toLowerCase().includes('password');
-                        return isPassword ? '*********' : formatDisplayValue(value);
-                      };
-
-                      const renderRow = (item, index) => (
-                        <tr
-                          key={item.id}
-                          onClick={(e) => handleRowClick(e, item.id, index)}
-                          onDoubleClick={() => {
-                            if (!isMeliView && !isMagentoView && modelName !== 'estoque') {
-                              const targetId = item.id_sequencial ?? item.id;
-                              navigate(`/${modelName}/edit/${targetId}`);
-                            }
-                          }}
-                          style={{ height: '53px' }}
-                          className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
-                            ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
-                            : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
-                            }`}
-                        >
-                          {displayColumns.map((colName) => {
-                            const isDraggingCell = colName === draggedColName;
-                            return (
-                              <td
-                                key={colName}
-                                className={`px-6 py-0 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
-                                  ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
-                                  : ''
-                                  }`}
-                              >
-                                {renderCellContent(item, colName)}
-                              </td>
-                            );
-                          })}
-                          {isEditMode && <td className="bg-gray-50/30"></td>}
-                        </tr>
-                      );
-
-                      const totalRowsRendered = (groupedData
-                        ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
-                        : data.length) + (hasTotalsField && data.length > 0 ? 1 : 0);
-                      const emptyRowsCount = Math.max(0, limit - totalRowsRendered);
-
-                      if (displayColumns.length === 0 && !isFetchingData && !loadingPreferences) {
+                      if (colName === 'trigger' && modelName === 'email_regras' && value) {
+                        const parts = String(value).split('→');
                         return (
-                          <tr style={{ height: `${limit * 53}px` }}>
-                            <td colSpan={100} className="px-6 py-12 text-center align-middle text-gray-500 bg-gray-50/20">
-                              <div className="flex flex-col items-center justify-center gap-3 max-w-md mx-auto py-6">
-                                <div className="p-3 bg-blue-50 text-blue-600 rounded-full shadow-sm">
-                                  <SlidersHorizontal size={24} />
-                                </div>
-                                <h3 className="text-base font-bold text-gray-800 tracking-tight">Nenhum campo selecionado</h3>
-                                <p className="text-xs text-gray-500 max-w-sm leading-relaxed">
-                                  {isEditMode
-                                    ? 'Sua tabela não possui nenhum campo visível. Clique no botão "+" no canto superior direito para adicionar os campos desejados.'
-                                    : 'Sua tabela está sem campos visíveis no momento. Clique no botão abaixo para configurar quais campos deseja visualizar.'}
-                                </p>
-                                {!isEditMode && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setIsEditMode(true)}
-                                    className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center gap-2"
-                                  >
-                                    <SlidersHorizontal size={14} />
-                                    Configurar Tabela
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
+                          <div className="flex items-center gap-1.5">
+                            {parts.map((p, idx) => (
+                              <React.Fragment key={idx}>
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-tight ${idx === 0 ? 'bg-gray-100 text-gray-600' : 'bg-teal-100 text-teal-700'
+                                  }`}>
+                                  {p.trim()}
+                                </span>
+                                {idx < parts.length - 1 && <span className="text-gray-300 font-bold">→</span>}
+                              </React.Fragment>
+                            ))}
+                          </div>
                         );
                       }
 
-                      return (
-                        <>
-                          {groupedData ? (
-                            groupedData.map(group => (
-                              <Fragment key={group.key}>
-                                <tr
-                                  className={`cursor-pointer transition-colors group/header ${selectedGroupKey === group.key ? 'bg-indigo-100 border-indigo-300' : 'bg-indigo-50/50 hover:bg-indigo-100/70 border-indigo-100'
-                                    }`}
-                                  onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
-                                  title="Clique para selecionar este inventário"
-                                >
-                                  <td colSpan={displayColumns.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3">
-                                        <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
-                                          <Calendar size={14} />
-                                        </div>
-                                        <span className={`font-bold text-sm ${selectedGroupKey === group.key ? 'text-indigo-900' : 'text-indigo-800'}`}>
-                                          Inventário em {formatDate(group.data_hora)}
-                                        </span>
-                                        <span className="text-[10px] bg-white/50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200 font-bold uppercase">
-                                          {group.itens.length} Movimentações
-                                        </span>
+                      if (modelName === 'estoque' && (colName === 'custo' || colName === 'valor_total')) {
+                        return <span className="font-medium text-gray-900">{formatCurrency(value || 0)}</span>;
+                      }
+
+                      if (colName === 'ja_importado') {
+                        return <BooleanDisplay value={value} trueLabel="Importado" falseLabel="Não Importado" trueColor="blue" falseColor="gray" />;
+                      }
+
+                      if (colName === 'tipo_documento' && modelName === 'nfe_recebidas') {
+                        let docLabel = value; let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                        if (String(value) === 'nfeProc') { docLabel = 'NFe Completa'; bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
+                        else if (String(value) === 'resNFe') { docLabel = 'Resumo NFe'; bgColor = 'bg-blue-100'; textColor = 'text-blue-800'; borderColor = 'border-blue-300'; }
+                        else if (String(value).includes('210210')) { docLabel = 'Ciência da Operação'; bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
+                        else if (String(value).includes('110111')) { docLabel = 'Cancelamento'; bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                        else if (String(value).includes('Evento')) { const evCode = String(value).split('_').pop(); docLabel = `Evento (${evCode})`; bgColor = 'bg-orange-100'; textColor = 'text-orange-800'; borderColor = 'border-orange-300'; }
+                        return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{docLabel}</span>;
+                      }
+
+                      if (colName === 'tipo_conta') {
+                        const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                        const isReceber = String(value) === 'A Receber'; const isPagar = String(value) === 'A Pagar';
+                        return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${isReceber ? 'bg-green-100 text-green-800 border-green-300' : isPagar ? 'bg-red-100 text-red-800 border-red-300' : 'bg-gray-100 text-gray-800 border-gray-200'}`}>{label}</span>;
+                      }
+
+                      if (colName === 'situacao') {
+                        if (modelName === 'contas') {
+                          const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                          let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                          if (String(value) === 'Pago') { bgColor = 'bg-green-100'; textColor = 'text-green-800'; borderColor = 'border-green-300'; }
+                          else if (String(value) === 'Vencido') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                          else if (String(value) === 'Cancelado') { bgColor = 'bg-purple-100'; textColor = 'text-purple-800'; borderColor = 'border-purple-300'; }
+                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
+                        }
+                        if (modelName === 'pedidos') {
+                          const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
+                          let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
+                          if (String(value) === 'Cancelado') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
+                        }
+                        if (modelName === 'estoque') {
+                          const colors = { 'Inventário': 'bg-indigo-100 text-indigo-800 border-indigo-200', 'Entrada': 'bg-green-100 text-green-800 border-green-200', 'Saída': 'bg-red-100 text-red-800 border-red-200' };
+                          return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colors[value] || 'bg-gray-100 text-gray-800 border-gray-200'}`}>{value}</span>;
+                        }
+                      }
+
+                      if (colName === 'data_entrega' && modelName === 'pedidos') {
+                        if (!value) return "Não informado";
+                        const dataInicioStr = item.data_pedido || item.data_orcamento || (item.criado_em ? item.criado_em.split('T')[0] : null);
+                        if (!dataInicioStr) return "Não informado";
+
+                        const date1 = new Date(dataInicioStr + 'T00:00:00');
+                        const date2 = new Date(value + 'T00:00:00');
+                        if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return "Não informado";
+                        if (date1 > date2) return "0 dias úteis";
+
+                        let count = 0;
+                        let curDate = new Date(date1.getTime());
+                        while (curDate < date2) {
+                          curDate.setDate(curDate.getDate() + 1);
+                          const dayOfWeek = curDate.getDay();
+                          if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                            count++;
+                          }
+                        }
+                        return `${count} dias úteis`;
+                      }
+
+                      // 3. Formatações por tipo de campo
+                      if (field?.type === 'boolean') return <BooleanDisplay value={value} />;
+                      if (field?.format_mask === 'currency') return <span className="font-medium text-gray-900">{formatCurrency(value)}</span>;
+                      if (field?.type === 'datetime') return <span className="text-gray-500">{formatDate(value)}</span>;
+
+                      if (field?.type === 'select' || field?.component === 'creatable_select') {
+                        const label = (field.options || []).find(opt => String(opt.value) === String(value))?.label;
+                        if (label) value = label;
+                      }
+
+                      // Proteção final para objetos
+                      if (typeof value === 'object' && value !== null && !React.isValidElement(value)) {
+                        return <span className="text-gray-400 text-xs italic">{`[Dados: ${Object.keys(value).join(', ')}]`}</span>;
+                      }
+
+                      const isPassword = field?.ui_type === 'password' || colName.toLowerCase().includes('senha') || colName.toLowerCase().includes('password');
+                      return isPassword ? '*********' : formatDisplayValue(value);
+                    };
+
+                    const renderRow = (item, index) => (
+                      <tr
+                        key={item.id}
+                        onClick={(e) => handleRowClick(e, item.id, index)}
+                        onDoubleClick={() => {
+                          if (!isMeliView && !isMagentoView && modelName !== 'estoque') {
+                            const targetId = item.id_sequencial ?? item.id;
+                            navigate(`/${modelName}/edit/${targetId}`);
+                          }
+                        }}
+                        style={{ height: '53px' }}
+                        className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
+                          ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
+                          : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
+                          }`}
+                      >
+                        {displayColumns.map((colName) => {
+                          const isDraggingCell = colName === draggedColName;
+                          return (
+                            <td
+                              key={colName}
+                              className={`px-6 py-0 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
+                                ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
+                                : ''
+                                }`}
+                            >
+                              {renderCellContent(item, colName)}
+                            </td>
+                          );
+                        })}
+                        {isEditMode && <td className="bg-gray-50/30"></td>}
+                      </tr>
+                    );
+
+                    const totalRowsRendered = (groupedData
+                      ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
+                      : data.length) + (hasTotalsField && data.length > 0 ? 1 : 0);
+                    const emptyRowsCount = Math.max(0, limit - totalRowsRendered);
+
+                    return (
+                      <>
+                        {groupedData ? (
+                          groupedData.map(group => (
+                            <Fragment key={group.key}>
+                              <tr
+                                className={`cursor-pointer transition-colors group/header ${selectedGroupKey === group.key ? 'bg-indigo-100 border-indigo-300' : 'bg-indigo-50/50 hover:bg-indigo-100/70 border-indigo-100'
+                                  }`}
+                                onClick={() => setSelectedGroupKey(group.key === selectedGroupKey ? null : group.key)}
+                                title="Clique para selecionar este inventário"
+                              >
+                                <td colSpan={displayColumns.length + (isEditMode ? 1 : 0)} className="px-6 py-2 border-y">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`p-1 rounded-full ${selectedGroupKey === group.key ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-500'}`}>
+                                        <Calendar size={14} />
                                       </div>
-                                      <div className="flex items-center gap-2">
-                                        {selectedGroupKey === group.key ? (
-                                          <span className="text-[10px] font-bold text-indigo-600 uppercase flex items-center gap-1">
-                                            <Check size={12} /> Selecionado
-                                          </span>
-                                        ) : (
-                                          <span className="text-[10px] font-medium text-indigo-400 uppercase opacity-0 group-hover/header:opacity-100 transition-opacity">
-                                            Clique para selecionar
-                                          </span>
-                                        )}
-                                      </div>
+                                      <span className={`font-bold text-sm ${selectedGroupKey === group.key ? 'text-indigo-900' : 'text-indigo-800'}`}>
+                                        Inventário em {formatDate(group.data_hora)}
+                                      </span>
+                                      <span className="text-[10px] bg-white/50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200 font-bold uppercase">
+                                        {group.itens.length} Movimentações
+                                      </span>
                                     </div>
-                                  </td>
-                                </tr>
-                                {group.itens.map((item, idx) => renderRow(item, idx))}
-                              </Fragment>
-                            ))
-                          ) : (
-                            data.map((item, idx) => renderRow(item, idx))
-                          )}
-
-                          {/* Linhas vazias para preencher o card (sem bordas internas) */}
-                          {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
-                            <tr key={`empty-${i}`} style={{ height: '53px' }}>
-                              {displayColumns.map((colName) => (
-                                <td key={`empty-${i}-${colName}`} className="px-6 whitespace-nowrap text-sm">
-                                  &nbsp;
+                                    <div className="flex items-center gap-2">
+                                      {selectedGroupKey === group.key ? (
+                                        <span className="text-[10px] font-bold text-indigo-600 uppercase flex items-center gap-1">
+                                          <Check size={12} /> Selecionado
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-medium text-indigo-400 uppercase opacity-0 group-hover/header:opacity-100 transition-opacity">
+                                          Clique para selecionar
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
                                 </td>
-                              ))}
-                              {isEditMode && <td className="bg-gray-50/30"></td>}
-                            </tr>
-                          ))}
+                              </tr>
+                              {group.itens.map((item, idx) => renderRow(item, idx))}
+                            </Fragment>
+                          ))
+                        ) : (
+                          data.map((item, idx) => renderRow(item, idx))
+                        )}
 
-                          {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
-                          {hasTotalsField && data.length > 0 && (
-                            <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
-                              {displayColumns.map((colName, idx) => {
-                                const field = fieldMetaMap.get(colName);
-                                const isCurrency = field?.format_mask === 'currency';
+                        {/* Linhas vazias para preencher o card (sem bordas internas) */}
+                        {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
+                          <tr key={`empty-${i}`} style={{ height: '53px' }}>
+                            {displayColumns.map((colName) => (
+                              <td key={`empty-${i}-${colName}`} className="px-6 whitespace-nowrap text-sm">
+                                &nbsp;
+                              </td>
+                            ))}
+                            {isEditMode && <td className="bg-gray-50/30"></td>}
+                          </tr>
+                        ))}
 
-                                let content = '';
-                                if (totals && totals[colName] !== undefined && totals[colName] !== null) {
-                                  content = isCurrency ? formatCurrency(totals[colName]) : totals[colName];
-                                } else if (idx === 0) {
-                                  content = 'TOTAIS';
-                                }
+                        {/* Rodapé de Totais (Agora dentro do tbody para ocupar a última linha) */}
+                        {hasTotalsField && data.length > 0 && (
+                          <tr className="bg-gray-50 border-t-2 border-gray-200 font-bold">
+                            {displayColumns.map((colName, idx) => {
+                              const field = fieldMetaMap.get(colName);
+                              const isCurrency = field?.format_mask === 'currency';
 
-                                return (
-                                  <td
-                                    key={`total-${colName}`}
-                                    className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-left"
-                                  >
-                                    {content}
-                                  </td>
-                                );
-                              })}
-                              {isEditMode && <td className="bg-gray-50/30"></td>}
-                            </tr>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </>
+                              let content = '';
+                              if (totals && totals[colName] !== undefined && totals[colName] !== null) {
+                                content = isCurrency ? formatCurrency(totals[colName]) : totals[colName];
+                              } else if (idx === 0) {
+                                content = 'TOTAIS';
+                              }
+
+                              return (
+                                <td
+                                  key={`total-${colName}`}
+                                  className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-left"
+                                >
+                                  {content}
+                                </td>
+                              );
+                            })}
+                            {isEditMode && <td className="bg-gray-50/30"></td>}
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })()
                 )}
               </tbody>
             </table>

@@ -1266,6 +1266,10 @@ def list_items(
         for i, sb in enumerate(sort_by_list):
             so = sort_order_list[i] if i < len(sort_order_list) else (sort_order_list[0] if sort_order_list else "desc")
             
+            # Se a coluna solicitada for 'id' e o modelo possuir 'id_sequencial', mapeia para 'id_sequencial'
+            if sb == "id" and hasattr(model, "id_sequencial"):
+                sb = "id_sequencial"
+
             sort_col = None
             # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
             if "." in sb:
@@ -1325,21 +1329,23 @@ def list_items(
 
         # Garante desempate determinístico pela chave primária (ID) para evitar duplicações na paginação
         model = registry["model"]
-        has_id_sort = any(sb == "id" or sb.endswith(".id") for sb in sort_by_list)
-        if not has_id_sort and hasattr(model, "id"):
+        has_id_sort = any(sb in ["id", "id_sequencial"] or sb.endswith(".id") or sb.endswith(".id_sequencial") for sb in sort_by_list)
+        default_id_attr = getattr(model, "id_sequencial", None) if hasattr(model, "id_sequencial") else getattr(model, "id", None)
+        if not has_id_sort and default_id_attr is not None:
             last_order = sort_order_list[-1] if sort_order_list else "desc"
             if last_order == "desc":
-                order_by_clauses.append(model.id.desc().nulls_last())
+                order_by_clauses.append(default_id_attr.desc().nulls_last())
             else:
-                order_by_clauses.append(model.id.asc().nulls_last())
+                order_by_clauses.append(default_id_attr.asc().nulls_last())
 
         if order_by_clauses:
             base_query = base_query.order_by(*order_by_clauses)
         else:
-            base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
+            base_query = base_query.order_by(default_id_attr.desc().nulls_last() if default_id_attr is not None else registry["model"].id.desc().nulls_last())
     else:
-        # Ordenação padrão (ID desc) se não especificado
-        base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
+        # Ordenação padrão (id_sequencial desc ou ID desc) se não especificado
+        default_id_attr = getattr(registry["model"], "id_sequencial", None) if hasattr(registry["model"], "id_sequencial") else getattr(registry["model"], "id", None)
+        base_query = base_query.order_by(default_id_attr.desc().nulls_last() if default_id_attr is not None else registry["model"].id.desc().nulls_last())
 
     # 5. Obter a contagem total (removendo ordenação para otimizar e evitar conflito no PostgreSQL)
     total_count = base_query.order_by(None).count()
@@ -1676,6 +1682,10 @@ def export_items_to_csv(
         for i, sb in enumerate(sort_by_list):
             so = sort_order_list[i] if i < len(sort_order_list) else (sort_order_list[0] if sort_order_list else "desc")
             
+            # Se a coluna solicitada for 'id' e o modelo possuir 'id_sequencial', mapeia para 'id_sequencial'
+            if sb == "id" and hasattr(model, "id_sequencial"):
+                sb = "id_sequencial"
+
             sort_col = None
             # Caso 1: Notação de ponto (ex: 'cliente.nome_razao')
             if "." in sb:
@@ -1733,12 +1743,23 @@ def export_items_to_csv(
                     else:
                         order_by_clauses.append(expr.asc().nulls_last())
 
+        model = registry["model"]
+        has_id_sort = any(sb in ["id", "id_sequencial"] or sb.endswith(".id") or sb.endswith(".id_sequencial") for sb in sort_by_list)
+        default_id_attr = getattr(model, "id_sequencial", None) if hasattr(model, "id_sequencial") else getattr(model, "id", None)
+        if not has_id_sort and default_id_attr is not None:
+            last_order = sort_order_list[-1] if sort_order_list else "desc"
+            if last_order == "desc":
+                order_by_clauses.append(default_id_attr.desc().nulls_last())
+            else:
+                order_by_clauses.append(default_id_attr.asc().nulls_last())
+
         if order_by_clauses:
             base_query = base_query.order_by(*order_by_clauses)
         else:
-            base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
+            base_query = base_query.order_by(default_id_attr.desc().nulls_last() if default_id_attr is not None else registry["model"].id.desc().nulls_last())
     else:
-        base_query = base_query.order_by(registry["model"].id.desc().nulls_last())
+        default_id_attr = getattr(registry["model"], "id_sequencial", None) if hasattr(registry["model"], "id_sequencial") else getattr(registry["model"], "id", None)
+        base_query = base_query.order_by(default_id_attr.desc().nulls_last() if default_id_attr is not None else registry["model"].id.desc().nulls_last())
 
     # 5. Busca TODOS os itens (sem paginação)
     items = base_query.all()
@@ -2905,6 +2926,16 @@ def update_item(
                         import logging as _logging
                         _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
 
+                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
+                if getattr(item, 'shopee_order_sn', None):
+                    try:
+                        from app.core.service.shopee_service import ShopeeService
+                        shopee_svc = ShopeeService(db, current_user.id_empresa)
+                        shopee_svc.update_shopee_order_status(item)
+                    except Exception as e:
+                        import logging as _logging
+                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")
+
         # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI em qualquer alteração de pedido
         if model_name == "pedidos":
             try:
@@ -2963,13 +2994,11 @@ def list_field_options(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Lista as opções salvas para um campo específico."""
-    # Lógica para compartilhar opções de 'caixa_destino_origem' entre Pedidos e Contas
+    # Lógica para compartilhar opções de Caixa/Banco ('caixa_padrao' e 'caixa_destino_origem')
     target_model = model_name
     target_field = field_name
 
-    if field_name == 'caixa_destino_origem' and model_name == 'pedidos':
-        target_model = 'contas'
-    elif field_name == 'caixa_padrao' and model_name == 'meli_configuracoes':
+    if field_name in ('caixa_padrao', 'caixa_destino_origem'):
         target_model = 'contas'
         target_field = 'caixa_destino_origem'
 
@@ -2993,13 +3022,11 @@ def create_field_option(
             detail="Apenas administradores podem criar novas opções para o dropdown."
         )
 
-    # Lógica para compartilhar opções de 'caixa_destino_origem' entre Pedidos e Contas
+    # Lógica para compartilhar opções de Caixa/Banco ('caixa_padrao' e 'caixa_destino_origem')
     target_model = option.model_name
     target_field = option.field_name
 
-    if option.field_name == 'caixa_destino_origem' and option.model_name == 'pedidos':
-        target_model = 'contas'
-    elif option.field_name == 'caixa_padrao' and option.model_name == 'meli_configuracoes':
+    if option.field_name in ('caixa_padrao', 'caixa_destino_origem'):
         target_model = 'contas'
         target_field = 'caixa_destino_origem'
 

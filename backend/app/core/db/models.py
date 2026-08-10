@@ -80,6 +80,7 @@ class CadastroTipoCadastroEnum(str, enum.Enum):
     
 class CadastroIndicadorIEEnum(str, enum.Enum):
     contribuinte_icms = "1"
+    isento = "2"
     nao_contribuinte = "9"
 
 # Para Produto 
@@ -1076,12 +1077,25 @@ class Pedido(Base):
     }, default=55) # 55=NFe, 65=NFCe
 
     # Campos Integração Intelipost
+    id_pedido_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Pedido (Intelipost)'})
+    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Ordem Envio (Intelipost)'})
+    intelipost_criado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Criado Intelipost?'})
+
     delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Método Entrega (Intelipost)'})
     quote_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Cotação (Intelipost)'})
-    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Ordem Envio (Intelipost)'})
-    id_pedido_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Pedido (Intelipost)'})
     status_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Status (Intelipost)'})
-    intelipost_criado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Criado Intelipost?'})
+
+    intelipost_tracking_code = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Código Rastreio (Intelipost)'})
+    intelipost_data_entrega_estimada = Column(Date, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Data Prevista Entrega (Intelipost)'})
+    intelipost_data_ocorrencia = Column(DateTime(timezone=True), nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Data/Hora Ocorrência (Intelipost)'})
+
+    intelipost_tracking_url = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'URL Rastreio (Intelipost)', 'col_span': 2})
+    intelipost_historico = Column(JSON, default=list, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Histórico Eventos (Intelipost)', 'component': 'file'})
+
+    intelipost_mensagem = Column(Text, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Última Ocorrência / Mensagem (Intelipost)', 'col_span': 3})
+
+
+
     
     # Campos Integração Mercado Livre (Aba Integrações)
     meli_order_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'ID Pedido ML'})
@@ -1092,6 +1106,14 @@ class Pedido(Base):
     meli_logistic_type = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Tipo Logística ML'})
     meli_shipping_service = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Serviço Frete ML'})
     meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'XML enviado ML?'})
+
+    # Campos Integração Shopee (Aba Integrações)
+    shopee_order_sn = Column(String, nullable=True, index=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'ID Pedido Shopee (Order SN)'})
+    shopee_order_status = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Status Shopee'})
+    shopee_buyer_username = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Comprador Shopee'})
+    shopee_tracking_number = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Código Rastreio Shopee'})
+    shopee_shipping_carrier = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Transportadora Shopee'})
+    shopee_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'XML enviado Shopee?'})
     
     # Campos de Status de Integração (Elastic Email)
     email_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Elastic Email', 'label': 'E-mail enviado?'})
@@ -1283,12 +1305,13 @@ class MeliConfiguracao(Base):
     redirect_uri = Column(String, nullable=True, info={'tab': 'Geral', 'label': 'Redirect URI', 'placeholder': ''})
     
     # Aba: Preferências
-    cliente_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Cliente Padrão (Fallback)', 'placeholder': 'Selecione...'})
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    cliente_padrao_id = Column(Integer, nullable=True, info={'tab': 'Preferências', 'label': 'Cliente Padrão (Fallback)', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'})
+    vendedor_padrao_id = Column(Integer, nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     caixa_padrao = Column(String, nullable=True, 
                  info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
+    filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
 
     # Aba: Atualização de Status ML
     regras_atualizacao_status = Column(JSON, nullable=True, default=list, 
@@ -1338,12 +1361,12 @@ class MagentoConfiguracao(Base):
     store_view_code = Column(String, default='default', info={'tab': 'Conexão', 'label': 'Código da Store View (ex: default)', 'placeholder': 'default'})
     
     # Aba: Preferências
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    vendedor_padrao_id = Column(Integer, nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
-    
+    caixa_padrao = Column(String, nullable=True, info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
     payment_method_contains = Column(String, nullable=True, info={'tab': 'Preferências', 'label': 'Filtrar Método de Pagamento (Contém)', 'placeholder': 'Ex: credit_card, pix'})
-    filtros_padrao = Column(JSON, nullable=True, default=[], info={'tab': 'Preferências', 'label': 'Filtros Padrão de Importação', 'component': 'default_filters'})
+    filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
 
     # Controle
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1373,11 +1396,11 @@ class TiktokConfiguracao(Base):
     shop_id = Column(String, nullable=True, info={'tab': 'Conexão', 'label': 'Shop ID', 'placeholder': ''})
     
     # Aba: Preferências
-    vendedor_padrao_id = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...'})
+    vendedor_padrao_id = Column(Integer, nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'})
     situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
-    
-    filtros_padrao = Column(JSON, nullable=True, default=[], info={'tab': 'Preferências', 'label': 'Filtros Padrão de Importação', 'component': 'default_filters'})
+    caixa_padrao = Column(String, nullable=True, info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
+    filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
 
     # Controle
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1390,6 +1413,47 @@ class TiktokConfiguracao(Base):
 # Alias para compatibilidade com o dispatcher
 Tiktok_configuracao = TiktokConfiguracao
 Tiktok_configuracoes = TiktokConfiguracao
+
+
+class ShopeeConfiguracao(Base):
+    """
+    Modelo para armazenar as configurações da integração com a plataforma Shopee (OpenAPI v2).
+    """
+    __tablename__ = "shopee_configuracoes"
+    __label__ = "Configuração Shopee"
+    __label_plural__ = "Configurações Shopee"
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
+    
+    # Aba: Conexão
+    partner_id = Column(String, nullable=False, info={'tab': 'Conexão', 'label': 'Partner ID', 'placeholder': 'Cole seu Partner ID'})
+    partner_key = Column(EncryptedString, nullable=False, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Partner Key', 'placeholder': 'Cole sua Partner Key'})
+    shop_id = Column(String, nullable=True, info={'tab': 'Conexão', 'label': 'Shop ID', 'placeholder': '(Preenchido após autorização)'})
+    environment = Column(String, default="production", info={'tab': 'Conexão', 'label': 'Ambiente', 'component': 'select', 'options': [{'label': 'Produção', 'value': 'production'}, {'label': 'Sandbox (Teste)', 'value': 'sandbox'}]})
+    access_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Access Token', 'placeholder': ''})
+    refresh_token = Column(EncryptedString, nullable=True, info={'tab': 'Conexão', 'ui_type': 'password', 'label': 'Refresh Token', 'placeholder': ''})
+    token_expires_at = Column(DateTime(timezone=True), nullable=True, info={'visible': False})
+    refresh_expires_at = Column(DateTime(timezone=True), nullable=True, info={'visible': False})
+
+    # Aba: Preferências
+    vendedor_padrao_id = Column(Integer, nullable=True, info={'tab': 'Preferências', 'label': 'Vendedor Padrão', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'})
+    situacao_pedido_inicial = Column(SQLAlchemyEnum(PedidoSituacaoEnum, native_enum=True), nullable=False, default=PedidoSituacaoEnum.orcamento, 
+                      info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
+    caixa_padrao = Column(String, nullable=True, info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
+    filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
+
+    # Controle
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    
+    # Relacionamentos
+    empresa = relationship("Empresa", backref="shopee_config")
+
+# Alias para compatibilidade com o dispatcher
+Shopee_configuracao = ShopeeConfiguracao
+Shopee_configuracoes = ShopeeConfiguracao
 
 # Alias para ClassificacaoContabil
 Classificacao_contabil = ClassificacaoContabil

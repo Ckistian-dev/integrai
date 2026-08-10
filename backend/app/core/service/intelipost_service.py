@@ -558,8 +558,16 @@ class IntelipostService:
             response.raise_for_status()
             res_json = response.json()
             pedido.intelipost_criado = True
-            if isinstance(res_json.get("content"), dict) and res_json["content"].get("id"):
-                pedido.intelipost_id = str(res_json["content"]["id"])
+            if isinstance(res_json.get("content"), dict):
+                content = res_json["content"]
+                if content.get("id"):
+                    pedido.intelipost_id = str(content["id"])
+                if content.get("tracking_code"):
+                    pedido.intelipost_tracking_code = str(content["tracking_code"])
+                if content.get("tracking_url"):
+                    pedido.intelipost_tracking_url = str(content["tracking_url"])
+            if 'estimated_dt' in locals() and estimated_dt:
+                pedido.intelipost_data_entrega_estimada = estimated_dt.date()
             self.db.commit()
             return res_json
         except httpx.HTTPStatusError as e:

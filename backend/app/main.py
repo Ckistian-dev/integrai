@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI, Response, status
 from app.api.v1.api import api_router as v1_router
 from app.core.db.database import Base, engine
+import app.core.db.models as models
 from app.api.v1.endpoints import nfe, dfe # Importa os endpoints
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.service.backup_service import start_backup_scheduler

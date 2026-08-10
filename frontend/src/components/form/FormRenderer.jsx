@@ -17,7 +17,7 @@ import {
   ColorInput
 } from '../ui/InputFields';
 import { RuleBuilderInput } from '../ui/RuleBuilderInput';
-import { CreatableSelectInput } from '../ui/CreatableSelectInput';
+import { CreatableSelectInput, MultiCreatableSelectInput } from '../ui/CreatableSelectInput';
 import { StateTaxRulesInput } from '../ui/StateTaxRulesInput';
 import { PermissionsBuilderInput } from '../ui/PermissionsBuilderInput';
 import { ReportBuilderInput } from '../ui/ReportBuilderInput';
@@ -262,6 +262,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
     case 'creatable_select':
       return <CreatableSelectInput {...props} value={value} />;
 
+    case 'creatable_select_multi':
+      return <MultiCreatableSelectInput {...props} value={value} />;
+
     case 'rule_builder':
       return <RuleBuilderInput {...props} value={value} />;
 
@@ -278,6 +281,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
       return <ReportBuilderInput {...props} value={value} formData={formData} />;
 
     case 'filtros_padrao':
+      if (field.component === 'creatable_select_multi' || field.type === 'creatable_select_multi') {
+        return <MultiCreatableSelectInput {...props} value={value} />;
+      }
       return <DefaultFiltersInput {...props} value={value} options={field.options} />;
 
     case 'order_items':
@@ -290,6 +296,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
       return <MeliStatusRulesInput {...props} value={value} />;
 
     default:
+      if (field.component === 'file') {
+        return <FileInput {...props} value={value} fileName={field.filename_field ? formData[field.filename_field] : null} />;
+      }
       if (field.component === 'payment_methods') {
         return <PaymentMethodsInput {...props} value={value} formData={formData} />;
       }

@@ -523,6 +523,12 @@ class PedidoBase(BaseModel):
     intelipost_id: Optional[str] = None
     id_pedido_intelipost: Optional[str] = None
     status_intelipost: Optional[str] = None
+    intelipost_tracking_code: Optional[str] = None
+    intelipost_tracking_url: Optional[str] = None
+    intelipost_mensagem: Optional[str] = None
+    intelipost_data_ocorrencia: Optional[datetime] = None
+    intelipost_data_entrega_estimada: Optional[date] = None
+    intelipost_historico: Optional[List[Dict[str, Any]]] = None
 
     meli_order_id: Optional[str] = None
     meli_pack_id: Optional[str] = None
@@ -531,6 +537,13 @@ class PedidoBase(BaseModel):
     meli_tracking_number: Optional[str] = None
     meli_logistic_type: Optional[str] = None
     meli_shipping_service: Optional[str] = None
+
+    shopee_order_sn: Optional[str] = None
+    shopee_order_status: Optional[str] = None
+    shopee_buyer_username: Optional[str] = None
+    shopee_tracking_number: Optional[str] = None
+    shopee_shipping_carrier: Optional[str] = None
+    shopee_xml_enviado: Optional[bool] = False
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -609,6 +622,12 @@ class PedidoUpdate(BaseModel):
     intelipost_id: Optional[str] = None
     id_pedido_intelipost: Optional[str] = None
     status_intelipost: Optional[str] = None
+    intelipost_tracking_code: Optional[str] = None
+    intelipost_tracking_url: Optional[str] = None
+    intelipost_mensagem: Optional[str] = None
+    intelipost_data_ocorrencia: Optional[datetime] = None
+    intelipost_data_entrega_estimada: Optional[date] = None
+    intelipost_historico: Optional[List[Dict[str, Any]]] = None
 
     meli_order_id: Optional[str] = None
     meli_pack_id: Optional[str] = None
@@ -877,6 +896,7 @@ class MeliConfiguracaoBase(BaseModel):
     vendedor_padrao_id: Optional[int] = None
     situacao_pedido_inicial: Optional[str] = "Orçamento"
     caixa_padrao: Optional[str] = None
+    filtros_padrao: Optional[Any] = []
     regras_atualizacao_status: Optional[List[Dict[str, Any]]] = []
 
 class MeliConfiguracaoCreate(MeliConfiguracaoBase):
@@ -921,8 +941,9 @@ class MagentoConfiguracaoBase(BaseModel):
     store_view_code: Optional[str] = 'default'
     vendedor_padrao_id: Optional[int] = None
     situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
+    caixa_padrao: Optional[str] = None
     payment_method_contains: Optional[str] = None
-    filtros_padrao: Optional[List[Dict[str, Any]]] = []
+    filtros_padrao: Optional[Any] = []
 
 class MagentoConfiguracaoCreate(MagentoConfiguracaoBase):
     pass
@@ -936,8 +957,9 @@ class MagentoConfiguracaoUpdate(MagentoConfiguracaoBase):
     store_view_code: Optional[str] = None
     vendedor_padrao_id: Optional[int] = None
     situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = None
+    caixa_padrao: Optional[str] = None
     payment_method_contains: Optional[str] = None
-    filtros_padrao: Optional[List[Dict[str, Any]]] = None
+    filtros_padrao: Optional[Any] = None
 
 class MagentoConfiguracao(MagentoConfiguracaoBase):
     id: int
@@ -974,7 +996,8 @@ class TiktokConfiguracaoBase(BaseModel):
     shop_id: Optional[str] = None
     vendedor_padrao_id: Optional[int] = None
     situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
-    filtros_padrao: Optional[List[Dict[str, Any]]] = []
+    caixa_padrao: Optional[str] = None
+    filtros_padrao: Optional[Any] = []
 
 class TiktokConfiguracaoCreate(TiktokConfiguracaoBase):
     pass
@@ -982,6 +1005,8 @@ class TiktokConfiguracaoCreate(TiktokConfiguracaoBase):
 class TiktokConfiguracaoUpdate(TiktokConfiguracaoBase):
     app_key: Optional[str] = None
     app_secret: Optional[str] = None
+    caixa_padrao: Optional[str] = None
+    filtros_padrao: Optional[Any] = None
 
 class TiktokConfiguracao(TiktokConfiguracaoBase):
     id: int
@@ -1005,6 +1030,55 @@ Tiktok_configuracao = TiktokConfiguracao
 Tiktok_configuracoes = TiktokConfiguracao
 Tiktok_configuracaoCreate = TiktokConfiguracaoCreate
 Tiktok_configuracaoUpdate = TiktokConfiguracaoUpdate
+
+
+class ShopeeConfiguracaoBase(BaseModel):
+    partner_id: str
+    partner_key: str
+    shop_id: Optional[str] = None
+    environment: Optional[str] = "production"
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    refresh_expires_at: Optional[datetime] = None
+    vendedor_padrao_id: Optional[int] = None
+    situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
+    caixa_padrao: Optional[str] = None
+    filtros_padrao: Optional[Any] = []
+
+class ShopeeConfiguracaoCreate(ShopeeConfiguracaoBase):
+    pass
+
+class ShopeeConfiguracaoUpdate(ShopeeConfiguracaoBase):
+    partner_id: Optional[str] = None
+    partner_key: Optional[str] = None
+    caixa_padrao: Optional[str] = None
+    filtros_padrao: Optional[Any] = None
+
+class ShopeeConfiguracao(ShopeeConfiguracaoBase):
+    id: int
+    id_empresa: int
+    criado_em: datetime
+    atualizado_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class ShopeePedidoListItem(BaseModel):
+    order_sn: str
+    create_time: datetime
+    order_status: str
+    payment_method: Optional[str] = None
+    total_amount: float
+    buyer_username: Optional[str] = None
+    tracking_number: Optional[str] = None
+    shipping_carrier: Optional[str] = None
+    ja_importado: bool = False
+
+Shopee_configuracao = ShopeeConfiguracao
+Shopee_configuracoes = ShopeeConfiguracao
+Shopee_configuracaoCreate = ShopeeConfiguracaoCreate
+Shopee_configuracaoUpdate = ShopeeConfiguracaoUpdate
 
 # Aliases para ClassificacaoContabil
 Classificacao_contabil = ClassificacaoContabil
@@ -1195,6 +1269,7 @@ def update_all_forward_refs():
     MeliConfiguracaoBase.model_rebuild()
     MagentoConfiguracaoBase.model_rebuild()
     TiktokConfiguracaoBase.model_rebuild()
+    ShopeeConfiguracaoBase.model_rebuild()
     OpcaoCampo.model_rebuild()
     UsuarioPreferencia.model_rebuild()
     Relatorio.model_rebuild()

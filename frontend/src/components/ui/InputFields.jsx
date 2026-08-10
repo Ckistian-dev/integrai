@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Eye, EyeOff, Trash2, ChevronDown, ChevronUp, CheckCircle2, Upload, Download, Info, Plus, X, Palette, Brackets, Binary, Calculator } from 'lucide-react';
 import AsyncSelect from 'react-select/async';
 import Select from 'react-select';
+import CreatableSelect from 'react-select/creatable';
 import api from '../../api/axiosConfig';
 
 import IMask from 'imask';
@@ -881,62 +882,87 @@ export const DefaultFiltersInput = ({ field, value: activeFilters = [], onChange
 
     const commonClasses = "w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none";
 
-    // Multi-seleção (ex: Status do Pedido)
-    if (fieldConfig.type === 'multiselect') {
-      const selectOptions = fieldConfig.options || [];
-      const selectedValues = Array.isArray(currentValue)
-        ? currentValue.map(v => selectOptions.find(o => o.value === v) || { value: v, label: v })
-        : [];
-
-      return (
-        <div className="space-y-2">
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => handleFilterChange(fieldConfig.value, selectOptions.map(o => o.value))}
-              className="text-[10px] uppercase tracking-wider text-blue-600 hover:text-blue-800 font-bold"
-            >
-              Selecionar Todos
-            </button>
-          </div>
-          <Select
-            isMulti
-            options={selectOptions}
-            closeMenuOnSelect={false}
-            value={selectedValues}
-            onChange={(opts) => handleFilterChange(fieldConfig.value, opts ? opts.map(o => o.value) : [])}
-            placeholder="Selecione os itens..."
-            className="text-sm"
-            menuPortalTarget={document.body}
-            styles={{ menuPortal: base => ({ ...base, zIndex: 9999 }) }}
-          />
-        </div>
-      );
-    }
-
     // Data
     if (fieldConfig.type === 'date') {
       return (
         <input
           type="date"
           autoComplete="off"
-          value={currentValue}
+          value={Array.isArray(currentValue) ? (currentValue[0] || '') : currentValue}
           onChange={(e) => handleFilterChange(fieldConfig.value, e.target.value)}
           className={commonClasses}
         />
       );
     }
 
-    // Texto ou Número padrão
+    // Para todos os outros tipos (text, select, multiselect, etc), usamos CreatableSelect com suporte a múltiplos valores (OU)
+    const selectOptions = fieldConfig.options || [];
+
+    // Normaliza os valores atuais em um array de strings
+    const currentArrayValues = Array.isArray(currentValue)
+      ? currentValue
+      : (typeof currentValue === 'string' && currentValue.trim() !== '' ? currentValue.split(',').map(s => s.trim()) : []);
+
+    // Transforma os valores para o formato { value, label } exigido pelo CreatableSelect
+    const selectedValues = currentArrayValues.map(v => {
+      const foundOption = selectOptions.find(o => String(o.value) === String(v));
+      return foundOption ? foundOption : { value: v, label: v };
+    });
+
     return (
-      <input
-        type={fieldConfig.type === 'number' ? 'number' : 'text'}
-        autoComplete="off"
-        value={currentValue}
-        onChange={(e) => handleFilterChange(fieldConfig.value, e.target.value)}
-        placeholder={`Filtrar por ${fieldConfig.label.toLowerCase()}...`}
-        className={commonClasses}
-      />
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+            💡 Filtro com lógica "OU" (digite e pressione Enter para adicionar múltiplos valores)
+          </span>
+          {selectOptions.length > 0 && (
+            <button
+              type="button"
+              onClick={() => handleFilterChange(fieldConfig.value, selectOptions.map(o => o.value))}
+              className="text-[10px] uppercase tracking-wider text-blue-600 hover:text-blue-800 font-bold ml-2"
+            >
+              Selecionar Todos
+            </button>
+          )}
+        </div>
+        <CreatableSelect
+          isMulti
+          options={selectOptions}
+          closeMenuOnSelect={false}
+          value={selectedValues}
+          onChange={(opts) => {
+            const vals = opts ? opts.map(o => o.value) : [];
+            handleFilterChange(fieldConfig.value, vals);
+          }}
+          placeholder={`Digite um ou mais valores para ${fieldConfig.label.toLowerCase()}...`}
+          formatCreateLabel={(inputValue) => `Adicionar "${inputValue}"`}
+          className="text-sm"
+          menuPortalTarget={document.body}
+          styles={{
+            menuPortal: base => ({ ...base, zIndex: 9999 }),
+            multiValue: (base) => ({
+              ...base,
+              backgroundColor: '#eff6ff',
+              borderRadius: '0.375rem',
+              border: '1px solid #bfdbfe'
+            }),
+            multiValueLabel: (base) => ({
+              ...base,
+              color: '#1e40af',
+              fontWeight: 500,
+              fontSize: '0.85rem'
+            }),
+            multiValueRemove: (base) => ({
+              ...base,
+              color: '#3b82f6',
+              ':hover': {
+                backgroundColor: '#dbeafe',
+                color: '#1d4ed8'
+              }
+            })
+          }}
+        />
+      </div>
     );
   };
 
@@ -1310,15 +1336,110 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
   );
 };
 
-/** * Componente de Upload de Arquivo (Converte para Base64) */
-export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, ...props }) => {
+/**
+ * Formata o objeto ou lista de histórico em texto estruturado e bonito para download em .txt
+ */
+const formatHistoryTxt = (val, formData) => {
+  const pedidoRef =
+    formData?.id_pedido_intelipost ||
+    formData?.numero_pedido ||
+    formData?.id_sequencial ||
+    formData?.id ||
+    '';
+
+  const now = new Date();
+  const dateFormatted = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR');
+
+  let list = [];
+  if (Array.isArray(val)) {
+    list = val;
+  } else if (val && typeof val === 'object') {
+    list = [val];
+  } else if (typeof val === 'string' && val.trim()) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) list = parsed;
+      else if (parsed && typeof parsed === 'object') list = [parsed];
+      else return val;
+    } catch {
+      return val;
+    }
+  }
+
+  let text = `================================================================================\n`;
+  text += `              HISTÓRICO DE OCORRÊNCIAS DE ENTREGA - INTELIPOST\n`;
+  text += `================================================================================\n`;
+  if (pedidoRef) {
+    text += `Pedido / Referência           : ${pedidoRef}\n`;
+  }
+  text += `Data de Emissão do Relatório  : ${dateFormatted}\n`;
+  text += `Total de Ocorrências Gravadas : ${list.length}\n`;
+  text += `================================================================================\n\n`;
+
+  if (list.length === 0) {
+    text += `Nenhuma ocorrência foi registrada no histórico até o momento.\n`;
+    return text;
+  }
+
+  const formatItemDate = (dStr) => {
+    if (!dStr) return 'N/A';
+    try {
+      const d = new Date(dStr);
+      return isNaN(d.getTime()) ? String(dStr) : d.toLocaleString('pt-BR');
+    } catch {
+      return String(dStr);
+    }
+  };
+
+  list.forEach((item, idx) => {
+    text += `--------------------------------------------------------------------------------\n`;
+    text += ` OCORRÊNCIA #${idx + 1}\n`;
+    text += `--------------------------------------------------------------------------------\n`;
+    if (item.status || item.state) {
+      text += ` • Status                : ${item.status || 'N/A'}${item.state ? ` (${item.state})` : ''}\n`;
+    }
+    if (item.micro_state) {
+      text += ` • Detalhe (Micro State) : ${item.micro_state}\n`;
+    }
+    if (item.provider_message) {
+      text += ` • Mensagem Transportadora: ${item.provider_message}\n`;
+    }
+    if (item.event_date) {
+      text += ` • Data do Evento        : ${formatItemDate(item.event_date)}\n`;
+    }
+    if (item.tracking_code) {
+      text += ` • Código de Rastreio    : ${item.tracking_code}\n`;
+    }
+    if (item.tracking_url) {
+      text += ` • Link de Rastreio      : ${item.tracking_url}\n`;
+    }
+    if (item.volume_number) {
+      text += ` • Número do Volume      : ${item.volume_number}\n`;
+    }
+    if (item.recebido_em) {
+      text += ` • Registrado no ERP em  : ${formatItemDate(item.recebido_em)}\n`;
+    }
+    text += `\n`;
+  });
+
+  text += `================================================================================\n`;
+  text += `                              FIM DO HISTÓRICO\n`;
+  text += `================================================================================\n`;
+
+  return text;
+};
+
+/** * Componente de Upload de Arquivo (Converte para Base64 / Suporta downloads) */
+export const FileInput = ({ field, value, onChange, error, fileName, formData, onKeyDown, ...props }) => {
   const { label, name, required, placeholder } = field || {};
   const fileInputRef = React.useRef(null);
+
+  const isHistoryField = (name && name.toLowerCase().includes('historico')) || Array.isArray(value) || (typeof value === 'object' && value !== null);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (field.filename_field) {
+      if (field?.filename_field) {
         onChange({
           target: {
             name: field.filename_field,
@@ -1349,18 +1470,32 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     e.stopPropagation();
     if (!value) return;
 
+    if (isHistoryField) {
+      const formattedTxt = formatHistoryTxt(value, formData);
+      const pedidoRef = formData?.id_pedido_intelipost || formData?.numero_pedido || formData?.id_sequencial || formData?.id || 'pedido';
+      const filename = `historico_intelipost_pedido_${pedidoRef}.txt`;
+
+      const link = document.createElement('a');
+      link.href = `data:text/plain;charset=utf-8,${encodeURIComponent(formattedTxt)}`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
     let mimeType = 'text/plain';
     let extension = 'txt';
     let isBase64 = false;
 
-    if (name.includes('xml')) {
+    if (name && name.includes('xml')) {
       mimeType = 'application/xml';
       extension = 'xml';
-    } else if (name.includes('pdf')) {
+    } else if (name && name.includes('pdf')) {
       mimeType = 'application/pdf';
       extension = 'pdf';
       isBase64 = true;
-    } else if (name.includes('certificado')) {
+    } else if (name && name.includes('certificado')) {
       mimeType = 'application/x-pkcs12';
       extension = 'pfx';
       isBase64 = true;
@@ -1369,7 +1504,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     const link = document.createElement('a');
 
     if (isBase64) {
-      const cleanValue = value.replace(/^data:.*;base64,/, '');
+      const cleanValue = String(value).replace(/^data:.*;base64,/, '');
       link.href = `data:${mimeType};base64,${cleanValue}`;
     } else {
       link.href = `data:${mimeType};charset=utf-8,${encodeURIComponent(value)}`;
@@ -1381,7 +1516,16 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
     document.body.removeChild(link);
   };
 
-  const displayText = fileName || (value ? "Arquivo disponível" : "");
+  let displayText = fileName;
+  if (!displayText) {
+    if (Array.isArray(value)) {
+      displayText = `historico_intelipost.txt (${value.length} ocorrência(s))`;
+    } else if (value && typeof value === 'object') {
+      displayText = `historico_intelipost.txt (1 ocorrência)`;
+    } else if (value) {
+      displayText = isHistoryField ? `historico_intelipost.txt` : "Arquivo disponível";
+    }
+  }
 
   return (
     <div className="flex flex-col">
@@ -1396,7 +1540,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, onKeyDown, 
           type="file"
           id={name}
           name={name}
-          accept=".pfx,.xml,.pdf"
+          accept=".pfx,.xml,.pdf,.txt"
           ref={fileInputRef}
           onChange={handleFileChange}
           className="hidden"

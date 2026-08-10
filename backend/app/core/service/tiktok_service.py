@@ -162,25 +162,61 @@ class TiktokService:
         if active_filters:
             filtered_orders = []
             for order in orders:
+                # 1. Se active_filters for lista de strings (CreatableSelect Multi: ["AppMax", "MercadoPago"]):
+                if isinstance(active_filters, list) and all(isinstance(item, str) for item in active_filters):
+                    terms = [str(t).lower().strip() for t in active_filters if str(t).strip()]
+                    if not terms:
+                        filtered_orders.append(order)
+                        continue
+                    order_text = json.dumps(order, default=str, ensure_ascii=False).lower()
+                    # Lógica OU: se QUALQUER termo estiver no texto do pedido, inclui
+                    if any(term in order_text for term in terms):
+                        filtered_orders.append(order)
+                    continue
+
+                # 2. Se for estrutura de filtros em formato dict:
                 match = True
                 for filtro in active_filters:
+                    if isinstance(filtro, str):
+                        term = filtro.lower().strip()
+                        order_text = json.dumps(order, default=str, ensure_ascii=False).lower()
+                        if term and term not in order_text:
+                            match = False
+                        continue
+
                     field = filtro.get('field')
                     operator = filtro.get('operator', 'equals')
                     value = filtro.get('value', '')
                     
                     item_val = str(order.get(field) or "").lower()
-                    filter_val = str(value).lower()
 
-                    if operator == "contains":
-                        if filter_val not in item_val: match = False
-                    elif operator == "equals":
-                        if item_val != filter_val: match = False
-                    elif operator == "starts_with":
-                        if not item_val.startswith(filter_val): match = False
-                    elif operator == "ends_with":
-                        if not item_val.endswith(filter_val): match = False
-                    elif operator == "neq":
-                        if item_val == filter_val: match = False
+                    if isinstance(value, list):
+                        val_list = [str(v).lower() for v in value if str(v).strip()]
+                        if not val_list:
+                            continue
+                        if operator == "contains":
+                            if not any(v in item_val for v in val_list):
+                                match = False
+                        elif operator == "neq":
+                            if item_val in val_list:
+                                match = False
+                        else:  # equals ou padrao
+                            if item_val not in val_list:
+                                match = False
+                    else:
+                        filter_val = str(value).lower()
+                        if not filter_val:
+                            continue
+                        if operator == "contains":
+                            if filter_val not in item_val: match = False
+                        elif operator == "equals":
+                            if item_val != filter_val: match = False
+                        elif operator == "starts_with":
+                            if not item_val.startswith(filter_val): match = False
+                        elif operator == "ends_with":
+                            if not item_val.endswith(filter_val): match = False
+                        elif operator == "neq":
+                            if item_val == filter_val: match = False
                     
                     if not match:
                         break

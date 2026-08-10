@@ -1752,8 +1752,14 @@ class NFeService:
         # 3. Determina Tipo de Cliente
         tipo_cliente = RegraTipoClienteEnum.pf
         if cliente.tipo_pessoa == CadastroTipoPessoaEnum.juridica:
-            if cliente.indicador_ie == CadastroIndicadorIEEnum.contribuinte_icms:
+            raw_ie = str(cliente.inscricao_estadual or '').strip()
+            ie_clean = self._limpar_formatacao(raw_ie)
+            val_ind_ie = str(cliente.indicador_ie.value if hasattr(cliente.indicador_ie, 'value') else cliente.indicador_ie or '')
+            
+            if val_ind_ie == '1' or (ie_clean and raw_ie.upper() not in ['ISENTO', 'ISENTA']):
                 tipo_cliente = RegraTipoClienteEnum.pj_contribuinte
+            elif val_ind_ie == '2' or raw_ie.upper() in ['ISENTO', 'ISENTA']:
+                tipo_cliente = RegraTipoClienteEnum.pj_isento
             else:
                 tipo_cliente = RegraTipoClienteEnum.pj_nao_contribuinte
         
@@ -2120,15 +2126,28 @@ class NFeService:
             
             tipo_doc = 'CPF' if len(self._limpar_formatacao(cli_db.cpf_cnpj)) == 11 else 'CNPJ'
             
-            # Lógica simples para indicador IE
-            ind_ie = 9 # Não contribuinte
+            # Lógica para indicador IE e Inscrição Estadual
+            raw_ie = str(cli_db.inscricao_estadual or '').strip()
+            ie_clean = self._limpar_formatacao(raw_ie)
+            
+            ind_ie = 9 # Default: Não contribuinte
             if cli_db.indicador_ie:
-                # Mapeia seu Enum para o inteiro do PyNFE
-                # Enum values: '0', '1', '2', '9'
                 try:
-                    ind_ie = int(cli_db.indicador_ie.value)
+                    val_str = cli_db.indicador_ie.value if hasattr(cli_db.indicador_ie, 'value') else str(cli_db.indicador_ie)
+                    ind_ie = int(val_str)
                 except:
                     ind_ie = 9
+
+            # Ajustes inteligentes:
+            # 1. Se no cadastro a IE for 'ISENTO' / 'ISENTA' ou ind_ie for 2
+            if raw_ie.upper() in ['ISENTO', 'ISENTA'] or ind_ie == 2:
+                ind_ie = 2
+                ie_clean = None
+            # 2. Se houver dígitos de IE preenchidos no cadastro, força ind_ie = 1 (Contribuinte ICMS)
+            elif ie_clean:
+                ind_ie = 1
+            else:
+                ie_clean = None
 
             # Em homologação, a Razão Social do destinatário deve ser fixa (Regra SEFAZ)
             razao_social_cli = cli_db.nome_razao
@@ -2160,6 +2179,8 @@ class NFeService:
                 erros_cliente.append("Estado (UF)")
             if not cep_clean or len(cep_clean) != 8:
                 erros_cliente.append("CEP válido (8 dígitos)")
+            if ind_ie == 1 and not ie_clean:
+                erros_cliente.append("Inscrição Estadual (IE) válida para destinatário Contribuinte do ICMS")
                 
             if erros_cliente:
                 raise HTTPException(
@@ -2173,7 +2194,7 @@ class NFeService:
                 email=self._limpar_texto(cli_db.email or ''),
                 numero_documento=self._limpar_formatacao(cli_db.cpf_cnpj),
                 indicador_ie=ind_ie,
-                inscricao_estadual=self._limpar_formatacao(cli_db.inscricao_estadual),
+                inscricao_estadual=ie_clean or '',
                 endereco_logradouro=logradouro_clean,
                 endereco_numero=numero_clean,
                 endereco_complemento=complemento_clean,
@@ -3784,6 +3805,15 @@ class NFeService:
                 if cStat_err:
                     pedido.status_sefaz = f"{cStat_err} - {xMotivo_err}"
                     self.db.commit()
+
+                    if cStat_err == '232':
+                        msg_detalhada = (
+                            "Erro 232: IE do destinatário não informada. A SEFAZ identificou que o destinatário "
+                            "é Contribuinte do ICMS. Por favor, edite o cadastro do cliente, informe a Inscrição Estadual (IE) "
+                            "e ajuste o Indicador IE para 'Contribuinte ICMS'."
+                        )
+                        raise HTTPException(status_code=400, detail=msg_detalhada)
+
                     # 656 = Consumo Indevido (Too Many Requests)
                     status_code = 429 if cStat_err == '656' else 400
                     raise HTTPException(status_code=status_code, detail=f"{cStat_err} - {xMotivo_err}")
@@ -3796,6 +3826,8 @@ class NFeService:
             print(f"Erro NFe: {e}")
             import traceback
             traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise e
             raise HTTPException(status_code=500, detail=f"Erro ao emitir NFe: {str(e)}")
         
         finally:
@@ -4418,6 +4450,21 @@ class NFeService:
                         meli_res = {"success": False, "message": "ID do pedido ML não encontrado para envio do XML."}
                 except Exception as e:
                     meli_res = {"success": False, "message": f"Erro ao enviar para ML: {str(e)}"}
+
+            # --- Transmissão de XML NFe para a Shopee ---
+            if getattr(pedido, 'shopee_order_sn', None):
+                try:
+                    from app.core.service.shopee_service import ShopeeService
+                    shopee_service = ShopeeService(self.db, self.id_empresa)
+                    shopee_service.upload_xml(
+                        order_sn=pedido.shopee_order_sn,
+                        xml_content=xml_str,
+                        chave_acesso=chave_acesso,
+                        numero_nf=numero_nf
+                    )
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(f"Erro ao transmitir XML para a Shopee no pedido #{pedido.id}: {e}")
 
         # 2. Integração Intelipost (Shipment Order)
         # O pedido na intelipost deve ser sempre criado se houver configuração da integração

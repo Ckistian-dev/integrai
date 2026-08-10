@@ -759,10 +759,18 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
     const crumbs = [{ label: 'Home', path: '/dashboard' }];
 
     const singularName = metadata?.display_name_singular || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const pluralName = metadata?.display_name_plural || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     const currentPageLabel = isEditMode ? `Editar ${singularName}` : `Novo ${singularName}`;
 
     if (entry) {
-      crumbs.push({ label: entry.module, path: entry.modulePath || `/${modelName}` });
+      const isSameLabel = entry.module.toLowerCase() === pluralName.toLowerCase();
+      crumbs.push({ label: entry.module, path: entry.modulePath });
+
+      if (!isSameLabel && !modelName.endsWith('_configuracoes')) {
+        crumbs.push({ label: pluralName, path: `/${modelName}` });
+      }
+    } else if (!modelName.endsWith('_configuracoes')) {
+      crumbs.push({ label: pluralName, path: `/${modelName}` });
     }
 
     crumbs.push({ label: currentPageLabel, path: null });
