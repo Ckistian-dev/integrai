@@ -117,12 +117,16 @@ def get_model_metadata(model_name: str):
     model = registry_entry["model"]
     display_name = registry_entry["display_name"]
     display_field = registry_entry.get("display_field", None)
-    is_single_record = (
-        model_name == "empresas" or 
-        model_name.endswith("_configuracao") or 
-        model_name.endswith("_configuracoes") or 
-        getattr(model, '__is_single_record__', False)
-    )
+    if hasattr(model, '__is_single_record__'):
+        is_single_record = getattr(model, '__is_single_record__')
+    else:
+        is_single_record = (
+            model_name == "empresas" or 
+            (
+                (model_name.endswith("_configuracao") or model_name.endswith("_configuracoes"))
+                and model_name != "outras_empresas_configuracoes"
+            )
+        )
     fields: List[FieldMetadata] = []
     
     
@@ -228,69 +232,6 @@ def get_model_metadata(model_name: str):
                 options = col.info.get('options')
             if col.info.get('available_fields'):
                 options = col.info.get('available_fields')
-
-            if col.name == "filtros_padrao":
-                if model_name == "shopee_configuracoes":
-                    options = [
-                        {"label": "Status do Pedido", "value": "order_status", "type": "multiselect", "options": [
-                            {"label": "Aguardando Pagamento (UNPAID)", "value": "UNPAID"},
-                            {"label": "Pronto para Envio (READY_TO_SHIP)", "value": "READY_TO_SHIP"},
-                            {"label": "Processado (PROCESSED)", "value": "PROCESSED"},
-                            {"label": "Enviado (SHIPPED)", "value": "SHIPPED"},
-                            {"label": "Concluído (COMPLETED)", "value": "COMPLETED"},
-                            {"label": "Em Cancelamento (IN_CANCEL)", "value": "IN_CANCEL"},
-                            {"label": "Cancelado (CANCELLED)", "value": "CANCELLED"},
-                            {"label": "Devolução (TO_RETURN)", "value": "TO_RETURN"},
-                        ]},
-                        {"label": "Número do Pedido", "value": "order_sn", "type": "text"},
-                        {"label": "Nome do Comprador", "value": "buyer_username", "type": "text"},
-                        {"label": "Transportadora", "value": "shipping_carrier", "type": "text"},
-                        {"label": "Código de Rastreio", "value": "tracking_number", "type": "text"},
-                    ]
-                elif model_name == "magento_configuracoes":
-                    options = [
-                        {"label": "Status do Pedido", "value": "status", "type": "multiselect", "options": [
-                            {"label": "Pendente (pending)", "value": "pending"},
-                            {"label": "Processando (processing)", "value": "processing"},
-                            {"label": "Concluído (complete)", "value": "complete"},
-                            {"label": "Fechado (closed)", "value": "closed"},
-                            {"label": "Cancelado (canceled)", "value": "canceled"},
-                            {"label": "Em Espera (holded)", "value": "holded"},
-                        ]},
-                        {"label": "Número do Pedido (Increment ID)", "value": "increment_id", "type": "text"},
-                        {"label": "Nome do Cliente", "value": "customer_name", "type": "text"},
-                        {"label": "E-mail do Cliente", "value": "customer_email", "type": "text"},
-                        {"label": "Método de Pagamento", "value": "payment_method", "type": "text"},
-                    ]
-                elif model_name == "tiktok_configuracoes":
-                    options = [
-                        {"label": "Status do Pedido", "value": "order_status", "type": "multiselect", "options": [
-                            {"label": "Aguardando Pagamento (UNPAID)", "value": "UNPAID"},
-                            {"label": "Aguardando Envio (AWAITING_SHIPMENT)", "value": "AWAITING_SHIPMENT"},
-                            {"label": "Aguardando Coleta (AWAITING_COLLECTION)", "value": "AWAITING_COLLECTION"},
-                            {"label": "Em Trânsito (IN_TRANSIT)", "value": "IN_TRANSIT"},
-                            {"label": "Entregue (DELIVERED)", "value": "DELIVERED"},
-                            {"label": "Concluído (COMPLETED)", "value": "COMPLETED"},
-                            {"label": "Cancelado (CANCELLED)", "value": "CANCELLED"},
-                        ]},
-                        {"label": "Número do Pedido", "value": "order_id", "type": "text"},
-                        {"label": "Nome do Comprador", "value": "buyer_name", "type": "text"},
-                        {"label": "Provedor de Envio", "value": "shipping_provider", "type": "text"},
-                        {"label": "Código de Rastreio", "value": "tracking_number", "type": "text"},
-                    ]
-                elif model_name in ("meli_configuracoes", "meli_configuracao"):
-                    options = [
-                        {"label": "Status do Pedido", "value": "status", "type": "multiselect", "options": [
-                            {"label": "Pago (paid)", "value": "paid"},
-                            {"label": "Confirmado (confirmed)", "value": "confirmed"},
-                            {"label": "Pagamento Solicitado (payment_required)", "value": "payment_required"},
-                            {"label": "Em Processamento de Pagamento (payment_in_process)", "value": "payment_in_process"},
-                            {"label": "Cancelado (cancelled)", "value": "cancelled"},
-                        ]},
-                        {"label": "Número do Pedido", "value": "id", "type": "text"},
-                        {"label": "Apelido do Comprador", "value": "buyer_nickname", "type": "text"},
-                        {"label": "Modo de Envio", "value": "shipping_mode", "type": "text"},
-                    ]
             
             read_only = col.info.get('read_only', False)
             if col.name in ["criado_em", "atualizado_em", "id_sequencial"]:

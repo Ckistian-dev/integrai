@@ -76,7 +76,6 @@ export const isPathAccessible = (path, user) => {
     '/atendai_configuracoes',
     '/magento_configuracoes',
     '/tiktok_configuracoes',
-    '/outras_empresas_configuracoes',
     '/email_regras'
   ];
 

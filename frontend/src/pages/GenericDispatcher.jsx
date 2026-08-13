@@ -13,9 +13,10 @@ const GenericDispatcher = () => {
 
   // Verifica síncronamente por convenção de nome se é tabela de registro único/configuração
   const isKnownSingleRecord =
-    modelName === 'empresas' ||
-    modelName?.endsWith('_configuracoes') ||
-    modelName?.endsWith('_configuracao');
+    modelName !== 'outras_empresas_configuracoes' &&
+    (modelName === 'empresas' ||
+      modelName?.endsWith('_configuracoes') ||
+      modelName?.endsWith('_configuracao'));
 
   const [loading, setLoading] = useState(true);
   const [isSingleRecord, setIsSingleRecord] = useState(isKnownSingleRecord);
@@ -35,7 +36,7 @@ const GenericDispatcher = () => {
           metadataCache[modelName] = meta;
         }
 
-        const singleRecord = meta?.is_single_record || isKnownSingleRecord;
+        const singleRecord = meta?.is_single_record !== undefined ? meta.is_single_record : isKnownSingleRecord;
 
         if (singleRecord) {
           // Tabela de um único dado: busca o ID do registro existente

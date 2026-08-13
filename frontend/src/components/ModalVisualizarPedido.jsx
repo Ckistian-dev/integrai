@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 // Objeto padrão para evitar erros caso o pedido venha nulo
 const pedidoVazio = {
     id: '',
+    id_sequencial: '',
     data_emissao: '',
     data_validade: '',
     cliente: null,
@@ -385,7 +386,8 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
         if (loading) return [];
         if (!itensOriginais) return [];
         return itensOriginais.map(item => {
-            const produtoInfo = produtosDisponiveis.find(p => p.id === (item.id_produto || item.produto_id));
+            const targetId = item.id_produto || item.produto_id;
+            const produtoInfo = produtosDisponiveis.find(p => p.id === targetId || p.id_sequencial === targetId);
             const descricao = produtoInfo ? produtoInfo.descricao : (item.descricao || item.produto);
             const itemComNome = { ...item, descricao, produto: descricao };
             return calcularValoresItem(itemComNome, produtoInfo);
@@ -416,7 +418,7 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
         botoes.forEach(btn => btn.style.visibility = 'hidden');
         const options = {
             margin: [8, 8, 8, 8],
-            filename: `${labelDocumento.toLowerCase()}_${pedido.id || 'sem_numero'}.pdf`,
+            filename: `${labelDocumento.toLowerCase()}_${pedido.id_sequencial ?? pedido.id ?? 'sem_numero'}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, dpi: 300, letterRendering: true, useCORS: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -444,7 +446,7 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
                         <>
                             <CabecalhoEmpresa empresa={empresaSelecionada} />
                             <div className="flex justify-between items-center mt-4">
-                                <h2 className="text-xl font-bold text-gray-800">{labelDocumento} #{pedido.id || 'N/A'}</h2>
+                                <h2 className="text-xl font-bold text-gray-800">{labelDocumento} #{pedido.id_sequencial ?? pedido.id ?? 'N/A'}</h2>
                             </div>
                             <DetalhesGerais pedido={pedido} />
                             <SecaoCliente cliente={pedido.cliente} nomeFallback={pedido.cliente_nome} />

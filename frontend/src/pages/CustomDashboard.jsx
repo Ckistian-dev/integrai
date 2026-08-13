@@ -175,7 +175,8 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     }
 
     if (config.tipo === 'tabela') {
-      mergedFilters.push({ field: '__sort__', operator: config.sort_order || 'desc', value: config.sort_by || 'id' });
+      const defaultSort = (metadata?.fields?.some(f => f.name === 'id_sequencial')) ? 'id_sequencial' : 'id';
+      mergedFilters.push({ field: '__sort__', operator: config.sort_order || 'desc', value: config.sort_by || defaultSort });
     }
 
     const fetchDataForCompanies = async () => {
@@ -634,13 +635,20 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
     if (config.colunas && config.colunas.length > 0) {
       colunasRender = config.colunas;
     } else if (metadata && metadata.fields.length > 0) {
-      colunasRender = [...metadata.fields.map(f => f.name).filter(c => c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json'), '_empresa'];
+      colunasRender = [...metadata.fields.map(f => f.name).filter(c => c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json' && c !== 'id'), '_empresa'];
+      if (metadata.fields.some(f => f.name === 'id_sequencial') && !colunasRender.includes('id_sequencial')) {
+        colunasRender = ['id_sequencial', ...colunasRender.filter(c => c !== 'id_sequencial')];
+      }
     } else if (data && data.length > 0) {
       colunasRender = [...Object.keys(data[0]).filter(k => k !== 'id')];
+      if (data[0].id_sequencial !== undefined && !colunasRender.includes('id_sequencial')) {
+        colunasRender = ['id_sequencial', ...colunasRender.filter(c => c !== 'id_sequencial')];
+      }
     }
 
     const toggleSort = (colName) => {
-      const currentSort = config.sort_by || 'id';
+      const defaultSort = (metadata?.fields?.some(f => f.name === 'id_sequencial')) ? 'id_sequencial' : 'id';
+      const currentSort = config.sort_by || defaultSort;
       const currentDir = config.sort_order || 'desc';
       const newDir = (currentSort === colName && currentDir === 'asc') ? 'desc' : 'asc';
       onUpdateConfig({ ...config, sort_by: colName, sort_order: newDir });
@@ -666,6 +674,9 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
       onUpdateConfig({ ...config, colunas: newCols });
     };
 
+    const defaultSortField = (metadata?.fields?.some(f => f.name === 'id_sequencial')) ? 'id_sequencial' : 'id';
+    const currentSortField = config.sort_by || defaultSortField;
+
     return (
       <div className="flex flex-col h-full overflow-hidden relative">
         {config.titulo && <div className="p-4 pb-2 text-gray-700 text-sm font-bold shrink-0">{config.titulo}</div>}
@@ -675,7 +686,7 @@ const DynamicCard = ({ config, globalFilters, onFilterChange, isEditing, onUpdat
               <tr>
                 {colunasRender.map((col, idx) => {
                   const fieldMeta = metadata?.fields?.find(f => f.name === col);
-                  const isSorted = (config.sort_by || 'id') === col;
+                  const isSorted = currentSortField === col || (currentSortField === 'id' && col === 'id_sequencial') || (currentSortField === 'id_sequencial' && col === 'id');
                   const sortDir = config.sort_order || 'desc';
                   return (
                     <th

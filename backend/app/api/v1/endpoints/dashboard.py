@@ -94,9 +94,14 @@ def resolve_model_field(model, field_path: str, joined_rels: dict, db_query):
     """
     Resolve um caminho de campo (ex: 'id_cliente' ou 'cliente.nome_razao')
     retornando a coluna SQLAlchemy correspondente e a query com os joins necessários.
+    Prioriza id_sequencial quando o campo for 'id'.
     """
     if not field_path:
         return None, db_query
+
+    target_field = field_path
+    if target_field == "id" and hasattr(model, "id_sequencial"):
+        target_field = "id_sequencial"
 
     if "." in field_path:
         rel_name, col_name = field_path.split(".", 1)
@@ -104,6 +109,8 @@ def resolve_model_field(model, field_path: str, joined_rels: dict, db_query):
         rel = mapper.relationships.get(rel_name)
         if rel:
             related_model = rel.mapper.class_
+            if col_name == "id" and hasattr(related_model, "id_sequencial"):
+                col_name = "id_sequencial"
             if hasattr(related_model, col_name):
                 if rel_name not in joined_rels:
                     rel_alias = aliased(related_model, name=f"join_{rel_name}")
@@ -117,7 +124,9 @@ def resolve_model_field(model, field_path: str, joined_rels: dict, db_query):
         else:
             return None, db_query
     else:
-        if hasattr(model, field_path):
+        if hasattr(model, target_field):
+            return getattr(model, target_field), db_query
+        elif hasattr(model, field_path):
             return getattr(model, field_path), db_query
         return None, db_query
 
@@ -240,7 +249,7 @@ def get_dynamic_card_data(
                 rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
                 if rel:
                     related_model = rel.mapper.class_
-                    PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
+                    PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id", "id_sequencial"]
                     display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
                     
                     if display_field:
@@ -408,12 +417,18 @@ def get_dynamic_card_data(
 
     # --- LÓGICA: CARD DE TABELA ---
     elif query.tipo == "tabela":
-        if hasattr(model, sort_by):
-            sort_col = getattr(model, sort_by)
+        effective_sort_by = sort_by
+        if effective_sort_by == 'id' and hasattr(model, 'id_sequencial'):
+            effective_sort_by = 'id_sequencial'
+
+        if hasattr(model, effective_sort_by):
+            sort_col = getattr(model, effective_sort_by)
             if sort_order == 'asc':
                 db_query = db_query.order_by(sort_col.asc())
             else:
                 db_query = db_query.order_by(sort_col.desc())
+        elif hasattr(model, "id_sequencial"):
+            db_query = db_query.order_by(model.id_sequencial.desc())
         else:
             db_query = db_query.order_by(model.id.desc())
             
@@ -427,10 +442,13 @@ def get_dynamic_card_data(
                 data = schema.from_orm(r).model_dump() if hasattr(schema, 'model_dump') else schema.from_orm(r).dict()
             else:
                 data = {c.name: getattr(r, c.name) for c in model.__table__.columns}
+
+            if hasattr(r, 'id_sequencial') and getattr(r, 'id_sequencial', None) is not None:
+                data['id_sequencial'] = getattr(r, 'id_sequencial')
             
             # Filtra apenas as colunas solicitadas
             if query.colunas:
-                data = {k: v for k, v in data.items() if k in query.colunas or k == "id"}
+                data = {k: v for k, v in data.items() if k in query.colunas or k == "id" or k == "id_sequencial"}
                 
             # Formatação segura para JSON (Converte Enums e Decimals)
             for k, v in data.items():

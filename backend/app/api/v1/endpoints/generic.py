@@ -16,7 +16,8 @@ from decimal import Decimal
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A6, A4, landscape
 from reportlab.lib.units import mm
-from reportlab.graphics.barcode import code128
+from reportlab.graphics.barcode import code128, eanbc
+from reportlab.graphics.shapes import Drawing
 from reportlab.graphics import renderPDF
 from reportlab.lib.colors import black, white, red, blue
 from reportlab.lib.utils import ImageReader, simpleSplit
@@ -63,8 +64,8 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
         if not search_field and col.name in GLOBAL_SKIP:
             continue
             
-        # Se for busca específica, ignora colunas que não são a alvo
-        if search_field and col.name != search_field:
+        # Se for busca específica, ignora colunas que não são a alvo (permite id_sequencial quando search_field == 'id')
+        if search_field and col.name != search_field and not (search_field == "id" and col.name == "id_sequencial"):
             continue
 
         column_attr = getattr(model, col.name)
@@ -662,17 +663,49 @@ def generate_volume_label(
             display_lines[-1] = "..."
             
         for line in display_lines:
-            c.drawString(m_left + 16*mm, prod_y, line[:65])
+            txt = line[:42] + "..." if len(line) > 42 else line
+            c.drawString(m_left + 16*mm, prod_y, txt)
             prod_y -= 2.2*mm
         
         # Quantidade (Destaque)
         c.setFont("Helvetica-Bold", 8)
-        c.drawString(m_left + 16*mm, bar_y - 10.5*mm, f"VOL: {current_vol}/{total_volumes}   QTD: _______")
+        c.drawString(m_left + 16*mm, bar_y - 10.5*mm, f"VOL: {current_vol}/{total_volumes}   QTD: ____")
+
+        # ==========================================================================
+        # CÓDIGO DE BARRAS EAN-13 (7 dígitos pedido + 5 dígitos volume + 1 dígito verificador)
+        # Formato: pppppppvvvvv-d
+        # ==========================================================================
+        try:
+            val12 = f"{pedido.id:07d}{current_vol:05d}"
+            barcode_widget = eanbc.Ean13BarcodeWidget(val12)
+            barcode_widget.barHeight = 5.2 * mm
+            barcode_widget.barWidth = 0.7
+            barcode_widget.humanReadable = 0  # Desativa o texto automático para evitar o '0' solto à esquerda
+
+            bc_bounds = barcode_widget.getBounds()
+            bc_w = bc_bounds[2]
+            bc_h = bc_bounds[3]
+
+            d = Drawing(bc_w, bc_h)
+            d.add(barcode_widget)
+
+            bc_x = w_page - m_left - bc_w
+            bc_y = 6.0 * mm
+            d.drawOn(c, bc_x, bc_y)
+
+            # Texto formatado abaixo das barras no padrão pppppppvvvvv-d
+            cd = barcode_widget._checkdigit(val12)
+            code_formatted = f"{val12}-{cd}"
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", 6)
+            c.drawCentredString(bc_x + bc_w / 2, 4.2 * mm, code_formatted)
+        except Exception as bc_err:
+            print(f"Erro ao gerar código de barras EAN13 para etiqueta de volume: {bc_err}")
         
         # ==========================================================================
         # SEÇÃO 4: RODAPÉ (Transportadora)
         # ==========================================================================
-        line_y = 4 * mm
+        line_y = 3.6 * mm
         c.setLineWidth(0.5)
         c.line(0, line_y, w_page, line_y)
         

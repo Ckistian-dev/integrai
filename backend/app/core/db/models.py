@@ -1510,11 +1510,12 @@ Atendai_configuracoes = AtendaiConfiguracao
 
 class OutrasEmpresasConfiguracao(Base):
     __tablename__ = "outras_empresas_configuracoes"
-    __label__ = "Configuração Outras Empresas"
-    __label_plural__ = "Configurações Outras Empresas"
+    __label__ = "Outra Empresa"
+    __label_plural__ = "Outras Empresas"
+    __is_single_record__ = False
 
     id = Column(Integer, primary_key=True, index=True)
-    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
+    id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': True})
     nome = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'Nome de Identificação', 'placeholder': 'Ex: Filial SP'})
     email = Column(String, nullable=False, info={'tab': 'Geral', 'label': 'E-mail da Empresa', 'placeholder': 'email@empresa.com'})
     senha = Column(EncryptedString, nullable=False, info={'tab': 'Geral', 'ui_type': 'password', 'label': 'Senha', 'placeholder': 'Senha de acesso'})

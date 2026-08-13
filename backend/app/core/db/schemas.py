@@ -693,6 +693,7 @@ class PedidoUpdate(BaseModel):
 
 class Pedido(PedidoBase):  # RENOMEADO de PedidoRead para Pedido
     id: int
+    id_sequencial: Optional[int] = None
     id_empresa: int
     
     cliente: Optional["Cadastro"] = None # Atualizada a referência

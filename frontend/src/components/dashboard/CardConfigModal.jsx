@@ -404,7 +404,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                                       updateSeries(serie.id, { is_meta: false, campo: e.target.value });
                                     }
                                   }} className={`w-full rounded-md border px-2 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500 font-semibold ${serie.is_meta ? 'border-orange-400 text-orange-700 bg-orange-100' : 'border-gray-300 text-gray-700'}`}>
-                                    <option value="id">ID (Contagem)</option>
+                                    <option value={metadataFields.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id'}>ID (Contagem)</option>
                                     {numericFields.map(f => (<option key={f.name} value={f.name}>{f.label}</option>))}
                                     <option disabled>──────────</option>
                                     <option value="META_FIXA">✨ Inserir Meta Fixa</option>
@@ -485,7 +485,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                               disabled={loadingMetadata}
                               className="block w-2/3 rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm disabled:bg-gray-100"
                             >
-                              <option value="id">ID (Contagem de Registros)</option>
+                              <option value={metadataFields.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id'}>ID (Contagem de Registros)</option>
                               {numericFields.map(f => (
                                 <option key={f.name} value={f.name}>{f.label}</option>
                               ))}
@@ -495,7 +495,7 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                               value={config.operacao}
                               onChange={(e) => {
                                 handleChange(e);
-                                if (e.target.value === 'count') setConfig(prev => ({ ...prev, campo: 'id' }));
+                                if (e.target.value === 'count') setConfig(prev => ({ ...prev, campo: metadataFields.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id' }));
                               }}
                               className="block w-1/3 rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                             >

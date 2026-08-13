@@ -300,10 +300,12 @@ const getSortArray = (sort, hasIdSeq = false) => {
   if (!sort) return [];
   let arr = [];
   if (Array.isArray(sort)) arr = [...sort];
-  else if (sort.field) arr = [sort];
+  else if (sort && sort.field) arr = [sort];
+
+  arr = arr.filter(s => s && s.field);
 
   if (hasIdSeq) {
-    arr = arr.map(s => (s && s.field === 'id' ? { ...s, field: 'id_sequencial' } : s));
+    arr = arr.map(s => (s.field === 'id' ? { ...s, field: 'id_sequencial' } : s));
   }
   return arr;
 };
@@ -528,7 +530,7 @@ const GenericList = () => {
   // --- ESTADOS PARA EDIÇÃO DE TABELA ---
   const [isEditMode, setIsEditMode] = useState(false);
   const [addColumnSearch, setAddColumnSearch] = useState("");
-  const [userPreferences, setUserPreferences] = useState({ visibleColumns: null, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
+  const [userPreferences, setUserPreferences] = useState({ visibleColumns: null, columnWidths: {}, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
   const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
   const [draggedColName, setDraggedColName] = useState(null);
   const [dragTargetColName, setDragTargetColName] = useState(null);
@@ -625,6 +627,7 @@ const GenericList = () => {
     if (!metadata?.fields || metadata.fields.length === 0) {
       return {
         visibleColumns: null,
+        columnWidths: {},
         quickFilterFields: [],
         quickFilterValues: {},
         sort: [{ field: defaultSortField, direction: 'desc' }],
@@ -673,6 +676,7 @@ const GenericList = () => {
 
     return {
       visibleColumns: allCols,
+      columnWidths: {},
       quickFilterFields: defaultQuickFields,
       quickFilterValues: defaultQuickValues,
       sort: [{ field: defaultSortField, direction: 'desc' }],
@@ -686,6 +690,7 @@ const GenericList = () => {
     const resetConfig = {
       ...getDefaultPreferences(),
       visibleColumns: [],
+      columnWidths: {},
       isExplicitlyCleared: true
     };
     setUserPreferences(resetConfig);
@@ -903,6 +908,50 @@ const GenericList = () => {
     setDraggedColName(null);
     setDragTargetColName(null);
     stopAutoScroll();
+  };
+
+  const handleResizeStart = (e, colName) => {
+    if (!isEditMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const startX = e.clientX;
+    const thElement = e.currentTarget.parentElement;
+    const initialWidth = thElement ? thElement.offsetWidth : 150;
+    const startWidth = userPreferences.columnWidths?.[colName] || initialWidth;
+
+    let rafId = null;
+
+    const onMouseMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      const deltaX = moveEvent.clientX - startX;
+      const newWidth = Math.max(20, Math.round(startWidth + deltaX));
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        setUserPreferences(prev => ({
+          ...prev,
+          columnWidths: {
+            ...(prev.columnWidths || {}),
+            [colName]: newWidth
+          }
+        }));
+      });
+    };
+
+    const onMouseUp = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+
+      setUserPreferences(latest => {
+        handleSavePreferences(latest);
+        return latest;
+      });
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   };
 
   useEffect(() => {
@@ -2566,22 +2615,38 @@ const GenericList = () => {
       targetField = 'id_sequencial';
     }
     const sortList = getSortArray(userPreferences.sort, hasIdSeq);
-    const idx = sortList.findIndex(s => s.field === targetField);
+    const idx = sortList.findIndex(s => s.field === targetField || (targetField === 'id_sequencial' && s.field === 'id'));
     let newSort;
+
     if (idx === -1) {
-      if (sortList.length >= 2) {
-        newSort = [sortList[0], { field: targetField, direction: 'asc' }];
+      // Nova coluna clicada: torna-se a Primária (1º) com ASC.
+      // A antiga primária desloca-se para Secundária (2º). Mantém no máximo 2 ordenações.
+      newSort = [{ field: targetField, direction: 'asc' }, ...sortList].slice(0, 2);
+    } else if (idx === 0) {
+      // Coluna Primária atual clicada:
+      const current = sortList[0];
+      if (current.direction === 'asc') {
+        // Alterna para DESC
+        newSort = [{ field: targetField, direction: 'desc' }, ...sortList.slice(1)].slice(0, 2);
       } else {
-        newSort = [...sortList, { field: targetField, direction: 'asc' }];
+        // Remove a primária. A secundária (se houver) é promovida a primária.
+        const remaining = sortList.slice(1);
+        if (remaining.length > 0) {
+          newSort = remaining;
+        } else {
+          // Se não houver secundária, reseta para ordenação padrão (id_sequencial / id desc)
+          const defaultSortField = hasIdSeq ? 'id_sequencial' : 'id';
+          newSort = [{ field: defaultSortField, direction: 'desc' }];
+        }
       }
     } else {
+      // Coluna Secundária atual clicada:
+      // Promove esta coluna para Primária (mantendo direção ou asc) e desloca a antiga primária para Secundária.
       const current = sortList[idx];
-      if (current.direction === 'asc') {
-        newSort = sortList.map((s, i) => i === idx ? { ...s, direction: 'desc' } : s);
-      } else {
-        newSort = sortList.filter((_, i) => i !== idx);
-      }
+      const otherSorts = sortList.filter((_, i) => i !== idx);
+      newSort = [{ field: targetField, direction: current?.direction || 'asc' }, ...otherSorts].slice(0, 2);
     }
+
     handleSavePreferences({ ...userPreferences, sort: newSort });
   };
 
@@ -3744,11 +3809,13 @@ const GenericList = () => {
                     const field = fieldMetaMap.get(colName);
                     const isCurrency = field?.format_mask === 'currency';
                     const sortList = getSortArray(userPreferences.sort, hasIdSeq);
-                    const sortIdx = sortList.findIndex(s => s.field === colName);
+                    const targetCol = (hasIdSeq && colName === 'id') ? 'id_sequencial' : colName;
+                    const sortIdx = sortList.findIndex(s => s.field === targetCol || (colName === 'id' && s.field === 'id_sequencial'));
                     const sort = sortIdx !== -1 ? sortList[sortIdx] : null;
                     const sortPriority = sortIdx !== -1 ? sortIdx + 1 : null;
 
                     const isDraggingThis = colName === draggedColName;
+                    const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
 
                     return (
                       <th
@@ -3759,7 +3826,12 @@ const GenericList = () => {
                         onDrop={(e) => handleColumnDrop(e, colName)}
                         onDragEnd={handleColumnDragEnd}
                         onClick={() => { if (!isEditMode) toggleSort(colName); }}
-                        className={`px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-all duration-200 ease-in-out ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : 'cursor-pointer hover:bg-gray-100 group'
+                        style={{
+                          width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                          minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                          maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
+                        }}
+                        className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-colors duration-150 ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : 'cursor-pointer hover:bg-gray-100 group'
                           } ${isDraggingThis
                             ? 'bg-blue-100/90 text-blue-900 border-2 border-dashed border-blue-500 shadow-lg scale-[0.98] opacity-80 z-20'
                             : ''
@@ -3836,6 +3908,19 @@ const GenericList = () => {
                             </div>
                           )}
                         </div>
+
+                        {/* Alça de Redimensionamento Drag-to-Resize */}
+                        {isEditMode && (
+                          <div
+                            draggable={false}
+                            onMouseDown={(e) => handleResizeStart(e, colName)}
+                            onClick={(e) => e.stopPropagation()}
+                            title="Arraste para ajustar a largura da coluna"
+                            className="absolute right-0 top-0 bottom-0 w-3 h-full cursor-col-resize z-30 select-none hover:bg-blue-500/20 active:bg-blue-600/40 transition-colors group/resizer flex items-center justify-center"
+                          >
+                            <div className="w-1 h-full bg-transparent group-hover/resizer:bg-blue-500 transition-colors" />
+                          </div>
+                        )}
                       </th>
                     );
                   })}
@@ -4157,10 +4242,16 @@ const GenericList = () => {
                       >
                         {displayColumns.map((colName) => {
                           const isDraggingCell = colName === draggedColName;
+                          const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
                           return (
                             <td
                               key={colName}
-                              className={`px-6 py-0 whitespace-nowrap text-sm text-gray-700 transition-all duration-200 ease-in-out ${isDraggingCell
+                              style={{
+                                width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
+                              }}
+                              className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-0 whitespace-nowrap text-sm text-gray-700 transition-colors duration-150 ${hasCustomWidth ? 'truncate' : ''} ${isDraggingCell
                                 ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
                                 : ''
                                 }`}
@@ -4226,11 +4317,22 @@ const GenericList = () => {
                         {/* Linhas vazias para preencher o card (sem bordas internas) */}
                         {data.length > 0 && [...Array(emptyRowsCount)].map((_, i) => (
                           <tr key={`empty-${i}`} style={{ height: '53px' }}>
-                            {displayColumns.map((colName) => (
-                              <td key={`empty-${i}-${colName}`} className="px-6 whitespace-nowrap text-sm">
-                                &nbsp;
-                              </td>
-                            ))}
+                            {displayColumns.map((colName) => {
+                              const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
+                              return (
+                                <td
+                                  key={`empty-${i}-${colName}`}
+                                  style={{
+                                    width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                    minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                    maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
+                                  }}
+                                  className={`${hasCustomWidth ? 'px-2' : 'px-6'} whitespace-nowrap text-sm`}
+                                >
+                                  &nbsp;
+                                </td>
+                              );
+                            })}
                             {isEditMode && <td className="bg-gray-50/30"></td>}
                           </tr>
                         ))}
