@@ -3826,13 +3826,13 @@ const GenericList = () => {
                         onDragOver={(e) => handleColumnDragOver(e, colName)}
                         onDrop={(e) => handleColumnDrop(e, colName)}
                         onDragEnd={handleColumnDragEnd}
-                        onClick={() => { if (!isEditMode) toggleSort(colName); }}
+                        onClick={() => { if (isEditMode) toggleSort(colName); }}
                         style={{
                           width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
                           minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
                           maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
                         }}
-                        className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-colors duration-150 ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : 'cursor-pointer hover:bg-gray-100 group'
+                        className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider relative text-left transition-colors duration-150 ${isEditMode ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100 group' : 'text-gray-600'
                           } ${isDraggingThis
                             ? 'bg-blue-100/90 text-blue-900 border-2 border-dashed border-blue-500 shadow-lg scale-[0.98] opacity-80 z-20'
                             : ''
@@ -3871,16 +3871,6 @@ const GenericList = () => {
                                 {userPreferences.customColumnLabels?.[colName] || formatLabel(colName === 'id' ? 'ID' : colName === 'ja_importado' ? 'Importado' : (field?.label || colName))}
                               </span>
                             )}
-                            {!isEditMode && sort && (
-                              <span className="inline-flex items-center gap-0.5 ml-1 text-blue-600">
-                                {sort.direction === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
-                                {sortPriority && sortList.length > 1 && (
-                                  <span className="text-[9px] bg-blue-100 text-blue-800 rounded px-0.5 font-bold leading-none">
-                                    {sortPriority}
-                                  </span>
-                                )}
-                              </span>
-                            )}
                           </div>
 
                           {isEditMode && (
@@ -3889,6 +3879,7 @@ const GenericList = () => {
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); toggleSort(colName); }}
                                 className={`p-1 rounded hover:bg-gray-200 ${sort ? 'text-blue-600' : 'text-gray-300'}`}
+                                title="Ordenar coluna"
                               >
                                 <div className="flex items-center gap-0.5">
                                   {sort?.direction === 'desc' ? <ArrowDown size={14} /> : <ArrowUp size={14} className={!sort ? 'opacity-50' : ''} />}
@@ -3903,6 +3894,7 @@ const GenericList = () => {
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); removeColumn(colName); }}
                                 className="p-1 rounded hover:bg-red-100 text-gray-300 hover:text-red-500"
+                                title="Remover coluna"
                               >
                                 <X size={14} />
                               </button>

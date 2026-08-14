@@ -603,14 +603,11 @@ def generate_volume_label(
     linhas_produtos = []
     if pedido.itens:
         for item in pedido.itens:
-            sku = item.get('sku') or item.get('codigo') or ''
             desc_item = item.get('descricao') or item.get('nome') or "ITEM"
-            
-            if sku:
+            if desc_item:
                 linhas_produtos.append(desc_item)
-            else:
-                linhas_produtos.append(desc_item)
-    else:
+    
+    if not linhas_produtos:
         linhas_produtos.append("DIVERSOS")
 
     for current_vol in range(1, total_volumes + 1):
@@ -644,37 +641,20 @@ def generate_volume_label(
         c.drawRightString(w_page - m_left, bar_y + 1*mm, dest_str[:35])
 
         # ==========================================================================
-        # SEÇÃO 3: CORPO (UF Grande | SKU | Qtd)
+        # SEÇÃO 3: CORPO (UF Grande | SKU/Produtos | Qtd)
         # ==========================================================================
         c.setFillColor(black)
         
         # UF Grande (Esquerda)
         c.setFont("Helvetica-Bold", 22)
         c.drawString(m_left, bar_y - 8*mm, str(uf_dest)[:2])
-        
-        # Produtos (Lista dinâmica)
-        c.setFont("Helvetica-Bold", 6)
-        prod_y = bar_y - 2.5*mm
-        
-        # Limita a 3 linhas
-        max_lines = 3
-        display_lines = linhas_produtos[:max_lines]
-        if len(linhas_produtos) > max_lines:
-            display_lines[-1] = "..."
-            
-        for line in display_lines:
-            txt = line[:42] + "..." if len(line) > 42 else line
-            c.drawString(m_left + 16*mm, prod_y, txt)
-            prod_y -= 2.2*mm
-        
-        # Quantidade (Destaque)
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(m_left + 16*mm, bar_y - 10.5*mm, f"VOL: {current_vol}/{total_volumes}   QTD: ____")
 
         # ==========================================================================
         # CÓDIGO DE BARRAS EAN-13 (7 dígitos pedido + 5 dígitos volume + 1 dígito verificador)
         # Formato: pppppppvvvvv-d
         # ==========================================================================
+        bc_x = w_page - m_left - 24 * mm  # Posição padrão aproximada do código de barras
+        bc_w = 24 * mm
         try:
             val12 = f"{pedido.id:07d}{current_vol:05d}"
             barcode_widget = eanbc.Ean13BarcodeWidget(val12)
@@ -701,7 +681,48 @@ def generate_volume_label(
             c.drawCentredString(bc_x + bc_w / 2, 4.2 * mm, code_formatted)
         except Exception as bc_err:
             print(f"Erro ao gerar código de barras EAN13 para etiqueta de volume: {bc_err}")
-        
+
+        # ==========================================================================
+        # PRODUTOS (Lista dinâmica com quebra automática de linha sem cortar o nome)
+        # ==========================================================================
+        prod_x = m_left + 16 * mm
+        max_prod_width = bc_x - prod_x - 1.5 * mm  # Espaço útil até o código de barras
+        if max_prod_width < 30 * mm:
+            max_prod_width = 35 * mm
+
+        # Tenta tamanhos de fonte de 6.0pt até 4.5pt para quebrar o texto sem cortar nada
+        chosen_font_size = 6.0
+        chosen_leading = 2.1 * mm
+        all_product_lines = []
+
+        for fs, leading in [(6.0, 2.1 * mm), (5.5, 1.9 * mm), (5.0, 1.7 * mm), (4.5, 1.5 * mm)]:
+            candidate_lines = []
+            for desc in linhas_produtos:
+                split_lines = simpleSplit(desc, "Helvetica-Bold", fs, max_prod_width)
+                candidate_lines.extend(split_lines)
+            
+            # Espaço vertical disponível para os produtos: de bar_y - 2.2mm (~13.8mm) até acima de VOL (~5.0mm) = ~8.8mm
+            max_lines_fit = int((8.8 * mm) / leading)
+            if len(candidate_lines) <= max_lines_fit or fs == 4.5:
+                chosen_font_size = fs
+                chosen_leading = leading
+                all_product_lines = candidate_lines
+                break
+
+        c.setFillColor(black)
+        c.setFont("Helvetica-Bold", chosen_font_size)
+        prod_y = bar_y - 2.2 * mm
+
+        # Desenha as linhas de produtos que cabem
+        max_lines_render = int((8.8 * mm) / chosen_leading)
+        for line in all_product_lines[:max_lines_render]:
+            c.drawString(prod_x, prod_y, line)
+            prod_y -= chosen_leading
+
+        # Quantidade (Destaque)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(prod_x, bar_y - 11.0 * mm, f"VOL: {current_vol}/{total_volumes}   QTD: ____")
+
         # ==========================================================================
         # SEÇÃO 4: RODAPÉ (Transportadora)
         # ==========================================================================

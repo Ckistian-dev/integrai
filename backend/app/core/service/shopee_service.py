@@ -208,29 +208,50 @@ class ShopeeService:
         timestamp = int(time.time())
         sign = self._generate_sign(path, timestamp, access_token, shop_id)
 
-        params = {
-            "partner_id": int(self.config.partner_id),
-            "timestamp": timestamp,
-            "access_token": access_token,
-            "shop_id": int(shop_id),
-            "sign": sign,
-            "page_size": min(limit, 100),
-            "time_range_field": "create_time",
-            "time_from": int((datetime.now() - timedelta(days=15)).timestamp()),
-            "time_to": int(datetime.now().timestamp())
-        }
+        # Paginação na Shopee: busca todos os pedidos recentes no período (até 30 dias)
+        all_order_sns = []
+        has_more = True
+        cursor = ""
 
-        orders_list = []
         try:
-            resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
-            data = resp.json()
+            while has_more and len(all_order_sns) < 200:
+                timestamp = int(time.time())
+                sign = self._generate_sign(path, timestamp, access_token, shop_id)
+                params = {
+                    "partner_id": int(self.config.partner_id),
+                    "timestamp": timestamp,
+                    "access_token": access_token,
+                    "shop_id": int(shop_id),
+                    "sign": sign,
+                    "page_size": 100,
+                    "time_range_field": "create_time",
+                    "time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
+                    "time_to": int(datetime.now().timestamp())
+                }
+                if cursor:
+                    params["cursor"] = cursor
 
-            if resp.status_code == 200 and not data.get("error"):
-                response_data = data.get("response", {})
-                order_sn_list = [o.get("order_sn") for o in response_data.get("order_list", []) if o.get("order_sn")]
+                resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
+                data = resp.json()
 
-                if order_sn_list:
-                    detail_path = "/api/v2/order/get_order_detail"
+                if resp.status_code == 200 and not data.get("error"):
+                    response_data = data.get("response", {})
+                    sn_list = [o.get("order_sn") for o in response_data.get("order_list", []) if o.get("order_sn")]
+                    if not sn_list:
+                        break
+                    all_order_sns.extend(sn_list)
+                    has_more = response_data.get("more", False)
+                    cursor = response_data.get("next_cursor", "")
+                else:
+                    logger.warning(f"Resposta de aviso ao buscar lista de pedidos Shopee: {resp.text}")
+                    break
+
+            # Busca detalhes em lotes de até 50 por vez
+            orders_list = []
+            if all_order_sns:
+                detail_path = "/api/v2/order/get_order_detail"
+                for i in range(0, len(all_order_sns), 50):
+                    chunk = all_order_sns[i:i+50]
                     detail_timestamp = int(time.time())
                     detail_sign = self._generate_sign(detail_path, detail_timestamp, access_token, shop_id)
                     
@@ -240,7 +261,7 @@ class ShopeeService:
                         "access_token": access_token,
                         "shop_id": int(shop_id),
                         "sign": detail_sign,
-                        "order_sn_list": ",".join(order_sn_list),
+                        "order_sn_list": ",".join(chunk),
                         "response_optional_fields": "buyer_user_id,buyer_username,recipient_address,item_list,total_amount,shipping_carrier,payment_method"
                     }
 
@@ -259,9 +280,6 @@ class ShopeeService:
                                 "shipping_carrier": item.get("shipping_carrier", "Padrao Shopee"),
                                 "tracking_number": item.get("tracking_number", "")
                             })
-            else:
-                logger.warning(f"Resposta de aviso ao buscar pedidos Shopee: {resp.text}")
-
         except Exception as e:
             logger.warning(f"Não foi possível buscar pedidos em tempo real na Shopee ({e}). Retornando lista vazia ou filtro.")
 
