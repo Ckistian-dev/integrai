@@ -1553,6 +1553,16 @@ const GenericList = () => {
     setIsImportModalOpen(true);
   };
 
+  const handleImportShopeeOrder = () => {
+    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    if (toImport.length === 0) {
+      toast.info("Os pedidos selecionados já foram importados.");
+      return;
+    }
+    setOrdersToImport(toImport);
+    setIsImportModalOpen(true);
+  };
+
   const confirmImportOrder = async () => {
     if (ordersToImport.length === 0) return;
 
@@ -3561,6 +3571,18 @@ const GenericList = () => {
                 onClick={handleImportTiktokOrder}
                 disabled={selectedRowIds.length === 0 || isFetchingData}
                 className="flex items-center px-4 py-2 bg-pink-600 text-white rounded-md hover:bg-pink-700 font-medium disabled:cursor-not-allowed"
+              >
+                <FileDown size={16} className="mr-2" />
+                {selectedRowIds.length > 1 ? `Importar ${selectedRowIds.length} Pedidos` : 'Importar Pedido'}
+              </button>
+            )}
+
+            {/* BOTÃO IMPORTAR SHOPEE */}
+            {isShopeeView && (
+              <button
+                onClick={handleImportShopeeOrder}
+                disabled={selectedRowIds.length === 0 || isFetchingData}
+                className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium disabled:cursor-not-allowed"
               >
                 <FileDown size={16} className="mr-2" />
                 {selectedRowIds.length > 1 ? `Importar ${selectedRowIds.length} Pedidos` : 'Importar Pedido'}
