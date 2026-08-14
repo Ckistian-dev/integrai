@@ -273,6 +273,17 @@ async def receber_webhook_intelipost(
     db.commit()
     db.refresh(pedido)
 
+    # 🎯 Sincronização automática de status com o Mercado Livre se for pedido ML
+    is_ml_order = bool(getattr(pedido, 'meli_order_id', None) or getattr(pedido, 'meli_pack_id', None) or "Pedido ML:" in (pedido.observacao or ""))
+    if is_ml_order:
+        try:
+            import asyncio
+            from app.core.service.meli_service import MeliService
+            meli_svc = MeliService(db, id_empresa or pedido.id_empresa)
+            asyncio.run(meli_svc.update_meli_order_status(pedido))
+        except Exception as e:
+            print(f"Aviso: Erro ao disparar sincronização ML via Webhook Intelipost: {e}")
+
     return {
         "status": "success",
         "message": "Webhook Intelipost processado e dados atualizados com sucesso.",

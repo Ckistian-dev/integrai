@@ -2782,8 +2782,12 @@ def update_item(
 
     # --- CAPTURA ESTADO ANTERIOR (Para Pedidos) ---
     old_situacao = None
-    if model_name == "pedidos" and hasattr(db_obj, "situacao"):
-        old_situacao = db_obj.situacao
+    old_intelipost_status = None
+    if model_name == "pedidos":
+        if hasattr(db_obj, "situacao"):
+            old_situacao = db_obj.situacao
+        if hasattr(db_obj, "status_intelipost"):
+            old_intelipost_status = db_obj.status_intelipost
 
     # 🎯 LÓGICA ESPECÍFICA: Preencher data_pedido ao aprovar
     if model_name == "pedidos":
@@ -2936,18 +2940,19 @@ def update_item(
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
 
-                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
-                is_ml_order = bool(getattr(item, 'meli_order_id', None) or getattr(item, 'meli_pack_id', None) or "Pedido ML:" in (item.observacao or ""))
-                if is_ml_order:
-                    try:
-                        import asyncio
-                        from app.core.service.meli_service import MeliService
-                        
-                        meli_svc = MeliService(db, current_user.id_empresa)
-                        asyncio.run(meli_svc.update_meli_order_status(item))
-                    except Exception as e:
-                        import logging as _logging
-                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}")
+            # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
+            status_ml_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
+            is_ml_order = bool(getattr(item, 'meli_order_id', None) or getattr(item, 'meli_pack_id', None) or "Pedido ML:" in (item.observacao or ""))
+            if is_ml_order and status_ml_mudou:
+                try:
+                    import asyncio
+                    from app.core.service.meli_service import MeliService
+                    
+                    meli_svc = MeliService(db, current_user.id_empresa)
+                    asyncio.run(meli_svc.update_meli_order_status(item))
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}")
 
                 # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Magento
                 if "ID Magento:" in (item.observacao or ""):

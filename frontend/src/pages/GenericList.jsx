@@ -1795,7 +1795,8 @@ const GenericList = () => {
     } catch (err) {
       if (err.response && err.response.status === 403) {
         try {
-          const res = await api.get('/shopee/auth_url');
+          const redirectUri = window.location.origin + '/shopee/callback';
+          const res = await api.get('/shopee/auth_url', { params: { redirect_uri: redirectUri } });
           if (res.data && res.data.url) {
             window.location.href = res.data.url;
           } else {
