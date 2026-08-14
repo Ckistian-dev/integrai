@@ -4592,8 +4592,8 @@ const GenericList = () => {
           confirmText="Sim, Importar"
         >
           {ordersToImport.length > 1
-            ? `Deseja importar os ${ordersToImport.length} pedidos selecionados do ${isMeliView ? "Mercado Livre" : isTiktokView ? "Tiktok Shop" : "Magento"} para o ERP?`
-            : `Deseja importar este pedido do ${isMeliView ? "Mercado Livre" : isTiktokView ? "Tiktok Shop" : "Magento"} para o ERP?`
+            ? `Deseja importar os ${ordersToImport.length} pedidos selecionados ${isShopeeView ? "da Shopee" : isMeliView ? "do Mercado Livre" : isTiktokView ? "do Tiktok Shop" : "do Magento"} para o ERP?`
+            : `Deseja importar este pedido ${isShopeeView ? "da Shopee" : isMeliView ? "do Mercado Livre" : isTiktokView ? "do Tiktok Shop" : "do Magento"} para o ERP?`
           }
         </Modal>
 
