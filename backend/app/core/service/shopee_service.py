@@ -208,43 +208,52 @@ class ShopeeService:
         timestamp = int(time.time())
         sign = self._generate_sign(path, timestamp, access_token, shop_id)
 
-        # Paginação na Shopee: busca todos os pedidos recentes no período (até 30 dias)
+        # Paginação na Shopee: Shopee limita o intervalo a no máximo 15 dias por requisição (diff in 15days).
+        # Consultamos 2 janelas de 15 dias (últimos 30 dias no total).
         all_order_sns = []
-        has_more = True
-        cursor = ""
+        now = datetime.now()
+        time_windows = [
+            (int((now - timedelta(days=15)).timestamp()), int(now.timestamp())),
+            (int((now - timedelta(days=30)).timestamp()), int((now - timedelta(days=15)).timestamp()))
+        ]
 
         try:
-            while has_more and len(all_order_sns) < 200:
-                timestamp = int(time.time())
-                sign = self._generate_sign(path, timestamp, access_token, shop_id)
-                params = {
-                    "partner_id": int(self.config.partner_id),
-                    "timestamp": timestamp,
-                    "access_token": access_token,
-                    "shop_id": int(shop_id),
-                    "sign": sign,
-                    "page_size": 100,
-                    "time_range_field": "create_time",
-                    "time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
-                    "time_to": int(datetime.now().timestamp())
-                }
-                if cursor:
-                    params["cursor"] = cursor
+            for t_from, t_to in time_windows:
+                has_more = True
+                cursor = ""
+                while has_more and len(all_order_sns) < 200:
+                    timestamp = int(time.time())
+                    sign = self._generate_sign(path, timestamp, access_token, shop_id)
+                    params = {
+                        "partner_id": int(self.config.partner_id),
+                        "timestamp": timestamp,
+                        "access_token": access_token,
+                        "shop_id": int(shop_id),
+                        "sign": sign,
+                        "page_size": 100,
+                        "time_range_field": "create_time",
+                        "time_from": t_from,
+                        "time_to": t_to
+                    }
+                    if cursor:
+                        params["cursor"] = cursor
 
-                resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
-                data = resp.json()
+                    resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
+                    data = resp.json()
 
-                if resp.status_code == 200 and not data.get("error"):
-                    response_data = data.get("response", {})
-                    sn_list = [o.get("order_sn") for o in response_data.get("order_list", []) if o.get("order_sn")]
-                    if not sn_list:
+                    if resp.status_code == 200 and not data.get("error"):
+                        response_data = data.get("response", {})
+                        sn_list = [o.get("order_sn") for o in response_data.get("order_list", []) if o.get("order_sn")]
+                        if not sn_list:
+                            break
+                        for sn in sn_list:
+                            if sn not in all_order_sns:
+                                all_order_sns.append(sn)
+                        has_more = response_data.get("more", False)
+                        cursor = response_data.get("next_cursor", "")
+                    else:
+                        logger.warning(f"Resposta de aviso ao buscar lista de pedidos Shopee: {resp.text}")
                         break
-                    all_order_sns.extend(sn_list)
-                    has_more = response_data.get("more", False)
-                    cursor = response_data.get("next_cursor", "")
-                else:
-                    logger.warning(f"Resposta de aviso ao buscar lista de pedidos Shopee: {resp.text}")
-                    break
 
             # Busca detalhes em lotes de até 50 por vez
             orders_list = []
@@ -271,6 +280,7 @@ class ShopeeService:
                     if detail_resp.status_code == 200 and not detail_data.get("error"):
                         for item in detail_data.get("response", {}).get("order_list", []):
                             orders_list.append({
+                                "id": item.get("order_sn"),
                                 "order_sn": item.get("order_sn"),
                                 "order_status": item.get("order_status", "UNPAID"),
                                 "create_time": datetime.fromtimestamp(item.get("create_time", int(time.time()))).isoformat(),

@@ -4239,22 +4239,24 @@ const GenericList = () => {
                       return isPassword ? '*********' : formatDisplayValue(value);
                     };
 
-                    const renderRow = (item, index) => (
-                      <tr
-                        key={item.id}
-                        onClick={(e) => handleRowClick(e, item.id, index)}
-                        onDoubleClick={() => {
-                          if (!isMeliView && !isMagentoView && modelName !== 'estoque') {
-                            const targetId = item.id_sequencial ?? item.id;
-                            navigate(`/${modelName}/edit/${targetId}`);
-                          }
-                        }}
-                        style={{ height: '53px' }}
-                        className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
-                          ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
-                          : selectedRowIds.includes(item.id) ? 'bg-blue-100' : 'hover:bg-gray-50'
-                          }`}
-                      >
+                    const renderRow = (item, index) => {
+                      const rowId = item.id ?? item.order_sn ?? item.id_sequencial;
+                      return (
+                        <tr
+                          key={rowId}
+                          onClick={(e) => handleRowClick(e, rowId, index)}
+                          onDoubleClick={() => {
+                            if (!isMeliView && !isMagentoView && !isShopeeView && !isTiktokView && modelName !== 'estoque') {
+                              const targetId = item.id_sequencial ?? rowId;
+                              navigate(`/${modelName}/edit/${targetId}`);
+                            }
+                          }}
+                          style={{ height: '53px' }}
+                          className={`border-b border-gray-200 cursor-pointer ${(modelName === 'estoque' && statusFilter === 'Inventário')
+                            ? 'hover:bg-gray-50' // Desabilita destaque de seleção individual no inventário
+                            : selectedRowIds.includes(rowId) ? 'bg-blue-100' : 'hover:bg-gray-50'
+                            }`}
+                        >
                         {displayColumns.map((colName) => {
                           const isDraggingCell = colName === draggedColName;
                           const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
