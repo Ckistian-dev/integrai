@@ -4280,6 +4280,7 @@ const GenericList = () => {
                         {isEditMode && <td className="bg-gray-50/30"></td>}
                       </tr>
                     );
+                  };
 
                     const totalRowsRendered = (groupedData
                       ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
