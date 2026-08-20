@@ -103,8 +103,8 @@ class IntelipostService:
 
         # Busca produto no banco
         produto = self.db.query(models.Produto).filter(
-            models.Produto.id == produto_id,
-            models.Produto.id_empresa == self.id_empresa
+            models.Produto.id_empresa == self.id_empresa,
+            models.Produto.id_sequencial == produto_id
         ).first()
 
         if not produto:
@@ -138,8 +138,8 @@ class IntelipostService:
         # Verifica se o produto tem embalagem definida e regras
         if produto.id_embalagem:
             embalagem = self.db.query(models.Embalagem).filter(
-                (models.Embalagem.id_sequencial == produto.id_embalagem) | (models.Embalagem.id == produto.id_embalagem),
-                models.Embalagem.id_empresa == self.id_empresa
+                models.Embalagem.id_empresa == self.id_empresa,
+                models.Embalagem.id_sequencial == produto.id_embalagem
             ).first()
 
             if embalagem and embalagem.regras:
@@ -253,8 +253,8 @@ class IntelipostService:
 
         # 1. Busca Pedido e Relacionamentos
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido or not pedido.cliente:
@@ -278,8 +278,8 @@ class IntelipostService:
                 prod_id = item.get('id_produto') or item.get('produto_id')
                 if prod_id:
                     prod = self.db.query(models.Produto).filter(
-                        models.Produto.id == prod_id,
-                        models.Produto.id_empresa == self.id_empresa
+                        models.Produto.id_empresa == self.id_empresa,
+                        models.Produto.id_sequencial == prod_id
                     ).first()
                     if prod:
                         w = float(prod.largura or 10.0)
@@ -606,8 +606,8 @@ class IntelipostService:
         """
         # 1. Busca Pedido
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido:

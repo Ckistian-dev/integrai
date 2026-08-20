@@ -121,15 +121,14 @@ def generate_shipping_label(
     """
     # 1. Busca Dados
     pedido = db.query(models.Pedido).filter(
-        models.Pedido.id_empresa == current_user.id_empresa
-    ).filter(
-        (models.Pedido.id_sequencial == id) | (models.Pedido.id == id)
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == id
     ).first()
     
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
+    num_pedido = pedido.id_sequencial
 
     empresa = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
     
@@ -432,13 +431,12 @@ def generate_batch_shipping_labels(
 
     for pid in pedido_ids:
         pedido = db.query(models.Pedido).filter(
-            models.Pedido.id_empresa == current_user.id_empresa
-        ).filter(
-            (models.Pedido.id_sequencial == pid) | (models.Pedido.id == pid)
+            models.Pedido.id_empresa == current_user.id_empresa,
+            models.Pedido.id_sequencial == pid
         ).first()
         if not pedido: continue
 
-        num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
+        num_pedido = pedido.id_sequencial
         total_volumes = pedido.volumes_quantidade or 1
         for current_vol in range(1, total_volumes + 1):
             top_y = h_page - margin
@@ -571,15 +569,14 @@ def generate_volume_label(
     """
     # 1. Busca Dados
     pedido = db.query(models.Pedido).filter(
-        models.Pedido.id_empresa == current_user.id_empresa
-    ).filter(
-        (models.Pedido.id_sequencial == id) | (models.Pedido.id == id)
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == id
     ).first()
     
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
+    num_pedido = pedido.id_sequencial
 
     # Dados do Cliente
     cliente = pedido.cliente
@@ -868,8 +865,8 @@ def processar_inventario(
 
         # Verifica se o produto pertence à empresa
         produto = db.query(models.Produto).filter(
-            models.Produto.id == id_produto,
-            models.Produto.id_empresa == current_user.id_empresa
+            models.Produto.id_empresa == current_user.id_empresa,
+            models.Produto.id_sequencial == id_produto
         ).first()
         if not produto:
             continue
@@ -2354,10 +2351,11 @@ def generate_custom_report_pdf(
 
 def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_user: models.Usuario, obs_origem: str = ""):
     try:
-        desc_conta = f"Pedido de Venda #{item.id}"
+        num_pedido = item.id_sequencial
+        desc_conta = f"Pedido de Venda #{num_pedido}"
         existing_conta = db.query(models.Conta).filter(
             models.Conta.id_empresa == current_user.id_empresa,
-            models.Conta.descricao.contains(desc_conta),
+            (models.Conta.numero_conta == str(num_pedido)) | (models.Conta.descricao.contains(desc_conta)),
             models.Conta.tipo_conta == models.ContaTipoEnum.a_receber
         ).first()
 
@@ -2457,7 +2455,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
                     tipo_conta=models.ContaTipoEnum.a_receber,
                     situacao=models.ContaSituacaoEnum.em_aberto,
                     descricao=sub_desc,
-                    numero_conta=str(item.id),
+                    numero_conta=str(num_pedido),
                     id_fornecedor=cliente_id,
                     valor=val_p,
                     data_emissao=datetime.now(TZ_BR).date(),
@@ -2474,7 +2472,7 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
                 tipo_conta=models.ContaTipoEnum.a_receber,
                 situacao=models.ContaSituacaoEnum.em_aberto,
                 descricao=f"{desc_conta} - {cliente_nome}",
-                numero_conta=str(item.id),
+                numero_conta=str(num_pedido),
                 id_fornecedor=cliente_id,
                 valor=valor_final,
                 data_emissao=datetime.now(TZ_BR).date(),
@@ -2937,12 +2935,13 @@ def update_item(
             # 🎯 LÓGICA ESPECÍFICA: Cancelar contas financeiras ao cancelar pedido
             if old_situacao != item.situacao and item.situacao == models.PedidoSituacaoEnum.cancelado:
                 try:
-                    desc_conta = f"Pedido de Venda #{item.id}"
+                    num_pedido = item.id_sequencial
+                    desc_conta = f"Pedido de Venda #{num_pedido}"
                     # Busca contas a receber geradas para este pedido
                     contas_relacionadas = db.query(models.Conta).filter(
                         models.Conta.id_empresa == current_user.id_empresa,
                         models.Conta.tipo_conta == models.ContaTipoEnum.a_receber,
-                        (models.Conta.numero_conta == str(item.id)) | (models.Conta.descricao.contains(desc_conta))
+                        (models.Conta.numero_conta == str(num_pedido)) | (models.Conta.descricao.contains(desc_conta))
                     ).all()
 
                     for conta in contas_relacionadas:

@@ -1871,8 +1871,8 @@ class NFeService:
         """
         # 1. Busca pedido original
         pedido_origem = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido_origem:
@@ -1880,6 +1880,8 @@ class NFeService:
         
         if not pedido_origem.chave_acesso:
             raise HTTPException(status_code=400, detail="Pedido original não possui NFe autorizada para referenciar.")
+
+        num_origem = pedido_origem.id_sequencial if pedido_origem.id_sequencial is not None else pedido_origem.id
 
         # 2. Cria novo pedido (Duplicação)
         # Copia itens explicitamente para garantir nova lista
@@ -1943,18 +1945,20 @@ class NFeService:
             # Alterações para Devolução
             tipo_operacao=RegraTipoOperacaoEnum.devolucao_entrada,
             chave_nfe_referencia=pedido_origem.chave_acesso,
-            observacao=f"{pedido_origem.observacao} | Devolução referente ao pedido #{pedido_origem.id}" if pedido_origem.observacao else f"Devolução referente ao pedido #{pedido_origem.id}"
+            observacao=f"{pedido_origem.observacao} | Devolução referente ao pedido #{num_origem}" if pedido_origem.observacao else f"Devolução referente ao pedido #{num_origem}"
         )
 
         self.db.add(novo_pedido)
         self.db.commit()
         self.db.refresh(novo_pedido)
 
+        num_novo = novo_pedido.id_sequencial if novo_pedido.id_sequencial is not None else novo_pedido.id
+
         # 3. Retorna sucesso sem emitir NFe (agora vai para Faturamento)
         return {
             "success": True, 
-            "message": f"Pedido de devolução #{novo_pedido.id} gerado com sucesso! Encontra-se em Faturamento.",
-            "id": novo_pedido.id
+            "message": f"Pedido de devolução #{num_novo} gerado com sucesso! Encontra-se em Faturamento.",
+            "id": num_novo
         }
 
     def gerar_complemento(self, pedido_id: int):
@@ -1963,8 +1967,8 @@ class NFeService:
         """
         # 1. Busca pedido original
         pedido_origem = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido_origem:
@@ -1972,6 +1976,8 @@ class NFeService:
         
         if not pedido_origem.chave_acesso:
             raise HTTPException(status_code=400, detail="Pedido original não possui NFe autorizada para referenciar.")
+
+        num_origem = pedido_origem.id_sequencial if pedido_origem.id_sequencial is not None else pedido_origem.id
 
         # 2. Cria novo pedido (Duplicação)
         itens_copia = [item.copy() for item in pedido_origem.itens] if pedido_origem.itens else []
@@ -2034,7 +2040,7 @@ class NFeService:
             # Alterações para Complemento
             tipo_operacao=RegraTipoOperacaoEnum.complemento,
             chave_nfe_referencia=pedido_origem.chave_acesso,
-            observacao=f"{pedido_origem.observacao} | Complemento referente ao pedido #{pedido_origem.id}" if pedido_origem.observacao else f"Complemento referente ao pedido #{pedido_origem.id}",
+            observacao=f"{pedido_origem.observacao} | Complemento referente ao pedido #{num_origem}" if pedido_origem.observacao else f"Complemento referente ao pedido #{num_origem}",
             observacoes_nf=f"Nota Fiscal Complementar referente a NF-e chave {pedido_origem.chave_acesso}"
         )
 
@@ -2042,18 +2048,20 @@ class NFeService:
         self.db.commit()
         self.db.refresh(novo_pedido)
 
+        num_novo = novo_pedido.id_sequencial if novo_pedido.id_sequencial is not None else novo_pedido.id
+
         # 3. Retorna sucesso sem emitir NFe (agora vai para Faturamento)
         return {
             "success": True, 
-            "message": f"Pedido de complemento #{novo_pedido.id} gerado com sucesso! Encontra-se em Faturamento.",
-            "id": novo_pedido.id
+            "message": f"Pedido de complemento #{num_novo} gerado com sucesso! Encontra-se em Faturamento.",
+            "id": num_novo
         }
 
     def emitir_nfe(self, pedido_id: int, id_regra_tributaria: int = None):
         # 1. Busca Dados do Pedido
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido:
@@ -2318,7 +2326,10 @@ class NFeService:
                     item_0 = lista_itens[0]
                     pid_0 = item_0.get('id_produto') or item_0.get('produto_id')
                     if pid_0:
-                        prod_0 = self.db.query(models.Produto).filter(models.Produto.id == pid_0).first()
+                        prod_0 = self.db.query(models.Produto).filter(
+                            models.Produto.id_empresa == self.id_empresa,
+                            models.Produto.id_sequencial == pid_0
+                        ).first()
                         if prod_0:
                             # Busca a regra que seria aplicada a este produto
                             regra_para_header = self._encontrar_regra_tributaria(prod_0, cli_db, tipo_op_enum)
@@ -2586,7 +2597,10 @@ class NFeService:
                             qtd = safe_decimal(qtd_val)
                             
                             if p_id and qtd > 0:
-                                prod_peso = self.db.query(models.Produto.peso).filter(models.Produto.id == p_id).scalar()
+                                prod_peso = self.db.query(models.Produto.peso).filter(
+                                    models.Produto.id_empresa == self.id_empresa,
+                                    models.Produto.id_sequencial == p_id
+                                ).scalar()
                                 if prod_peso:
                                     peso_total_calc += (safe_decimal(prod_peso) * qtd)
                         except Exception as e:
@@ -2694,7 +2708,10 @@ class NFeService:
                     print(f"Item {i} sem ID de produto. Pulando.")
                     continue
 
-                produto_db = self.db.query(models.Produto).filter(models.Produto.id == prod_id).first()
+                produto_db = self.db.query(models.Produto).filter(
+                    models.Produto.id_empresa == self.id_empresa,
+                    models.Produto.id_sequencial == prod_id
+                ).first()
                 
                 if not produto_db:
                     print(f"Produto ID {prod_id} não encontrado no banco. Pulando.")
@@ -3844,8 +3861,8 @@ class NFeService:
         """
         # 1. Busca Dados do Pedido
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido:
@@ -3983,8 +4000,8 @@ class NFeService:
         """
         # 1. Busca Dados do Pedido
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido:
@@ -4540,8 +4557,8 @@ class NFeService:
         Salva no pedido e retorna os bytes do PDF.
         """
         pedido = self.db.query(models.Pedido).filter(
-            models.Pedido.id == pedido_id,
-            models.Pedido.id_empresa == self.id_empresa
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.id_sequencial == pedido_id
         ).first()
 
         if not pedido:
@@ -4599,8 +4616,8 @@ class NFeService:
         
         for pid in pedido_ids:
             pedido = self.db.query(models.Pedido).filter(
-                models.Pedido.id == pid,
-                models.Pedido.id_empresa == self.id_empresa
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.id_sequencial == pid
             ).first()
             
             if pedido and pedido.xml_autorizado:
@@ -4840,7 +4857,10 @@ class NFeService:
     def manifestar_ciencia(self, nota_id: int):
         """Envia evento de Ciência da Operação (210210) para destravar XML."""
         logger.info(f"Iniciando manifestação de ciência para nota ID: {nota_id}")
-        nota = self.db.query(models.NotaFiscalRecebida).filter_by(id=nota_id, id_empresa=self.id_empresa).first()
+        nota = self.db.query(models.NotaFiscalRecebida).filter(
+            models.NotaFiscalRecebida.id_empresa == self.id_empresa,
+            models.NotaFiscalRecebida.id_sequencial == nota_id
+        ).first()
         cert_path = self._get_certificado_path()
         try:
             from pynfe.entidades.evento import Evento
@@ -4991,7 +5011,10 @@ class NFeService:
         mapeamento_itens: [{"sku_fornecedor": "ABC", "id_produto_erp": 10, "quantidade": 5}, ...]
         """
         logger.info(f"Iniciando importação de NFe de Compra. Nota ID: {nota_id}")
-        nota = self.db.query(models.NotaFiscalRecebida).filter_by(id=nota_id, id_empresa=self.id_empresa).first()
+        nota = self.db.query(models.NotaFiscalRecebida).filter(
+            models.NotaFiscalRecebida.id_empresa == self.id_empresa,
+            models.NotaFiscalRecebida.id_sequencial == nota_id
+        ).first()
 
         if not nota:
             logger.error(f"NotaFiscalRecebida ID {nota_id} não encontrada.")
@@ -5064,9 +5087,11 @@ class NFeService:
                 ie_node = emit_node.xpath('ns:IE', namespaces=ns)
                 ie_val = ie_node[0].text if ie_node else None
                 
-                # Lógica para definir se é PF ou PJ
-                tipo_pessoa = models.CadastroTipoPessoaEnum.juridica if cnpj_fornecedor and len(cnpj_fornecedor) > 11 else models.CadastroTipoPessoaEnum.fisica
-                
+                # Tipo de pessoa (Física ou Jurídica)
+                tipo_pessoa = models.CadastroTipoPessoaEnum.juridica
+                if cpf_cnpj_node and etree.QName(cpf_cnpj_node[0]).localname == 'CPF':
+                    tipo_pessoa = models.CadastroTipoPessoaEnum.fisica
+
                 # Lógica para indicador IE (Contribuinte ou Não)
                 indicador_ie = models.CadastroIndicadorIEEnum.nao_contribuinte
                 if ie_val and ie_val.upper() != 'ISENTO':
@@ -5107,7 +5132,12 @@ class NFeService:
             if not item or 'id_produto_erp' not in item or not item.get('id_produto_erp'):
                 continue
 
-            produto = self.db.query(models.Produto).get(item['id_produto_erp'])
+            prod_id_erp = item['id_produto_erp']
+            produto = self.db.query(models.Produto).filter(
+                models.Produto.id_empresa == self.id_empresa,
+                models.Produto.id_sequencial == prod_id_erp
+            ).first()
+
             if not produto:
                 logger.warning(f"Produto ERP ID {item['id_produto_erp']} não encontrado durante importação da nota {nota_id}.")
                 continue

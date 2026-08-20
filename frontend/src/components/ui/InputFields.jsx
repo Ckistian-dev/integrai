@@ -706,7 +706,7 @@ const AsyncProductSelect = ({ value, onChange, error }) => {
       params: { search_term: inputValue, limit: 1000, situacao: 'true' }
     }).then(response => {
       const options = response.data.items.map(item => ({
-        value: item.id_sequencial ?? item.id,
+        value: item.id_sequencial,
         label: item.descricao,
         original: item
       }));
@@ -719,7 +719,7 @@ const AsyncProductSelect = ({ value, onChange, error }) => {
       api.get(`/generic/produtos/${value}`)
         .then(response => {
           const item = response.data;
-          setSelectedOption({ value: item.id_sequencial ?? item.id, label: item.descricao, original: item });
+          setSelectedOption({ value: item.id_sequencial, label: item.descricao, original: item });
         })
         .catch(() => setSelectedOption({ value, label: `Código #${value}` }));
     } else if (!value) {

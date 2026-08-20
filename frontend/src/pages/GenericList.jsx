@@ -1680,7 +1680,8 @@ const GenericList = () => {
 
   const handleManifestarCiencia = async () => {
     try {
-      await api.post(`/dfe/manifest/${selectedRowId}`);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      await api.post(`/dfe/manifest/${targetId}`);
       toast.success("Ciência enviada! O XML será baixado na próxima sincronização.");
       setRefreshTrigger(prev => prev + 1);
     } catch (err) { toast.error("Erro ao enviar manifestação."); }
@@ -1867,11 +1868,12 @@ const GenericList = () => {
       return;
     }
     try {
-      await api.post(`/nfe/cancelar/${selectedRowId}`, { justificativa: cancelJustification });
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      await api.post(`/nfe/cancelar/${targetId}`, { justificativa: cancelJustification });
       toast.success("NFe Cancelada com sucesso!");
       // Remove da lista pois o status mudou para Cancelado
-      setData(data.filter(i => i.id !== selectedRowId));
-      setTotalCount(prev => prev - 1);
+      setData(data.filter(i => i.id !== selectedRowId && i.id_sequencial !== targetId && i.id !== targetId));
+      setTotalCount(prev => Math.max(0, prev - 1));
       setSelectedRowIds([]);
       setIsCancelNFeModalOpen(false);
     } catch (err) {
@@ -1893,7 +1895,8 @@ const GenericList = () => {
       return;
     }
     try {
-      const res = await api.post(`/nfe/corrigir/${selectedRowId}`, { correcao: cceText });
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      const res = await api.post(`/nfe/corrigir/${targetId}`, { correcao: cceText });
       toast.success(res.data.message || "Carta de Correção registrada com sucesso!");
 
       // --- LÓGICA PARA ABRIR O PDF DA CARTA DE CORREÇÃO ---
@@ -1929,7 +1932,8 @@ const GenericList = () => {
   const handleConfirmDevolucao = async () => {
     if (!selectedRowId) return;
     try {
-      const res = await api.post(`/nfe/devolucao/${selectedRowId}`);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      const res = await api.post(`/nfe/devolucao/${targetId}`);
       toast.success("Devolução gerada com sucesso! Verifique o novo pedido na lista.");
       setRefreshTrigger(prev => prev + 1);
       setSelectedRowIds([]);
@@ -1950,7 +1954,8 @@ const GenericList = () => {
     if (!selectedRowId) return;
     setIsFetchingData(true);
     try {
-      const res = await api.post(`/nfe/complemento/${selectedRowId}`);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      const res = await api.post(`/nfe/complemento/${targetId}`);
       toast.success(res.data.message || "Pedido de complemento gerado com sucesso! Verifique o novo pedido na lista.");
       setIsComplementoModalOpen(false);
       setRefreshTrigger(prev => prev + 1);
@@ -1994,9 +1999,10 @@ const GenericList = () => {
 
   const handleSaveFaturamento = async (payload) => {
     try {
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
       // Chama o endpoint específico de emissão de NFe
       // O payload agora contém { id_regra_tributaria, itens, total_nota, ... }
-      const res = await api.post(`/nfe/emitir/${selectedRowId}`, payload);
+      const res = await api.post(`/nfe/emitir/${targetId}`, payload);
       const data = res.data;
 
       // 1. Toast para NFe (Sucesso)
@@ -2047,8 +2053,8 @@ const GenericList = () => {
       if (data.situation_changed) {
         navigate(`/pedidos/Nota Fiscal`);
         // Atualiza a lista local
-        setData(prev => prev.filter((item) => item.id !== selectedRowId));
-        setTotalCount(prev => prev - 1);
+        setData(prev => prev.filter((item) => item.id !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
+        setTotalCount(prev => Math.max(0, prev - 1));
       }
 
       setSelectedRowIds([]);
@@ -2063,7 +2069,11 @@ const GenericList = () => {
     setIsFetchingData(true);
     setIsBatchFaturamentoModalOpen(false);
     try {
-      const res = await api.post(`/pedidos/emitir-lote`, { pedido_ids: selectedRowIds });
+      const targetIds = selectedRowIds.map(id => {
+        const itm = data.find(i => i.id === id);
+        return itm?.id_sequencial ?? id;
+      });
+      const res = await api.post(`/pedidos/emitir-lote`, { pedido_ids: targetIds });
       const resultados = res.data;
 
       const sucessos = resultados.filter(r => r.success);
@@ -2073,8 +2083,8 @@ const GenericList = () => {
         toast.success(`${sucessos.length} notas autorizadas com sucesso!`);
         const idsSucesso = sucessos.map(r => r.id);
         // Remove da lista os que deram certo
-        setData(prev => prev.filter(item => !idsSucesso.includes(item.id)));
-        setTotalCount(prev => prev - idsSucesso.length);
+        setData(prev => prev.filter(item => !idsSucesso.includes(item.id) && !idsSucesso.includes(item.id_sequencial)));
+        setTotalCount(prev => Math.max(0, prev - idsSucesso.length));
       }
 
       if (falhas.length > 0) {
@@ -2320,8 +2330,9 @@ const GenericList = () => {
 
     try {
       setIsFetchingData(true);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
       // Chamada para a nova rota de download
-      const response = await api.get(`/dfe/download-xml/${selectedRowId}`, {
+      const response = await api.get(`/dfe/download-xml/${targetId}`, {
         responseType: 'blob' // Importante para lidar com download de arquivos
       });
 
@@ -2331,8 +2342,8 @@ const GenericList = () => {
       const link = document.createElement('a');
 
       // Busca dados da linha atual para nomear o arquivo
-      const item = data.find(i => i.id === selectedRowId);
-      const filename = `NFe_${item?.chave_acesso || selectedRowId}.xml`;
+      const item = data.find(i => i.id === selectedRowId || i.id_sequencial === targetId);
+      const filename = `NFe_${item?.chave_acesso || targetId}.xml`;
 
       link.href = url;
       link.setAttribute('download', filename);
@@ -3717,8 +3728,12 @@ const GenericList = () => {
                   };
                 } else if (action.onClickHandler === 'download_danfe') {
                   onClickAction = () => {
-                    const idsToUse = selectedRowIds.length > 0 ? selectedRowIds : (selectedRowId ? [selectedRowId] : []);
-                    if (idsToUse.length === 0) return;
+                    const rawIds = selectedRowIds.length > 0 ? selectedRowIds : (selectedRowId ? [selectedRowId] : []);
+                    if (rawIds.length === 0) return;
+                    const idsToUse = rawIds.map(id => {
+                      const itm = data.find(i => i.id === id);
+                      return itm?.id_sequencial ?? id;
+                    });
                     setDanfeModalIds(idsToUse);
                     setIsDanfeModalOpen(true);
                   };
@@ -4594,7 +4609,7 @@ const GenericList = () => {
         <ModalImportacaoDfe
           isOpen={isDfeImportModalOpen}
           onClose={() => setIsDfeImportModalOpen(false)}
-          notaId={selectedRowId}
+          notaId={selectedItem?.id_sequencial ?? selectedRowId}
           onSuccess={() => setRefreshTrigger(prev => prev + 1)}
         />
 

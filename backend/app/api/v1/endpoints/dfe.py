@@ -37,8 +37,8 @@ async def get_detalhes(
 ):
     """Lê o XML completo da nota recebida e prepara os dados para o modal de importação."""
     nota = db.query(models.NotaFiscalRecebida).filter(
-        models.NotaFiscalRecebida.id == nota_id,
-        models.NotaFiscalRecebida.id_empresa == current_user.id_empresa
+        models.NotaFiscalRecebida.id_empresa == current_user.id_empresa,
+        models.NotaFiscalRecebida.id_sequencial == nota_id
     ).first()
     
     if not nota:
@@ -73,7 +73,7 @@ async def get_detalhes(
                 "sku_fornecedor": sku_forn,
                 "descricao": x_prod,
                 "quantidade": float(q_com),
-                "id_produto_erp": produto_erp.id if produto_erp else None
+                "id_produto_erp": produto_erp.id_sequencial if produto_erp else None
             })
             
         tPag_nodes = root.xpath('//ns:pag/ns:detPag/ns:tPag', namespaces=ns)
@@ -108,8 +108,8 @@ async def download_xml(
 ):
     """Busca o XML completo no banco e retorna como download de arquivo."""
     nota = db.query(models.NotaFiscalRecebida).filter(
-        models.NotaFiscalRecebida.id == nota_id,
-        models.NotaFiscalRecebida.id_empresa == current_user.id_empresa
+        models.NotaFiscalRecebida.id_empresa == current_user.id_empresa,
+        models.NotaFiscalRecebida.id_sequencial == nota_id
     ).first()
     
     if not nota:
@@ -121,8 +121,9 @@ async def download_xml(
             detail="XML completo ainda não disponível. Realize a Ciência da Operação e sincronize novamente."
         )
 
-    # Define o nome do arquivo usando a chave de acesso ou o ID
-    filename = f"NFe_{nota.chave_acesso or nota.id}.xml"
+    # Define o nome do arquivo usando a chave de acesso ou o ID sequencial
+    cod_nota = nota.id_sequencial
+    filename = f"NFe_{nota.chave_acesso or cod_nota}.xml"
 
     return Response(
         content=nota.xml_completo,

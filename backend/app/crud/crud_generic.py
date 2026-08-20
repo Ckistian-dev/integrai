@@ -6,12 +6,10 @@ from app.core.db.database import Base
 ModelType = Type[Base] # Tipo para o modelo SQLAlchemy
 
 def get(db: Session, *, model: ModelType, id: int, id_empresa: int) -> Optional[Base]:
-    """Busca um item por ID ou ID Sequencial, garantindo que pertença ao id_empresa."""
+    """Busca um item por ID Sequencial (ou ID para tabelas sem id_sequencial), garantindo que pertença ao id_empresa."""
     query = db.query(model).filter(model.id_empresa == id_empresa)
     if hasattr(model, "id_sequencial"):
-        item = query.filter(model.id_sequencial == id).first()
-        if item:
-            return item
+        return query.filter(model.id_sequencial == id).first()
     return query.filter(model.id == id).first()
 
 def get_multi(

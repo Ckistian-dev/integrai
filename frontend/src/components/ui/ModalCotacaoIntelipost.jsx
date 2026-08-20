@@ -24,7 +24,8 @@ export default function ModalCotacaoIntelipost({ isOpen, onClose, pedido, onSele
         setResultado(null);
         try {
             // Chama o endpoint novo que criamos no controller
-            const response = await api.post(`/intelipost/cotacao/${pedido.id}`);
+            const targetId = pedido.id_sequencial;
+            const response = await api.post(`/intelipost/cotacao/${targetId}`);
             setResultado(response.data);
         } catch (error) {
             const msg = error.response?.data?.detail || "Erro ao cotar frete.";

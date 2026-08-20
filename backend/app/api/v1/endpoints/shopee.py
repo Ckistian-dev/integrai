@@ -178,8 +178,8 @@ def reenviar_xml_shopee(
     Re-envia o XML/NFe de um pedido para a Shopee.
     """
     pedido = db.query(models.Pedido).filter(
-        models.Pedido.id == pedido_id,
-        models.Pedido.id_empresa == current_user.id_empresa
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
     ).first()
 
     if not pedido:

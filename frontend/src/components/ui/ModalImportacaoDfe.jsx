@@ -33,7 +33,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
       params: { search_term: inputValue, limit: 1000, situacao: 'true' }
     }).then(response => {
       const options = response.data.items.map(item => ({
-        value: item.id,
+        value: item.id_sequencial,
         label: `${item.sku} - ${item.descricao}`
       }));
       callback(options);
@@ -45,7 +45,7 @@ const AsyncProductSelect = ({ value, onChange }) => {
       api.get(`/generic/produtos/${value}`)
         .then(response => {
             const item = response.data;
-            setSelectedOption({ value: item.id, label: `${item.sku} - ${item.descricao}` });
+            setSelectedOption({ value: item.id_sequencial, label: `${item.sku} - ${item.descricao}` });
         })
         .catch(() => setSelectedOption({ value, label: `ID ${value}` }));
     } else if (!value) {
@@ -84,7 +84,7 @@ const AsyncPlanoContaSelect = ({ value, onChange }) => {
       params: { search_term: inputValue, limit: 1000 }
     }).then(response => {
       const options = response.data.items.map(item => ({
-        value: item.id,
+        value: item.id_sequencial,
         label: `${item.grupo || ''} - ${item.descricao}`.replace(/^- /, '')
       }));
       callback(options);
@@ -96,7 +96,7 @@ const AsyncPlanoContaSelect = ({ value, onChange }) => {
       api.get(`/generic/classificacao_contabil/${value}`)
         .then(response => {
           const item = response.data;
-          setSelectedOption({ value: item.id, label: `${item.grupo || ''} - ${item.descricao}`.replace(/^- /, '') });
+          setSelectedOption({ value: item.id_sequencial, label: `${item.grupo || ''} - ${item.descricao}`.replace(/^- /, '') });
         })
         .catch(() => setSelectedOption({ value, label: `ID ${value}` }));
     } else if (!value) {
@@ -255,7 +255,7 @@ const ModalImportacaoDfe = ({ isOpen, onClose, notaId, onSuccess }) => {
         variacoes: item.sku_fornecedor ? [item.sku_fornecedor] : []
       });
       toast.success('Produto criado com sucesso!');
-      setMapeamento(prev => prev.map((m, i) => i === idx ? { ...m, id_produto_erp: res.data.id, isCreating: false } : m));
+      setMapeamento(prev => prev.map((m, i) => i === idx ? { ...m, id_produto_erp: res.data.id_sequencial, isCreating: false } : m));
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Erro ao criar produto. Verifique se o SKU já existe.');
       setMapeamento(prev => prev.map((m, i) => i === idx ? { ...m, isCreating: false } : m));

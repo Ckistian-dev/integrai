@@ -177,21 +177,17 @@ async def receber_webhook_intelipost(
             res = run_query(models.Pedido.numero_nf == str(invoice_number))
             if res: return res
 
-        # 5. Busca por id_sequencial ou id extraído do order_number (ex: "VAR3316N" -> 3316)
+        # 5. Busca por id_sequencial extraído do order_number (ex: "VAR3316N" -> 3316)
         if order_number:
             if str(order_number).isdigit():
                 val = int(order_number)
                 res = run_query(models.Pedido.id_sequencial == val)
-                if res: return res
-                res = run_query(models.Pedido.id == val)
                 if res: return res
 
             digits = "".join(filter(str.isdigit, str(order_number)))
             if digits:
                 val = int(digits)
                 res = run_query(models.Pedido.id_sequencial == val)
-                if res: return res
-                res = run_query(models.Pedido.id == val)
                 if res: return res
 
         return None

@@ -86,7 +86,7 @@ const ConferenciaPedidoModal = ({
                   </Dialog.Title>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
-                    <div><p className="text-sm text-gray-500">Pedido ID</p><p className="font-bold">#{pedido.id_sequencial ?? pedido.id}</p></div>
+                    <div><p className="text-sm text-gray-500">Pedido ID</p><p className="font-bold">#{pedido.id_sequencial}</p></div>
                     <div><p className="text-sm text-gray-500">Ordem de Finalização</p><p className="font-bold">{pedido.ordem_finalizacao || '-'}</p></div>
                     <div><p className="text-sm text-gray-500">Cliente</p><p>{pedido.cliente_nome || 'N/A'}</p></div>
                     <div><p className="text-sm text-gray-500">Data Prevista</p><p>{pedido.data_finalizacao || '-'}</p></div>

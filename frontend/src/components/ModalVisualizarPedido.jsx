@@ -418,7 +418,7 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
         botoes.forEach(btn => btn.style.visibility = 'hidden');
         const options = {
             margin: [8, 8, 8, 8],
-            filename: `${labelDocumento.toLowerCase()}_${pedido.id_sequencial ?? pedido.id ?? 'sem_numero'}.pdf`,
+            filename: `${labelDocumento.toLowerCase()}_${pedido.id_sequencial ?? 'sem_numero'}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, dpi: 300, letterRendering: true, useCORS: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -446,7 +446,7 @@ export default function ModalVisualizarPedido({ pedido = pedidoVazio, onClose })
                         <>
                             <CabecalhoEmpresa empresa={empresaSelecionada} />
                             <div className="flex justify-between items-center mt-4">
-                                <h2 className="text-xl font-bold text-gray-800">{labelDocumento} #{pedido.id_sequencial ?? pedido.id ?? 'N/A'}</h2>
+                                <h2 className="text-xl font-bold text-gray-800">{labelDocumento} #{pedido.id_sequencial ?? 'N/A'}</h2>
                             </div>
                             <DetalhesGerais pedido={pedido} />
                             <SecaoCliente cliente={pedido.cliente} nomeFallback={pedido.cliente_nome} />
