@@ -2409,7 +2409,7 @@ const GenericList = () => {
         responseType: 'blob',
       });
 
-      const report = data.find(r => r.id === reportId);
+      const report = data.find(r => r.id === reportId || r.id_sequencial === reportId);
       const reportName = report?.nome?.replace(/\s+/g, '_') || 'Relatorio';
       const timestamp = new Date().toLocaleString('pt-BR').replace(/[/:, ]/g, '_');
 
@@ -3637,8 +3637,8 @@ const GenericList = () => {
                 </button>
                 <button
                   onClick={() => handleGenerateReport(selectedRowId, 'xml')}
-                  disabled={!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'}
-                  className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${!selectedRowId || exportingFormat !== null || data.find(r => r.id === selectedRowId)?.modelo !== 'pedidos'
+                  disabled={!selectedRowId || exportingFormat !== null || (selectedItem?.modelo ?? data.find(r => r.id === selectedRowId || r.id_sequencial === selectedRowId)?.modelo) !== 'pedidos'}
+                  className={`flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm text-sm font-medium transition-colors ${!selectedRowId || exportingFormat !== null || (selectedItem?.modelo ?? data.find(r => r.id === selectedRowId || r.id_sequencial === selectedRowId)?.modelo) !== 'pedidos'
                     ? 'cursor-not-allowed'
                     : 'hover:bg-green-700'
                     }`}

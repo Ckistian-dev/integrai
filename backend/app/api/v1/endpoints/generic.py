@@ -1972,8 +1972,13 @@ def generate_custom_report_pdf(
     # 1. Busca ou monta a configuração do relatório
     if report_id > 0:
         relatorio = db.query(models.Relatorio).filter(
-            models.Relatorio.id == report_id,
-            models.Relatorio.id_empresa == current_user.id_empresa
+            models.Relatorio.id_empresa == current_user.id_empresa,
+            or_(
+                models.Relatorio.id_sequencial == report_id,
+                models.Relatorio.id == report_id
+            )
+        ).order_by(
+            case((models.Relatorio.id_sequencial == report_id, 1), else_=2)
         ).first()
 
         if not relatorio:
@@ -2250,7 +2255,10 @@ def generate_custom_report_pdf(
                 decoded_bytes = base64.b64decode(base64_data)
                 logo = Image(io.BytesIO(decoded_bytes), width=35*mm, height=15*mm, kind='proportional')
             else:
-                logo = Image(empresa.url_logo, width=35*mm, height=15*mm, kind='proportional')
+                req = urllib.request.Request(empresa.url_logo, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    img_data = response.read()
+                logo = Image(io.BytesIO(img_data), width=35*mm, height=15*mm, kind='proportional')
             elemento_esq = logo
         except Exception as e:
             print(f"Erro ao carregar logo no relatorio: {e}")
@@ -3229,8 +3237,13 @@ def generate_custom_report(
     # 1. Busca ou monta a configuração do relatório
     if report_id > 0:
         relatorio = db.query(models.Relatorio).filter(
-            models.Relatorio.id == report_id,
-            models.Relatorio.id_empresa == current_user.id_empresa
+            models.Relatorio.id_empresa == current_user.id_empresa,
+            or_(
+                models.Relatorio.id_sequencial == report_id,
+                models.Relatorio.id == report_id
+            )
+        ).order_by(
+            case((models.Relatorio.id_sequencial == report_id, 1), else_=2)
         ).first()
 
         if not relatorio:
@@ -3503,8 +3516,13 @@ def generate_xml_report(
     # 1. Busca ou monta a configuração do relatório
     if report_id > 0:
         relatorio = db.query(models.Relatorio).filter(
-            models.Relatorio.id == report_id,
-            models.Relatorio.id_empresa == current_user.id_empresa
+            models.Relatorio.id_empresa == current_user.id_empresa,
+            or_(
+                models.Relatorio.id_sequencial == report_id,
+                models.Relatorio.id == report_id
+            )
+        ).order_by(
+            case((models.Relatorio.id_sequencial == report_id, 1), else_=2)
         ).first()
 
         if not relatorio:
