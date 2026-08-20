@@ -2696,10 +2696,16 @@ def batch_update_items(
             item_data[key] = value.strip()
         
     # Busca os itens garantindo que pertencem à empresa
-    items = db.query(registry["model"]).filter(
-        registry["model"].id.in_(ids),
-        registry["model"].id_empresa == current_user.id_empresa
-    ).all()
+    if hasattr(registry["model"], "id_sequencial"):
+        items = db.query(registry["model"]).filter(
+            registry["model"].id_sequencial.in_(ids),
+            registry["model"].id_empresa == current_user.id_empresa
+        ).all()
+    else:
+        items = db.query(registry["model"]).filter(
+            registry["model"].id.in_(ids),
+            registry["model"].id_empresa == current_user.id_empresa
+        ).all()
     
     if not items:
         raise HTTPException(status_code=404, detail="Nenhum item encontrado para os IDs fornecidos.")

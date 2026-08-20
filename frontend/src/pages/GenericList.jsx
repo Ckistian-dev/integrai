@@ -484,7 +484,7 @@ const GenericList = () => {
   const [selectedGroupKey, setSelectedGroupKey] = useState(null);
 
   const selectedRowId = selectedRowIds.length > 0 ? selectedRowIds[0] : null;
-  const selectedItem = useMemo(() => data.find(i => i.id === selectedRowId), [selectedRowId, data]);
+  const selectedItem = useMemo(() => data.find(i => (i.id === selectedRowId || (i.id_sequencial !== undefined && i.id_sequencial !== null && i.id_sequencial === selectedRowId))), [selectedRowId, data]);
 
   // A seleção agora é baseada no GRUPO (cabeçalho) para o módulo de estoque/inventário
   const isInventorySelected = modelName === 'estoque' && selectedGroupKey !== null;
@@ -1261,20 +1261,21 @@ const GenericList = () => {
   const handleConfirmDelete = async () => {
     if (!selectedRowId) return;
     try {
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
       if (modelName === 'pedidos') {
-        await api.put(`/generic/${modelName}/${selectedRowId}`, { situacao: 'Cancelado' });
+        await api.put(`/generic/${modelName}/${targetId}`, { situacao: 'Cancelado' });
 
         if (statusFilter) {
-          setData(data.filter((item) => item.id !== selectedRowId));
-          setTotalCount(prev => prev - 1);
+          setData(data.filter((item) => item.id !== selectedRowId && item.id_sequencial !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
+          setTotalCount(prev => Math.max(0, prev - 1));
         } else {
-          setData(data.map((item) => item.id === selectedRowId ? { ...item, situacao: 'Cancelado' } : item));
+          setData(data.map((item) => (item.id === selectedRowId || item.id_sequencial === selectedRowId || item.id_sequencial === targetId) ? { ...item, situacao: 'Cancelado' } : item));
         }
         toast.success('Pedido cancelado com sucesso.');
       } else {
-        await api.delete(`/generic/${modelName}/${selectedRowId}`);
-        setData(data.filter((item) => item.id !== selectedRowId));
-        setTotalCount(prev => prev - 1);
+        await api.delete(`/generic/${modelName}/${targetId}`);
+        setData(data.filter((item) => item.id !== selectedRowId && item.id_sequencial !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
+        setTotalCount(prev => Math.max(0, prev - 1));
       }
       // Reseta a seleção após a exclusão
       setSelectedRowIds([]);
@@ -1320,17 +1321,22 @@ const GenericList = () => {
 
       if (selectedRowIds.length > 1) {
         // Atualização em Lote
+        const targetBatchIds = selectedRowIds.map(id => {
+          const itm = data.find(i => (i.id_sequencial === id || i.id === id));
+          return itm?.id_sequencial ?? id;
+        });
+
         await api.put(`/generic/${modelName}/batch-update`, {
-          ids: selectedRowIds,
+          ids: targetBatchIds,
           item_data: payload
         });
 
         if (statusFilter) {
-          setData(prev => prev.filter((item) => !selectedRowIds.includes(item.id)));
+          setData(prev => prev.filter((item) => !selectedRowIds.includes(item.id) && !selectedRowIds.includes(item.id_sequencial)));
           setTotalCount(prevCount => Math.max(0, prevCount - selectedRowIds.length));
         } else {
           setData(prev => prev.map((item) =>
-            selectedRowIds.includes(item.id)
+            (selectedRowIds.includes(item.id) || selectedRowIds.includes(item.id_sequencial))
               ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
               : item
           ));
@@ -1343,15 +1349,15 @@ const GenericList = () => {
           : `${count} itens atualizados com sucesso!`
         );
       } else {
-        const idToUpdate = selectedRowId;
+        const idToUpdate = selectedItem?.id_sequencial ?? selectedRowId;
         await api.put(`/generic/${modelName}/${idToUpdate}`, payload);
 
         if (statusFilter) {
-          setData(prev => prev.filter((item) => item.id !== idToUpdate));
+          setData(prev => prev.filter((item) => item.id !== selectedRowId && item.id_sequencial !== selectedRowId && item.id_sequencial !== idToUpdate && item.id !== idToUpdate));
           setTotalCount(prevCount => Math.max(0, prevCount - 1));
         } else {
           setData(prev => prev.map((item) =>
-            item.id === idToUpdate
+            (item.id === selectedRowId || item.id_sequencial === selectedRowId || item.id_sequencial === idToUpdate)
               ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
               : item
           ));
@@ -1527,7 +1533,7 @@ const GenericList = () => {
   };
 
   const handleImportMagentoOrder = () => {
-    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    const toImport = selectedRowIds.filter(id => !data.find(d => (d.id === id || d.order_sn === id || d.id_sequencial === id))?.ja_importado);
     if (toImport.length === 0) {
       toast.info("Os pedidos selecionados já foram importados.");
       return;
@@ -1537,7 +1543,7 @@ const GenericList = () => {
   };
 
   const handleImportMeliOrder = () => {
-    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    const toImport = selectedRowIds.filter(id => !data.find(d => (d.id === id || d.order_sn === id || d.id_sequencial === id))?.ja_importado);
     if (toImport.length === 0) {
       toast.info("Os pedidos selecionados já foram importados.");
       return;
@@ -1547,7 +1553,7 @@ const GenericList = () => {
   };
 
   const handleImportTiktokOrder = () => {
-    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    const toImport = selectedRowIds.filter(id => !data.find(d => (d.id === id || d.order_sn === id || d.id_sequencial === id))?.ja_importado);
     if (toImport.length === 0) {
       toast.info("Os pedidos selecionados já foram importados.");
       return;
@@ -1557,7 +1563,7 @@ const GenericList = () => {
   };
 
   const handleImportShopeeOrder = () => {
-    const toImport = selectedRowIds.filter(id => !data.find(d => d.id === id)?.ja_importado);
+    const toImport = selectedRowIds.filter(id => !data.find(d => (d.id === id || d.order_sn === id || d.id_sequencial === id))?.ja_importado);
     if (toImport.length === 0) {
       toast.info("Os pedidos selecionados já foram importados.");
       return;
@@ -2545,7 +2551,7 @@ const GenericList = () => {
     if (e.shiftKey && anchorIndex !== -1) {
       const start = Math.min(anchorIndex, index);
       const end = Math.max(anchorIndex, index);
-      const rangeIds = data.slice(start, end + 1).map(item => item.id);
+      const rangeIds = data.slice(start, end + 1).map(item => item.id_sequencial ?? item.id ?? item.order_sn);
       setSelectedRowIds(rangeIds);
       setFocusIndex(index);
     } else if (e.ctrlKey || e.metaKey) {
@@ -2579,9 +2585,10 @@ const GenericList = () => {
       if (anchorIndex === -1) setAnchorIndex(currentFocus);
       const start = Math.min(anchor, nextFocus);
       const end = Math.max(anchor, nextFocus);
-      setSelectedRowIds(data.slice(start, end + 1).map(item => item.id));
+      setSelectedRowIds(data.slice(start, end + 1).map(item => item.id_sequencial ?? item.id ?? item.order_sn));
     } else {
-      setSelectedRowIds([data[nextFocus].id]);
+      const nextItem = data[nextFocus];
+      setSelectedRowIds([nextItem.id_sequencial ?? nextItem.id ?? nextItem.order_sn]);
       setAnchorIndex(nextFocus);
     }
     setFocusIndex(nextFocus);
@@ -4269,7 +4276,7 @@ const GenericList = () => {
                     };
 
                     const renderRow = (item, index) => {
-                      const rowId = item.id ?? item.order_sn ?? item.id_sequencial;
+                      const rowId = item.id_sequencial ?? item.id ?? item.order_sn;
                       return (
                         <tr
                           key={rowId}
