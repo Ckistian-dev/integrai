@@ -298,6 +298,7 @@ class EmbalagemUpdate(BaseModel):
 
 class Embalagem(EmbalagemBase):  # RENOMEADO de EmbalagemRead para Embalagem
     id: int
+    id_sequencial: Optional[int] = None
     id_empresa: int
 
     class Config:
@@ -376,6 +377,7 @@ class ProdutoUpdate(BaseModel):
 
 class Produto(ProdutoBase):  # RENOMEADO de ProdutoRead para Produto
     id: int
+    id_sequencial: Optional[int] = None
     id_empresa: int
     
     embalagem: Optional["Embalagem"] = None # Atualizada a referência

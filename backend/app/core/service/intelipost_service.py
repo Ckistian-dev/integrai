@@ -138,7 +138,7 @@ class IntelipostService:
         # Verifica se o produto tem embalagem definida e regras
         if produto.id_embalagem:
             embalagem = self.db.query(models.Embalagem).filter(
-                models.Embalagem.id == produto.id_embalagem,
+                (models.Embalagem.id_sequencial == produto.id_embalagem) | (models.Embalagem.id == produto.id_embalagem),
                 models.Embalagem.id_empresa == self.id_empresa
             ).first()
 

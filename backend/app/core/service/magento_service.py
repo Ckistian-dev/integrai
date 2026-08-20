@@ -331,7 +331,7 @@ class MagentoService:
         if not carrier_name:
             return None
             
-        # Busca no banco (Nome ou Fantasia CONTÉM o nome extraído)
+        # Busca 1: Nome ou Fantasia CONTÉM o nome extraído
         carrier = self.db.query(models.Cadastro).filter(
             or_(
                 models.Cadastro.nome_razao.ilike(f"%{carrier_name}%"),
@@ -341,6 +341,19 @@ class MagentoService:
             models.Cadastro.id_empresa == self.id_empresa
         ).first()
         
+        # Busca 2: Se não encontrou, verifica se o nome ou fantasia de alguma transportadora da empresa está contido na descrição
+        if not carrier:
+            carriers = self.db.query(models.Cadastro).filter(
+                models.Cadastro.tipo_cadastro == CadastroTipoCadastroEnum.transportadora,
+                models.Cadastro.id_empresa == self.id_empresa,
+                models.Cadastro.situacao == True
+            ).all()
+            for c in carriers:
+                c_name = (c.fantasia or c.nome_razao or "").strip()
+                if c_name and c_name.lower() in clean_desc.lower():
+                    carrier = c
+                    break
+
         return carrier
 
     def import_order(self, magento_entity_id: int):

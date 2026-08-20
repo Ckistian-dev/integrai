@@ -1382,8 +1382,9 @@ const GenericList = () => {
     setIsProgramacaoModalOpen(true); // Abre o modal (vai mostrar um loading)
 
     try {
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
       // Busca o pedido completo
-      const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+      const res = await api.get(`/generic/pedidos/${targetId}`);
       setCurrentPedidoDetails(res.data); // Seta os dados
 
     } catch (err) {
@@ -1408,7 +1409,8 @@ const GenericList = () => {
     // Aqui vou assumir que precisamos buscar os detalhes completos (incluindo itens JSON)
     try {
       setIsFetchingData(true);
-      const res = await api.get(`/generic/pedidos/${itemRow.id}`);
+      const targetId = itemRow.id_sequencial ?? itemRow.id;
+      const res = await api.get(`/generic/pedidos/${targetId}`);
       setPedidoParaCotar(res.data);
       setIsIntelipostModalOpen(true);
     } catch (err) {
@@ -1422,8 +1424,9 @@ const GenericList = () => {
     if (!pedidoParaCotar) return;
 
     try {
+      const targetId = pedidoParaCotar.id_sequencial ?? pedidoParaCotar.id;
       // Atualiza o pedido com os dados do frete (PATCH ou PUT)
-      await api.put(`/generic/pedidos/${pedidoParaCotar.id}`, {
+      await api.put(`/generic/pedidos/${targetId}`, {
         valor_frete: Number(dadosFrete.valor_frete || 0).toFixed(2),
         id_transportadora: dadosFrete.transportadora_id,
         modalidade_frete: dadosFrete.modalidade_frete,
@@ -1968,15 +1971,16 @@ const GenericList = () => {
     if (!selectedRowId) return;
 
     try {
+      const targetId = selectedItem?.id_sequencial ?? currentPedidoDetails?.id_sequencial ?? selectedRowId;
       // O modal já preparou o payload, só precisamos enviar
-      await api.put(`/generic/pedidos/${selectedRowId}`, payload);
+      await api.put(`/generic/pedidos/${targetId}`, payload);
 
       // Navega para a aba da nova situação (Produção)
       navigate(`/pedidos/${payload.situacao}`);
 
       // Sucesso! Remove o item da lista atual
-      setData(data.filter((item) => item.id !== selectedRowId));
-      setTotalCount(prevCount => prevCount - 1);
+      setData(data.filter((item) => item.id !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
+      setTotalCount(prevCount => Math.max(0, prevCount - 1));
       setSelectedRowIds([]);
 
       // Fecha o modal
@@ -2099,7 +2103,8 @@ const GenericList = () => {
     setConferenciaConfig(actionDetails); // Salva a config (título, novo status, etc)
 
     try {
-      const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      const res = await api.get(`/generic/pedidos/${targetId}`);
       const rawPedido = res.data;
       const pedidoAdaptado = {
         ...rawPedido,
@@ -2124,7 +2129,8 @@ const GenericList = () => {
     if (!selectedRowId || !conferenciaConfig) return;
 
     try {
-      await api.put(`/generic/pedidos/${selectedRowId}`, {
+      const targetId = selectedItem?.id_sequencial ?? currentPedidoDetails?.id_sequencial ?? selectedRowId;
+      await api.put(`/generic/pedidos/${targetId}`, {
         situacao: conferenciaConfig.newStatus,
         ...modalData
       });
@@ -2136,7 +2142,7 @@ const GenericList = () => {
           if (modalData.volumes_quantidade) {
             params.volumes = modalData.volumes_quantidade;
           }
-          const response = await api.get(`/pedidos/etiqueta_volume/${selectedRowId}`, {
+          const response = await api.get(`/pedidos/etiqueta_volume/${targetId}`, {
             params,
             responseType: 'blob'
           });
@@ -2153,8 +2159,8 @@ const GenericList = () => {
         : conferenciaConfig.newStatus;
       navigate(`/pedidos/${targetTab}`);
 
-      setData(data.filter((item) => item.id !== selectedRowId));
-      setTotalCount(prev => prev - 1);
+      setData(data.filter((item) => item.id !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
+      setTotalCount(prev => Math.max(0, prev - 1));
       setSelectedRowIds([]);
       handleCloseConferenciaModal();
     } catch (err) {
@@ -2170,7 +2176,8 @@ const GenericList = () => {
 
     setIsFetchingDetails(true);
     try {
-      const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      const res = await api.get(`/generic/pedidos/${targetId}`);
       const rawPedido = res.data;
 
       // O modal de visualização espera um formato um pouco diferente do que a API retorna.
@@ -3697,7 +3704,8 @@ const GenericList = () => {
                       // Busca detalhes completos antes de abrir
                       setIsFetchingDetails(true);
                       try {
-                        const res = await api.get(`/generic/pedidos/${selectedRowId}`);
+                        const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+                        const res = await api.get(`/generic/pedidos/${targetId}`);
                         setPedidoParaFaturar(res.data);
                         setIsFaturamentoModalOpen(true);
                       } catch (err) {
@@ -3720,11 +3728,16 @@ const GenericList = () => {
                       setIsFetchingData(true);
                       let response;
                       if (selectedRowIds.length > 1) {
-                        response = await api.post(`/pedidos/etiqueta-lote`, { pedido_ids: selectedRowIds }, {
+                        const targetIds = selectedRowIds.map(id => {
+                          const itm = data.find(i => i.id === id);
+                          return itm?.id_sequencial ?? id;
+                        });
+                        response = await api.post(`/pedidos/etiqueta-lote`, { pedido_ids: targetIds }, {
                           responseType: 'blob'
                         });
                       } else {
-                        response = await api.get(`/pedidos/etiqueta/${selectedRowId}`, {
+                        const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+                        response = await api.get(`/pedidos/etiqueta/${targetId}`, {
                           responseType: 'blob'
                         });
                       }
@@ -3742,7 +3755,8 @@ const GenericList = () => {
                   onClickAction = async () => {
                     try {
                       setIsFetchingData(true);
-                      const response = await api.get(`/pedidos/etiqueta_volume/${selectedRowId}`, {
+                      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+                      const response = await api.get(`/pedidos/etiqueta_volume/${targetId}`, {
                         responseType: 'blob'
                       });
                       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));

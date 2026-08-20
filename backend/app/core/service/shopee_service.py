@@ -14,7 +14,8 @@ from fastapi import HTTPException
 from app.core.db import models
 from app.core.db.models import (
     CadastroTipoPessoaEnum, CadastroTipoCadastroEnum,
-    PedidoModalidadeFreteEnum, PedidoSituacaoEnum
+    PedidoModalidadeFreteEnum, PedidoSituacaoEnum,
+    FiscalPagamentoEnum, CadastroIndicadorIEEnum
 )
 
 logger = logging.getLogger(__name__)
@@ -271,7 +272,7 @@ class ShopeeService:
                         "shop_id": int(shop_id),
                         "sign": detail_sign,
                         "order_sn_list": ",".join(chunk),
-                        "response_optional_fields": "buyer_user_id,buyer_username,recipient_address,item_list,total_amount,shipping_carrier,payment_method"
+                        "response_optional_fields": "buyer_user_id,buyer_username,buyer_cpf_id,buyer_cnpj_id,recipient_address,item_list,total_amount,shipping_carrier,payment_method,invoice_data"
                     }
 
                     detail_resp = requests.get(f"{self.api_base}{detail_path}", params=detail_params, timeout=10.0)
@@ -419,6 +420,254 @@ class ShopeeService:
             "extra": {"available_filters": dynamic_filters}
         }
 
+    def _normalize_uf(self, state: str) -> str:
+        if not state:
+            return "EX"
+        state_clean = str(state).strip().upper()
+        if len(state_clean) == 2:
+            return state_clean
+        
+        uf_map = {
+            'ACRE': 'AC', 'ALAGOAS': 'AL', 'AMAPA': 'AP', 'AMAZONAS': 'AM',
+            'BAHIA': 'BA', 'CEARA': 'CE', 'DISTRITO FEDERAL': 'DF', 'ESPIRITO SANTO': 'ES',
+            'GOIAS': 'GO', 'MARANHAO': 'MA', 'MATO GROSSO': 'MT', 'MATO GROSSO DO SUL': 'MS',
+            'MINAS GERAIS': 'MG', 'PARA': 'PA', 'PARAIBA': 'PB', 'PARANA': 'PR',
+            'PERNAMBUCO': 'PE', 'PIAUI': 'PI', 'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN',
+            'RIO GRANDE DO SUL': 'RS', 'RONDONIA': 'RO', 'RORAIMA': 'RR', 'SANTA CATARINA': 'SC',
+            'SAO PAULO': 'SP', 'SERGIPE': 'SE', 'TOCANTINS': 'TO'
+        }
+        import unicodedata
+        nfkd = unicodedata.normalize('NFKD', state_clean)
+        state_ascii = "".join([c for c in nfkd if not unicodedata.combining(c)])
+        return uf_map.get(state_ascii, state_clean[:2])
+
+    def _map_payment_method(self, method_str: str) -> Tuple[FiscalPagamentoEnum, str]:
+        if not method_str:
+            return FiscalPagamentoEnum.outros, "Outros"
+        
+        m_upper = method_str.strip().upper()
+        if "PIX" in m_upper:
+            return FiscalPagamentoEnum.pix, "PIX"
+        elif "CREDIT" in m_upper or "CREDITO" in m_upper:
+            return FiscalPagamentoEnum.cartao_credito, "CARTÃO DE CRÉDITO"
+        elif "DEBIT" in m_upper or "DEBITO" in m_upper:
+            return FiscalPagamentoEnum.cartao_debito, "CARTÃO DÉBITO"
+        elif "BOLETO" in m_upper:
+            return FiscalPagamentoEnum.boleto_bancario, "BOLETO BANCÁRIO"
+        elif "SHOPEEPAY" in m_upper or "WALLET" in m_upper:
+            return FiscalPagamentoEnum.outros, "SHOPEEPAY"
+        else:
+            return FiscalPagamentoEnum.outros, method_str.upper()
+
+    def _map_shopee_status_to_erp(self, order_status: str) -> PedidoSituacaoEnum:
+        st = str(order_status or '').upper()
+        if st == 'UNPAID':
+            return PedidoSituacaoEnum.orcamento
+        elif st in ['CANCELLED', 'IN_CANCEL']:
+            return PedidoSituacaoEnum.cancelado
+        elif st in ['SHIPPED', 'COMPLETED']:
+            return PedidoSituacaoEnum.despachado
+        else:
+            # READY_TO_SHIP, PROCESSED, INVOICE_PENDING
+            return self.config.situacao_pedido_inicial or PedidoSituacaoEnum.aprovacao
+
+    def _extract_cpf_cnpj(self, order_data: dict, address: dict) -> Tuple[str, CadastroTipoPessoaEnum]:
+        """
+        Extrai o CPF ou CNPJ do comprador segundo a especificação oficial da API OpenAPI v2 da Shopee (Brasil).
+        Campos oficiais da API Shopee:
+        - buyer_cpf_id (CPF do comprador em pedidos no Brasil)
+        - buyer_cnpj_id (CNPJ do comprador para contas PJ no Brasil)
+        - invoice_data.tax_code (Código tributário/fiscal do comprador)
+        - recipient_address.tax_code / recipient_address.cpf
+        """
+        invoice_data = order_data.get('invoice_data') or {}
+        
+        # 1. Campo oficial de CPF do comprador da Shopee no Brasil (buyer_cpf_id)
+        buyer_cpf = order_data.get('buyer_cpf_id') or order_data.get('buyer_cpf')
+        if buyer_cpf:
+            clean = "".join(filter(str.isdigit, str(buyer_cpf)))
+            if len(clean) == 11 and clean != '00000000000':
+                return clean, CadastroTipoPessoaEnum.fisica
+
+        # 2. Campo oficial de CNPJ do comprador da Shopee no Brasil (buyer_cnpj_id)
+        buyer_cnpj = order_data.get('buyer_cnpj_id') or order_data.get('buyer_cnpj')
+        if buyer_cnpj:
+            clean = "".join(filter(str.isdigit, str(buyer_cnpj)))
+            if len(clean) == 14:
+                return clean, CadastroTipoPessoaEnum.juridica
+
+        # 3. Campo de identificação fiscal retornado em invoice_data (tax_code)
+        tax_code = invoice_data.get('tax_code') or invoice_data.get('buyer_cpf') or invoice_data.get('cpf')
+        if tax_code:
+            clean = "".join(filter(str.isdigit, str(tax_code)))
+            if len(clean) == 14:
+                return clean, CadastroTipoPessoaEnum.juridica
+            elif len(clean) == 11 and clean != '00000000000':
+                return clean, CadastroTipoPessoaEnum.fisica
+
+        # 4. Campos fiscais no objeto recipient_address
+        addr_tax = address.get('tax_code') or address.get('tax_id') or address.get('cpf') or address.get('buyer_cpf')
+        if addr_tax:
+            clean = "".join(filter(str.isdigit, str(addr_tax)))
+            if len(clean) == 14:
+                return clean, CadastroTipoPessoaEnum.juridica
+            elif len(clean) == 11 and clean != '00000000000':
+                return clean, CadastroTipoPessoaEnum.fisica
+
+        return '00000000000', CadastroTipoPessoaEnum.fisica
+
+    def _parse_shopee_address(self, address: dict) -> Dict[str, Optional[str]]:
+        full_addr = str(address.get('full_address') or address.get('address') or address.get('street') or '').strip()
+        
+        street = str(address.get('street') or address.get('address') or '').strip()
+        number = str(address.get('number') or address.get('house_number') or '').strip()
+        complement = str(address.get('complement') or address.get('address_2') or '').strip()
+        district = str(address.get('district') or address.get('town') or address.get('bairro') or '').strip()
+        city = str(address.get('city') or '').strip()
+        state = str(address.get('state') or '').strip()
+        zipcode = str(address.get('zipcode') or '').strip()
+
+        logradouro = ""
+        if street and street != full_addr and ',' not in street:
+            logradouro = street
+
+        if full_addr:
+            parts = [p.strip() for p in full_addr.split(',') if p.strip()]
+            cleaned_parts = []
+            zip_digits = "".join(filter(str.isdigit, zipcode))
+            for p in parts:
+                p_digits = "".join(filter(str.isdigit, p))
+                if p_digits and len(p_digits) >= 8 and (zip_digits and p_digits == zip_digits):
+                    continue
+                if city and p.lower() == city.lower():
+                    continue
+                if state and (p.lower() == state.lower() or p.upper() == self._normalize_uf(state)):
+                    continue
+                cleaned_parts.append(p)
+
+            if cleaned_parts:
+                if not logradouro:
+                    logradouro = cleaned_parts[0]
+                
+                if len(cleaned_parts) > 1 and not number:
+                    possible_num = cleaned_parts[1]
+                    if any(c.isdigit() for c in possible_num) or 'sn' in possible_num.lower() or 's/n' in possible_num.lower() or 'sem num' in possible_num.lower():
+                        number = possible_num
+                    elif not complement:
+                        complement = possible_num
+
+                if len(cleaned_parts) > 2:
+                    remaining = cleaned_parts[2:]
+                    for rem in remaining:
+                        if district and rem.lower() == district.lower():
+                            continue
+                        if not complement:
+                            complement = rem
+                        elif rem not in complement:
+                            complement += f", {rem}"
+
+        if not logradouro:
+            logradouro = full_addr or "Endereço não informado"
+
+        if not number:
+            import re
+            match = re.search(r'(?:,?\s*nº?\s*|,?\s*)([0-9]+[a-zA-Z]?|s/n|sn)$', logradouro, re.IGNORECASE)
+            if match:
+                number = match.group(1)
+                logradouro = logradouro[:match.start()].strip().rstrip(',')
+            else:
+                number = "S/N"
+
+        cep_formatted = "".join(filter(str.isdigit, zipcode))[:9]
+        if len(cep_formatted) == 8:
+            cep_formatted = f"{cep_formatted[:5]}-{cep_formatted[5:]}"
+
+        return {
+            "logradouro": logradouro[:255],
+            "numero": number[:20],
+            "complemento": complement[:100] if complement else None,
+            "bairro": district[:100] if district else None,
+            "cidade": city[:100] if city else None,
+            "estado": self._normalize_uf(state)[:2],
+            "cep": cep_formatted
+        }
+
+    def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
+        address = order_data.get('recipient_address', {})
+        buyer_user = order_data.get('buyer_username')
+        recipient_name = address.get('name')
+        
+        nome_razao = str(recipient_name or buyer_user or "CLIENTE SHOPEE").strip().upper()[:100]
+        fantasia = str(buyer_user).strip()[:100] if buyer_user else None
+        
+        cpf_cnpj, tipo_pessoa = self._extract_cpf_cnpj(order_data, address)
+        phone = "".join(filter(str.isdigit, str(address.get('phone') or '')))[:20]
+        
+        parsed_addr = self._parse_shopee_address(address)
+
+        cliente_existente = None
+        if cpf_cnpj != '00000000000':
+            cliente_existente = self.db.query(models.Cadastro).filter(
+                models.Cadastro.cpf_cnpj == cpf_cnpj,
+                models.Cadastro.id_empresa == self.id_empresa,
+                models.Cadastro.tipo_cadastro == CadastroTipoCadastroEnum.cliente
+            ).first()
+
+        if not cliente_existente:
+            cliente_existente = self.db.query(models.Cadastro).filter(
+                models.Cadastro.nome_razao == nome_razao,
+                models.Cadastro.id_empresa == self.id_empresa,
+                models.Cadastro.tipo_cadastro == CadastroTipoCadastroEnum.cliente
+            ).first()
+
+        if cliente_existente:
+            if cpf_cnpj != '00000000000' and cliente_existente.cpf_cnpj == '00000000000':
+                cliente_existente.cpf_cnpj = cpf_cnpj
+                cliente_existente.tipo_pessoa = tipo_pessoa
+            if phone:
+                cliente_existente.telefone = phone
+                cliente_existente.celular = phone
+            if parsed_addr["cep"]:
+                cliente_existente.cep = parsed_addr["cep"]
+            if parsed_addr["estado"]:
+                cliente_existente.estado = parsed_addr["estado"]
+            if parsed_addr["cidade"]:
+                cliente_existente.cidade = parsed_addr["cidade"]
+            if parsed_addr["bairro"]:
+                cliente_existente.bairro = parsed_addr["bairro"]
+            if parsed_addr["logradouro"]:
+                cliente_existente.logradouro = parsed_addr["logradouro"]
+            if parsed_addr["numero"]:
+                cliente_existente.numero = parsed_addr["numero"]
+            if parsed_addr["complemento"]:
+                cliente_existente.complemento = parsed_addr["complemento"]
+            self.db.commit()
+            return cliente_existente
+
+        novo_cliente = models.Cadastro(
+            id_empresa=self.id_empresa,
+            cpf_cnpj=cpf_cnpj,
+            nome_razao=nome_razao,
+            fantasia=fantasia,
+            tipo_cadastro=CadastroTipoCadastroEnum.cliente,
+            tipo_pessoa=tipo_pessoa,
+            indicador_ie=CadastroIndicadorIEEnum.nao_contribuinte,
+            telefone=phone,
+            celular=phone,
+            cep=parsed_addr["cep"],
+            estado=parsed_addr["estado"],
+            cidade=parsed_addr["cidade"],
+            bairro=parsed_addr["bairro"],
+            logradouro=parsed_addr["logradouro"],
+            numero=parsed_addr["numero"],
+            complemento=parsed_addr["complemento"],
+            situacao=True
+        )
+        self.db.add(novo_cliente)
+        self.db.commit()
+        self.db.refresh(novo_cliente)
+        return novo_cliente
+
     def import_order(self, order_sn: str) -> Tuple[models.Pedido, List[str]]:
         """
         Importa um pedido específico da Shopee utilizando a coluna dedicada shopee_order_sn.
@@ -452,7 +701,7 @@ class ShopeeService:
                 "shop_id": int(shop_id),
                 "sign": sign,
                 "order_sn_list": order_sn,
-                "response_optional_fields": "buyer_user_id,buyer_username,recipient_address,item_list,total_amount,shipping_fee,shipping_carrier,payment_method,invoice_data"
+                "response_optional_fields": "buyer_user_id,buyer_username,buyer_cpf_id,buyer_cnpj_id,recipient_address,item_list,total_amount,shipping_fee,actual_shipping_fee,shipping_carrier,payment_method,invoice_data,pay_time,dropshipper,dropshipper_phone,note,cancel_reason,cancel_by,buyer_cancel_reason,package_list,tax_amount"
             }
 
             resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
@@ -495,29 +744,41 @@ class ShopeeService:
         # 3. Busca ou Cria Cliente
         cliente_erp = self._find_or_create_customer(order_data)
 
-        # 4. Processa Itens e SKUs
+        # 4. Processa Itens, SKUs e Pesos
         itens_erp = []
         produtos_criados = []
         total_calculado = 0.0
+        total_peso = 0.0
 
         for item in order_data.get('item_list', []):
-            sku = item.get('item_sku') or f"SHOPEE-{item.get('item_id', 'PROD')}"
+            sku = item.get('model_sku') or item.get('item_sku') or f"SHOPEE-{item.get('item_id', 'PROD')}"
+            item_name = str(item.get('item_name', 'Produto Importado Shopee')).strip()
+            model_name = str(item.get('model_name', '')).strip()
+            if model_name:
+                desc_completa = f"{item_name} - {model_name}"
+            else:
+                desc_completa = item_name
 
             produto = self.db.query(models.Produto).filter(
                 models.Produto.sku == sku,
                 models.Produto.id_empresa == self.id_empresa
             ).first()
 
+            preco = float(item.get('model_discounted_price') or item.get('model_original_price') or 0.0)
+            peso_item = float(item.get('weight', 0.0))
+
             if not produto:
                 produto = models.Produto(
                     id_empresa=self.id_empresa,
                     sku=sku,
-                    descricao=str(item.get('item_name', 'Produto Importado Shopee'))[:255],
+                    gtin=item.get('gtin') or item.get('ean'),
+                    descricao=desc_completa[:255],
                     unidade=models.ProdutoUnidadeEnum.un,
                     tipo_produto=models.ProdutoTipoEnum.mercadoria_revenda,
                     origem=models.ProdutoOrigemEnum.nacional,
-                    preco=float(item.get('model_discounted_price', 0.0)),
+                    preco=preco,
                     custo=0,
+                    peso=peso_item,
                     situacao=True
                 )
                 self.db.add(produto)
@@ -526,8 +787,12 @@ class ShopeeService:
                 produtos_criados.append(sku)
 
             qtd = int(float(item.get('model_quantity_purchased', 1)))
-            preco = float(item.get('model_discounted_price', 0.0))
             subtotal = round(qtd * preco, 2)
+
+            # Cálculo do IPI do Item com base na alíquota cadastrada no Produto
+            ipi_aliquota = float(getattr(produto, 'ipi_aliquota', 0.0) or 0.0)
+            valor_ipi = round(subtotal * (ipi_aliquota / 100.0), 2)
+            total_com_ipi = round(subtotal + valor_ipi, 2)
 
             itens_erp.append({
                 "id_produto": produto.id,
@@ -536,21 +801,54 @@ class ShopeeService:
                 "quantidade": qtd,
                 "valor_unitario": preco,
                 "subtotal": subtotal,
+                "ipi_aliquota": ipi_aliquota,
+                "valor_ipi": valor_ipi,
+                "total_com_ipi": total_com_ipi,
             })
             total_calculado += subtotal
+            total_peso += (peso_item * qtd)
 
         address = order_data.get('recipient_address', {})
         shipping_fee = float(order_data.get('shipping_fee', 0.0))
 
-        # 5. Cria Pedido com preenchimento DIRETO nas colunas dedicadas
+        # Cálculo da Média Ponderada da Alíquota de IPI dos itens para incidência no Frete
+        weighted_ipi_percent = 0.0
+        if total_calculado > 0:
+            soma_ponderada_ipi = sum(it["subtotal"] * it["ipi_aliquota"] for it in itens_erp)
+            weighted_ipi_percent = soma_ponderada_ipi / total_calculado
+
+        # IPI sobre Frete e Total do Frete (c/ IPI)
+        ipi_frete_val = round(shipping_fee * (weighted_ipi_percent / 100.0), 2)
+        total_frete_val = round(shipping_fee + ipi_frete_val, 2)
+
+        # Total do Pedido com IPI dos Produtos e do Frete
+        total_itens_com_ipi = sum(it["total_com_ipi"] for it in itens_erp)
+        total_amount = round(total_itens_com_ipi + total_frete_val, 2)
+
+        # Mapeia Pagamento e Situação
+        pagamento_enum, pagamento_desc = self._map_payment_method(order_data.get('payment_method'))
+        situacao_erp = self._map_shopee_status_to_erp(order_data.get('order_status'))
+
+        # Trata Datas
+        create_timestamp = order_data.get('create_time')
+        if create_timestamp:
+            dt_pedido = datetime.fromtimestamp(create_timestamp)
+        else:
+            dt_pedido = datetime.now()
+
+        # Endereço Formatado Inteligente
+        parsed_addr = self._parse_shopee_address(address)
+
+        # 5. Cria Pedido com preenchimento COMPLETO nas colunas ERP
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
             id_cliente=cliente_erp.id_sequencial if cliente_erp else None,
             id_vendedor=self.config.vendedor_padrao_id,
-            situacao=self.config.situacao_pedido_inicial,
+            situacao=situacao_erp,
             caixa_destino_origem=self.config.caixa_padrao,
-            data_orcamento=datetime.now(),
-            data_validade=datetime.now(),
+            data_orcamento=dt_pedido.date(),
+            data_pedido=dt_pedido.date(),
+            data_validade=dt_pedido.date(),
             origem_venda="Shopee",
             
             # --- COLUNAS DEDICADAS DA SHOPEE ---
@@ -561,17 +859,41 @@ class ShopeeService:
             shopee_shipping_carrier=str(order_data.get('shipping_carrier', '')),
             shopee_xml_enviado=False,
 
-            total=float(order_data.get('total_amount') or total_calculado),
+            # --- VALORES E FRETE ---
+            total=total_amount,
             valor_frete=shipping_fee,
+            ipi_frete=ipi_frete_val,
+            total_frete=total_frete_val,
             modalidade_frete=PedidoModalidadeFreteEnum.cif,
 
-            endereco_cep=str(address.get('zipcode', ''))[:9],
-            endereco_logradouro=address.get('full_address') or address.get('address'),
-            endereco_cidade=address.get('city'),
-            endereco_estado=address.get('state'),
+            # --- VOLUMES ---
+            volumes_quantidade=len(order_data.get('package_list', [])) or 1,
+            volumes_especie="CAIXA",
+            volumes_peso_bruto=round(total_peso, 3),
+            volumes_peso_liquido=round(total_peso, 3),
 
+            # --- ENDEREÇO DE ENTREGA ---
+            endereco_cep=parsed_addr["cep"],
+            endereco_logradouro=parsed_addr["logradouro"],
+            endereco_numero=parsed_addr["numero"],
+            endereco_bairro=parsed_addr["bairro"],
+            endereco_cidade=parsed_addr["cidade"],
+            endereco_estado=parsed_addr["estado"],
+            endereco_complemento=parsed_addr["complemento"],
+
+            # --- PAGAMENTO ---
+            pagamento=pagamento_enum,
+            pagamento_descricao=pagamento_desc,
+            pagamentos=[{
+                "forma": pagamento_enum.value,
+                "descricao": pagamento_desc,
+                "valor": total_amount
+            }],
+
+            # --- ITENS E OBSERVAÇÕES ---
             itens=itens_erp,
-            observacao=f"Pedido importado do Shopee. ID Shopee: {order_sn}"
+            observacao=f"Pedido importado do Shopee. ID Shopee: {order_sn}. Status: {order_data.get('order_status', '')}. Obs Cliente: {order_data.get('note', '')}".strip(),
+            observacoes_nf=f"Pedido Shopee {order_sn}"
         )
 
         self.db.add(novo_pedido)
@@ -580,30 +902,6 @@ class ShopeeService:
 
         logger.info(f"Pedido Shopee {order_sn} importado com sucesso. ID ERP: {novo_pedido.id}")
         return novo_pedido, produtos_criados
-
-    def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
-        address = order_data.get('recipient_address', {})
-        username = order_data.get('buyer_username') or address.get('name') or "CLIENTE SHOPEE"
-        phone = address.get('phone')
-
-        novo_cliente = models.Cadastro(
-            id_empresa=self.id_empresa,
-            cpf_cnpj='00000000000',
-            nome_razao=str(username).upper(),
-            tipo_cadastro=CadastroTipoCadastroEnum.cliente,
-            tipo_pessoa=CadastroTipoPessoaEnum.fisica,
-            telefone="".join(filter(str.isdigit, str(phone or '')))[:20],
-            cep="".join(filter(str.isdigit, str(address.get('zipcode') or '')))[:9],
-            estado=address.get('state'),
-            cidade=address.get('city'),
-            logradouro=address.get('full_address') or address.get('address'),
-            numero='S/N',
-            situacao=True
-        )
-        self.db.add(novo_cliente)
-        self.db.commit()
-        self.db.refresh(novo_cliente)
-        return novo_cliente
 
     def update_shopee_order_status(self, pedido: models.Pedido) -> Dict[str, Any]:
         """

@@ -338,16 +338,27 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
                           {emp_clause}
                     """))
 
-            # Recria constraints apontando para id_sequencial
+            # Recria constraints apontando para id_sequencial ou id_empresa, id_sequencial se for id_sequencial
             for c in dropped_constraints:
                 target_col = "id_sequencial" if c["foreign_column"] == "id" else c["foreign_column"]
                 try:
-                    conn.execute(text(f"""
-                        ALTER TABLE "{c['table']}"
-                        ADD CONSTRAINT "{c['constraint']}"
-                        FOREIGN KEY ("{c['column']}")
-                        REFERENCES "{c['foreign_table']}" ("{target_col}")
-                    """))
+                    source_cols = {col["name"].lower() for col in inspector.get_columns(c['table'])}
+                    target_cols = {col["name"].lower() for col in inspector.get_columns(c['foreign_table'])}
+                    if target_col == "id_sequencial" and "id_empresa" in source_cols and "id_empresa" in target_cols:
+                        conn.execute(text(f"""
+                            ALTER TABLE "{c['table']}"
+                            ADD CONSTRAINT "{c['constraint']}"
+                            FOREIGN KEY ("id_empresa", "{c['column']}")
+                            REFERENCES "{c['foreign_table']}" ("id_empresa", "id_sequencial")
+                            ON DELETE SET NULL ON UPDATE CASCADE
+                        """))
+                    else:
+                        conn.execute(text(f"""
+                            ALTER TABLE "{c['table']}"
+                            ADD CONSTRAINT "{c['constraint']}"
+                            FOREIGN KEY ("{c['column']}")
+                            REFERENCES "{c['foreign_table']}" ("{target_col}")
+                        """))
                     logger.info(f"[MIGRAÇÃO] Constraint {c['constraint']} recriada -> {c['foreign_table']}.{target_col}")
                 except Exception as recreate_err:
                     logger.warning(f"[MIGRAÇÃO] Não foi possível recriar {c['constraint']}: {recreate_err}")
@@ -357,6 +368,70 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
     except Exception as e:
         logger.error(f"[MIGRAÇÃO] FASE 3 (drop/recreate) falhou: {e}")
         return False
+
+
+def fix_legacy_foreign_keys(engine: Engine):
+    """
+    Inspeciona e remove constraints monocoluna legadas (apontando para cadastros.id, etc.)
+    e garante as novas FKs compostas por (id_empresa, col_name) -> target_table(id_empresa, id_sequencial).
+    """
+    logger.info("[MIGRAÇÃO] Verificando e corrigindo FKs monocoluna legadas...")
+    
+    fk_configs = [
+        ("pedidos", "id_transportadora", "cadastros", "fk_pedidos_transportadora_empresa_seq"),
+        ("pedidos", "id_cliente", "cadastros", "fk_pedidos_cliente_empresa_seq"),
+        ("pedidos", "id_vendedor", "cadastros", "fk_pedidos_vendedor_empresa_seq"),
+        ("produtos", "id_fornecedor", "cadastros", "fk_produtos_fornecedor_empresa_seq"),
+        ("produtos", "id_embalagem", "embalagens", "fk_produtos_embalagem_empresa_seq"),
+        ("contas", "id_fornecedor", "cadastros", "fk_contas_fornecedor_empresa_seq"),
+        ("estoque", "id_produto", "produtos", "fk_estoque_produto_empresa_seq"),
+    ]
+
+    try:
+        with engine.begin() as conn:
+            for tbl, col_name, target_tbl, new_constraint_name in fk_configs:
+                # Busca constraints existentes na tabela que utilizam a coluna col_name
+                fk_constraints = conn.execute(text("""
+                    SELECT tc.constraint_name, ccu.column_name AS foreign_column
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                      AND tc.table_name = :tbl
+                      AND kcu.column_name = :col
+                      AND tc.table_schema = 'public'
+                """), {"tbl": tbl, "col": col_name}).fetchall()
+
+                for constraint_name, foreign_column in fk_constraints:
+                    # Se a constraint aponta para 'id' (monocoluna antiga) ou tem nome antigo, dropa
+                    if foreign_column == "id" or constraint_name != new_constraint_name:
+                        logger.info(f"[MIGRAÇÃO] Removendo FK legada '{constraint_name}' de '{tbl}.{col_name}'...")
+                        conn.execute(text(f'ALTER TABLE "{tbl}" DROP CONSTRAINT IF EXISTS "{constraint_name}"'))
+
+                # Verifica se a nova FK composta já existe
+                check_new = conn.execute(text("""
+                    SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name = :tbl 
+                      AND constraint_name = :cname
+                      AND table_schema = 'public'
+                """), {"tbl": tbl, "cname": new_constraint_name}).fetchone()
+
+                if not check_new:
+                    logger.info(f"[MIGRAÇÃO] Criando FK composta '{new_constraint_name}' em '{tbl}' ({col_name} -> {target_tbl}.id_sequencial)...")
+                    conn.execute(text(f"""
+                        ALTER TABLE "{tbl}"
+                        ADD CONSTRAINT "{new_constraint_name}"
+                        FOREIGN KEY ("id_empresa", "{col_name}")
+                        REFERENCES "{target_tbl}" ("id_empresa", "id_sequencial")
+                        ON DELETE SET NULL ON UPDATE CASCADE
+                    """))
+                    logger.info(f"[MIGRAÇÃO] FK composta '{new_constraint_name}' criada com sucesso!")
+    except Exception as e:
+        logger.error(f"[MIGRAÇÃO] Falha ao corrigir FKs legadas: {e}")
 
 
 def sync_database_schema(engine: Engine, base):
@@ -375,6 +450,12 @@ def sync_database_schema(engine: Engine, base):
             run_one_time_id_sequencial_migration(engine, base)
         except Exception as mig_err:
             logger.error(f"[SYNC] Migração id_sequencial falhou: {mig_err}. Continuando sync...")
+
+        # 2b. Corrige FKs legadas para garantir FKs compostas (id_empresa, id_sequencial)
+        try:
+            fix_legacy_foreign_keys(engine)
+        except Exception as fk_err:
+            logger.error(f"[SYNC] Correção de FKs legadas falhou: {fk_err}")
 
         # 3. Sync de colunas faltantes (safety net)
         inspector = inspect(engine)

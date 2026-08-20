@@ -121,12 +121,15 @@ def generate_shipping_label(
     """
     # 1. Busca Dados
     pedido = db.query(models.Pedido).filter(
-        models.Pedido.id == id, 
         models.Pedido.id_empresa == current_user.id_empresa
+    ).filter(
+        (models.Pedido.id_sequencial == id) | (models.Pedido.id == id)
     ).first()
     
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
 
     empresa = db.query(models.Empresa).filter(models.Empresa.id == current_user.id_empresa).first()
     
@@ -174,7 +177,7 @@ def generate_shipping_label(
     
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(w_page, h_page))
-    filename = f"Etiqueta_{id}.pdf"
+    filename = f"Etiqueta_{num_pedido}.pdf"
     c.setTitle(filename)
     
     margin = 3 * mm
@@ -213,7 +216,7 @@ def generate_shipping_label(
             nf_val = pedido.chave_acesso[25:34].lstrip('0')
 
         # ShipmentID: Usa chave de acesso (14 chars) ou ID
-        shipment_val = pedido.chave_acesso[:14] if (pedido.chave_acesso and len(pedido.chave_acesso) >= 14) else str(pedido.id).zfill(14)
+        shipment_val = pedido.chave_acesso[:14] if (pedido.chave_acesso and len(pedido.chave_acesso) >= 14) else str(num_pedido).zfill(14)
         
         # --- ATUALIZAÇÃO: Volume dinâmico ---
         vol_str = f"{current_vol}/{total_volumes}"
@@ -223,7 +226,7 @@ def generate_shipping_label(
         transportadora_nome = pedido.transportadora.nome_razao if pedido.transportadora else "Próprio"
 
         dados_topo = [
-            ("Pedido:", str(pedido.id)),
+            ("Pedido:", str(num_pedido)),
             ("Nota Fiscal:", nf_val),
             ("Volume:", vol_str)
         ]
@@ -428,9 +431,14 @@ def generate_batch_shipping_labels(
                 print(f"Aviso: Erro ao baixar logo no lote: {e}")
 
     for pid in pedido_ids:
-        pedido = db.query(models.Pedido).filter(models.Pedido.id == pid, models.Pedido.id_empresa == current_user.id_empresa).first()
+        pedido = db.query(models.Pedido).filter(
+            models.Pedido.id_empresa == current_user.id_empresa
+        ).filter(
+            (models.Pedido.id_sequencial == pid) | (models.Pedido.id == pid)
+        ).first()
         if not pedido: continue
 
+        num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
         total_volumes = pedido.volumes_quantidade or 1
         for current_vol in range(1, total_volumes + 1):
             top_y = h_page - margin
@@ -450,9 +458,9 @@ def generate_batch_shipping_labels(
             nf_val = "-"
             if pedido.chave_acesso and len(pedido.chave_acesso) == 44:
                 nf_val = pedido.chave_acesso[25:34].lstrip('0')
-            shipment_val = pedido.chave_acesso[:14] if (pedido.chave_acesso and len(pedido.chave_acesso) >= 14) else str(pedido.id).zfill(14)
+            shipment_val = pedido.chave_acesso[:14] if (pedido.chave_acesso and len(pedido.chave_acesso) >= 14) else str(num_pedido).zfill(14)
             
-            dados_topo = [("Pedido:", str(pedido.id)), ("Nota Fiscal:", nf_val), ("Volume:", f"{current_vol}/{total_volumes}")]
+            dados_topo = [("Pedido:", str(num_pedido)), ("Nota Fiscal:", nf_val), ("Volume:", f"{current_vol}/{total_volumes}")]
             x_data, y_data, line_spacing = 50 * mm, top_y - 3.5 * mm, 4.5 * mm
             for label, value in dados_topo:
                 c.setFont("Helvetica", 9)
@@ -563,12 +571,15 @@ def generate_volume_label(
     """
     # 1. Busca Dados
     pedido = db.query(models.Pedido).filter(
-        models.Pedido.id == id, 
         models.Pedido.id_empresa == current_user.id_empresa
+    ).filter(
+        (models.Pedido.id_sequencial == id) | (models.Pedido.id == id)
     ).first()
     
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    num_pedido = pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id
 
     # Dados do Cliente
     cliente = pedido.cliente
@@ -587,7 +598,7 @@ def generate_volume_label(
     
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(w_page, h_page))
-    filename = f"Etiquetas_Volume_Pedido_{id}.pdf"
+    filename = f"Etiquetas_Volume_Pedido_{num_pedido}.pdf"
     c.setTitle(filename)
     
     # Margens
@@ -618,7 +629,7 @@ def generate_volume_label(
         
         # Pedido
         c.setFont("Helvetica-Bold", 8)
-        c.drawString(m_left, h_page - 4*mm, f"PEDIDO: {pedido.id}")
+        c.drawString(m_left, h_page - 4*mm, f"PEDIDO: {num_pedido}")
         
         # Cliente
         c.setFont("Helvetica", 8)
@@ -656,7 +667,7 @@ def generate_volume_label(
         bc_x = w_page - m_left - 24 * mm  # Posição padrão aproximada do código de barras
         bc_w = 24 * mm
         try:
-            val12 = f"{pedido.id:07d}{current_vol:05d}"
+            val12 = f"{int(num_pedido):07d}{current_vol:05d}"
             barcode_widget = eanbc.Ean13BarcodeWidget(val12)
             barcode_widget.barHeight = 5.2 * mm
             barcode_widget.barWidth = 0.7

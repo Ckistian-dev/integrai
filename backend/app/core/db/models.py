@@ -1,6 +1,6 @@
 import enum
 from sqlalchemy import (
-    Boolean, Column, ForeignKey, Integer, String, Enum as SQLAlchemyEnum,
+    Boolean, Column, ForeignKey, ForeignKeyConstraint, Integer, String, Enum as SQLAlchemyEnum,
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
     UniqueConstraint, event, text
 )
@@ -943,15 +943,20 @@ class Pedido(Base):
     __tablename__ = "pedidos"
     __label__ = "Pedido de Venda"
     __label_plural__ = "Pedidos de Venda"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_pedidos_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_pedidos_empresa_sequencial"),
+        ForeignKeyConstraint(["id_empresa", "id_cliente"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_cliente_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+        ForeignKeyConstraint(["id_empresa", "id_vendedor"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_vendedor_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+        ForeignKeyConstraint(["id_empresa", "id_transportadora"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_transportadora_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Principal ---
-    id_cliente = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
+    id_cliente = Column(Integer, nullable=True, 
                         info={'tab': 'Principal', 'label': 'Cliente', 'placeholder': 'Busque o cliente...'}) # Ref. Cadastro (tipo_cadastro=cliente)
-    id_vendedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
+    id_vendedor = Column(Integer, nullable=True, 
                          info={'tab': 'Principal', 'label': 'Vendedor', 'placeholder': 'Busque o vendedor...'}) # Ref. Cadastro (tipo_cadastro=vendedor)
     origem_venda = Column(String, 
                           info={'tab': 'Principal', 'component': 'creatable_select', 'label': 'Canal de Venda', 'placeholder': 'Ex: Site, Balcão'})
@@ -989,7 +994,7 @@ class Pedido(Base):
     endereco_complemento = Column(String, info={'tab': 'Endereço de Entrega', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
 
     # --- Aba: Frete ---
-    id_transportadora = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
+    id_transportadora = Column(Integer, nullable=True, 
                                info={'tab': 'Frete', 'label': 'Transportadora', 'placeholder': 'Busque a transportadora...'}) # Ref. Cadastro (tipo_cadastro=transportadora)
     modalidade_frete = Column(SQLAlchemyEnum(PedidoModalidadeFreteEnum, native_enum=False, values_callable=lambda x: [e.value for e in x]), default=PedidoModalidadeFreteEnum.cif, 
                               info={'tab': 'Frete', 'label': 'Modalidade de Frete', 'placeholder': 'Selecione...'})

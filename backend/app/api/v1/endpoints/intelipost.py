@@ -151,39 +151,47 @@ async def receber_webhook_intelipost(
     id_empresa = current_user.id_empresa if current_user else None
 
     def find_pedido():
-        # 1. Busca por id_pedido_intelipost exato (ex: "VAR3821" ou "VAR3821N")
+        def run_query(criterion):
+            q = db.query(models.Pedido).filter(criterion)
+            if id_empresa:
+                q = q.filter(models.Pedido.id_empresa == id_empresa)
+            return q.first()
+
+        # 1. Busca por id_pedido_intelipost exato (ex: "VAR3821N" ou "VAR3316N")
         if order_number:
-            q = db.query(models.Pedido).filter(models.Pedido.id_pedido_intelipost == str(order_number))
-            if id_empresa: q = q.filter(models.Pedido.id_empresa == id_empresa)
-            res = q.first()
+            res = run_query(models.Pedido.id_pedido_intelipost == str(order_number))
             if res: return res
 
         # 2. Busca por intelipost_id (ID da ordem na Intelipost)
         if shipment_order_id:
-            q = db.query(models.Pedido).filter(models.Pedido.intelipost_id == str(shipment_order_id))
-            if id_empresa: q = q.filter(models.Pedido.id_empresa == id_empresa)
-            res = q.first()
+            res = run_query(models.Pedido.intelipost_id == str(shipment_order_id))
             if res: return res
 
         # 3. Busca por chave de acesso da NFe (invoice_key)
         if invoice_key:
-            q = db.query(models.Pedido).filter(models.Pedido.chave_acesso == str(invoice_key))
-            if id_empresa: q = q.filter(models.Pedido.id_empresa == id_empresa)
-            res = q.first()
+            res = run_query(models.Pedido.chave_acesso == str(invoice_key))
             if res: return res
 
-        # 4. Busca por numero_pedido ou id_sequencial extraído do order_number (ex: "VAR3821" -> 3821)
-        if order_number:
-            q = db.query(models.Pedido).filter(models.Pedido.numero_pedido == str(order_number))
-            if id_empresa: q = q.filter(models.Pedido.id_empresa == id_empresa)
-            res = q.first()
+        # 4. Busca por número da Nota Fiscal (invoice_number / numero_nf)
+        if invoice_number:
+            res = run_query(models.Pedido.numero_nf == str(invoice_number))
             if res: return res
+
+        # 5. Busca por id_sequencial ou id extraído do order_number (ex: "VAR3316N" -> 3316)
+        if order_number:
+            if str(order_number).isdigit():
+                val = int(order_number)
+                res = run_query(models.Pedido.id_sequencial == val)
+                if res: return res
+                res = run_query(models.Pedido.id == val)
+                if res: return res
 
             digits = "".join(filter(str.isdigit, str(order_number)))
             if digits:
-                q = db.query(models.Pedido).filter(models.Pedido.id_sequencial == int(digits))
-                if id_empresa: q = q.filter(models.Pedido.id_empresa == id_empresa)
-                res = q.first()
+                val = int(digits)
+                res = run_query(models.Pedido.id_sequencial == val)
+                if res: return res
+                res = run_query(models.Pedido.id == val)
                 if res: return res
 
         return None
@@ -207,10 +215,10 @@ async def receber_webhook_intelipost(
     if status_encontrado:
         pedido.status_intelipost = str(status_encontrado)
     
-    if shipment_order_id and not pedido.intelipost_id:
+    if shipment_order_id:
         pedido.intelipost_id = str(shipment_order_id)
         
-    if order_number and not pedido.id_pedido_intelipost:
+    if order_number:
         pedido.id_pedido_intelipost = str(order_number)
 
     if tracking_code:
