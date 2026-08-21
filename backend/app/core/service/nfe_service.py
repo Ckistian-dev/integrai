@@ -4511,7 +4511,7 @@ class NFeService:
                         "final_shipping_cost": float(pedido.valor_frete or 0),
                         "data_entrega": pedido.data_entrega.isoformat() if pedido.data_entrega else None
                     }
-                    res = asyncio.run(intelipost_service.criar_pedido_envio(pedido.id, dados_frete))
+                    res = asyncio.run(intelipost_service.criar_pedido_envio(pedido.id_sequencial or pedido.id, dados_frete))
                     
                     if isinstance(res, dict) and res.get("status") == "warning":
                         intelipost_res = {"success": True, "message": res.get("message"), "warning": True}

@@ -101,10 +101,13 @@ class IntelipostService:
         if quantidade <= 0:
             return []
 
-        # Busca produto no banco
+        # Busca produto no banco (suporta id_sequencial ou id primário)
         produto = self.db.query(models.Produto).filter(
             models.Produto.id_empresa == self.id_empresa,
-            models.Produto.id_sequencial == produto_id
+            or_(
+                models.Produto.id_sequencial == produto_id,
+                models.Produto.id == produto_id
+            )
         ).first()
 
         if not produto:
@@ -139,7 +142,10 @@ class IntelipostService:
         if produto.id_embalagem:
             embalagem = self.db.query(models.Embalagem).filter(
                 models.Embalagem.id_empresa == self.id_empresa,
-                models.Embalagem.id_sequencial == produto.id_embalagem
+                or_(
+                    models.Embalagem.id_sequencial == produto.id_embalagem,
+                    models.Embalagem.id == produto.id_embalagem
+                )
             ).first()
 
             if embalagem and embalagem.regras:
@@ -198,6 +204,10 @@ class IntelipostService:
                             'ALTURA_ITEM_UNICO': altura,
                             'LARGURA_ITEM_UNICO': largura,
                             'COMPRIMENTO_ITEM_UNICO': comprimento,
+                            'COMPRIMENTO_TOTAL_PILHA': comprimento,
+                            'LARGURA_TOTAL_PILHA': largura,
+                            'ALTURA_TOTAL_PILHA': altura * qtd_remaining,
+                            'PESO_TOTAL_PILHA': peso * qtd_remaining,
                             'ACRESCIMO_EMBALAGEM': 0 
                         }
 
@@ -251,19 +261,37 @@ class IntelipostService:
         if settings.ENVIRONMENT != "production":
             return {"status": "success", "message": "Simulado: Ordem de envio criada na Intelipost (Ambiente de Testes)"}
 
-        # 1. Busca Pedido e Relacionamentos
+        # 1. Busca Pedido e Relacionamentos (suporta id_sequencial ou id primário)
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id_empresa == self.id_empresa,
-            models.Pedido.id_sequencial == pedido_id
+            or_(
+                models.Pedido.id_sequencial == pedido_id,
+                models.Pedido.id == pedido_id
+            )
         ).first()
 
-        if not pedido or not pedido.cliente:
-            raise HTTPException(status_code=404, detail="Pedido ou Cliente não encontrado.")
+        if not pedido:
+            raise HTTPException(status_code=404, detail=f"Pedido #{pedido_id} não encontrado.")
+
+        # Busca Cliente com fallback caso relacionamento ORM retorne None
+        cliente = pedido.cliente
+        if not cliente and pedido.id_cliente:
+            cliente = self.db.query(models.Cadastro).filter(
+                models.Cadastro.id_empresa == self.id_empresa,
+                or_(
+                    models.Cadastro.id_sequencial == pedido.id_cliente,
+                    models.Cadastro.id == pedido.id_cliente
+                )
+            ).first()
+
+        if not cliente:
+            raise HTTPException(status_code=404, detail=f"Cliente do Pedido #{pedido_id} não encontrado ou não vinculado.")
 
         empresa = self.db.query(models.Empresa).filter(models.Empresa.id == self.id_empresa).first()
+        if not empresa:
+            raise HTTPException(status_code=404, detail="Empresa não encontrada.")
 
         # 2. Recalcula volumes (para garantir consistência com o que foi cotado)
-        # Nota: Idealmente, persistiríamos os volumes da cotação, mas recalcular é seguro se os itens não mudaram.
         lista_itens = pedido.itens if isinstance(pedido.itens, list) else []
         tasks = [self._calculate_volumes_for_item(item) for item in lista_itens]
         results = await asyncio.gather(*tasks)
@@ -279,7 +307,10 @@ class IntelipostService:
                 if prod_id:
                     prod = self.db.query(models.Produto).filter(
                         models.Produto.id_empresa == self.id_empresa,
-                        models.Produto.id_sequencial == prod_id
+                        or_(
+                            models.Produto.id_sequencial == prod_id,
+                            models.Produto.id == prod_id
+                        )
                     ).first()
                     if prod:
                         w = float(prod.largura or 10.0)
@@ -326,13 +357,13 @@ class IntelipostService:
             raise HTTPException(status_code=400, detail="Não há volumes calculados para este pedido.")
 
         # 3. Prepara dados do Cliente (Destinatário)
-        nome_parts = (pedido.cliente.nome_razao or "").split(" ", 1)
-        first_name = nome_parts[0]
+        nome_parts = (cliente.nome_razao or "").split(" ", 1)
+        first_name = nome_parts[0] if nome_parts[0] else "Cliente"
         last_name = nome_parts[1] if len(nome_parts) > 1 else "."
 
         # 4. Prepara dados da Empresa (Remetente)
         seller_parts = (empresa.razao or "").split(" ", 1)
-        seller_first = seller_parts[0]
+        seller_first = seller_parts[0] if seller_parts[0] else "Empresa"
         seller_last = seller_parts[1] if len(seller_parts) > 1 else "."
 
         # Prefixo para o número do pedido (3 primeiras letras do Fantasia + ID Sequencial + 'N')
@@ -421,18 +452,26 @@ class IntelipostService:
             shipment_volumes.append(vol_copy)
 
         # Garante que o estado seja string (caso seja Enum)
-        uf_cliente = pedido.cliente.estado
+        uf_cliente = pedido.endereco_estado or cliente.estado
         if hasattr(uf_cliente, 'value'):
             uf_cliente = uf_cliente.value
+        uf_cliente = str(uf_cliente or "")
 
         # Tratamento de telefone (evitar string vazia)
-        phone_cliente = pedido.cliente.celular or pedido.cliente.telefone or "0000000000"
+        phone_cliente = cliente.celular or cliente.telefone or "0000000000"
+
+        # Endereço de entrega com prioridade para os dados específicos do pedido
+        endereco_logradouro = pedido.endereco_logradouro or cliente.logradouro or ""
+        endereco_numero = pedido.endereco_numero or cliente.numero or "S/N"
+        endereco_complemento = pedido.endereco_complemento or cliente.complemento or ""
+        endereco_bairro = pedido.endereco_bairro or cliente.bairro or ""
+        endereco_cidade = pedido.endereco_cidade or cliente.cidade or ""
+        endereco_cep = (pedido.endereco_cep or cliente.cep or "").replace("-", "").replace(".", "")
 
         # --- LÓGICA PARA QUOTE_ID ---
         quote_id = dados_frete.get('quote_id') or dados_frete.get('id_cotacao')
 
         # Preparação prévia de dados para o Seller (Empresa)
-        # Verifica se o estado é objeto/enum ou string direta
         uf_empresa = empresa.estado
         if hasattr(uf_empresa, 'value'):
             uf_empresa = uf_empresa.value
@@ -456,8 +495,18 @@ class IntelipostService:
         if not delivery_method_id:
             delivery_method_id = pedido.delivery_method_id_intelipost
 
-        if not delivery_method_id and pedido.transportadora:
-            delivery_method_id = pedido.transportadora.delivery_method_id_intelipost
+        if not delivery_method_id and pedido.id_transportadora:
+            transp = pedido.transportadora
+            if not transp:
+                transp = self.db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == self.id_empresa,
+                    or_(
+                        models.Cadastro.id_sequencial == pedido.id_transportadora,
+                        models.Cadastro.id == pedido.id_transportadora
+                    )
+                ).first()
+            if transp and transp.delivery_method_id_intelipost:
+                delivery_method_id = transp.delivery_method_id_intelipost
 
         # Suporte a múltiplos IDs separados por ';' (limpa espaços e pega o primeiro)
         if delivery_method_id and isinstance(delivery_method_id, str):
@@ -488,17 +537,17 @@ class IntelipostService:
             "end_customer": {
                 "first_name": first_name,
                 "last_name": last_name,
-                "email": pedido.cliente.email or "nao_informado@email.com",
+                "email": cliente.email or "nao_informado@email.com",
                 "phone": phone_cliente,
-                "is_company": str(pedido.cliente.tipo_pessoa) == 'juridica',
-                "federal_tax_payer_id": pedido.cliente.cpf_cnpj,
-                "shipping_address": pedido.cliente.logradouro,
-                "shipping_number": pedido.cliente.numero,
-                "shipping_additional": pedido.cliente.complemento,
-                "shipping_quarter": pedido.cliente.bairro,
-                "shipping_city": pedido.cliente.cidade,
+                "is_company": str(cliente.tipo_pessoa) == 'juridica' or str(getattr(cliente.tipo_pessoa, 'value', '')) == 'juridica',
+                "federal_tax_payer_id": "".join(filter(str.isalnum, str(cliente.cpf_cnpj or ""))),
+                "shipping_address": endereco_logradouro,
+                "shipping_number": endereco_numero,
+                "shipping_additional": endereco_complemento,
+                "shipping_quarter": endereco_bairro,
+                "shipping_city": endereco_cidade,
                 "shipping_state": uf_cliente,
-                "shipping_zip_code": pedido.cliente.cep.replace("-", ""),
+                "shipping_zip_code": endereco_cep,
                 "shipping_country": "BR"
             },
             # Remetente
@@ -506,19 +555,19 @@ class IntelipostService:
                 "first_name": seller_first,
                 "last_name": seller_last,
                 "email": "contato@talatto.com.br", # Idealmente vir do cadastro da empresa
-                "phone": empresa.telefone,
+                "phone": empresa.telefone or "",
                 "is_company": True,
-                "federal_tax_payer_id": empresa.cnpj,
-                "state_tax_payer_id": empresa.inscricao_estadual,
+                "federal_tax_payer_id": "".join(filter(str.isalnum, str(empresa.cnpj or ""))),
+                "state_tax_payer_id": empresa.inscricao_estadual or "",
                 
                 # --- NOVOS CAMPOS ADICIONADOS ---
                 "country": "Brasil",
                 "state": uf_empresa,             # Estado da empresa (Ex: PR)
-                "city": empresa.cidade,          # Cidade
-                "address": empresa.logradouro,   # Rua/Logradouro
-                "number": empresa.numero,        # Número
+                "city": empresa.cidade or "",    # Cidade
+                "address": empresa.logradouro or "", # Rua/Logradouro
+                "number": empresa.numero or "S/N", # Número
                 "additional": empresa.complemento or "", # Complemento (evitar null)
-                "quarter": empresa.bairro,       # Bairro
+                "quarter": empresa.bairro or "", # Bairro
                 "zip_code": cep_empresa,         # CEP formatado
                 "reference": ""                  # Referência (opcional)
             }
@@ -604,22 +653,35 @@ class IntelipostService:
         """
         Busca o pedido, cliente e itens via ORM e realiza a cotação.
         """
-        # 1. Busca Pedido
+        # 1. Busca Pedido (suporta id_sequencial ou id primário)
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id_empresa == self.id_empresa,
-            models.Pedido.id_sequencial == pedido_id
+            or_(
+                models.Pedido.id_sequencial == pedido_id,
+                models.Pedido.id == pedido_id
+            )
         ).first()
 
         if not pedido:
             raise HTTPException(status_code=404, detail="Pedido não encontrado.")
 
-        # 2. Busca Cliente (para o CEP)
-        if not pedido.cliente:
-             raise HTTPException(status_code=400, detail="Pedido sem cliente vinculado.")
+        # 2. Busca Cliente (para o CEP) com fallback
+        cliente = pedido.cliente
+        if not cliente and pedido.id_cliente:
+            cliente = self.db.query(models.Cadastro).filter(
+                models.Cadastro.id_empresa == self.id_empresa,
+                or_(
+                    models.Cadastro.id_sequencial == pedido.id_cliente,
+                    models.Cadastro.id == pedido.id_cliente
+                )
+            ).first()
+
+        if not cliente and not pedido.endereco_cep:
+            raise HTTPException(status_code=400, detail="Pedido sem cliente vinculado e sem CEP de entrega.")
         
-        cep_destino = pedido.cliente.cep.replace("-", "").replace(".", "")
+        cep_destino = (pedido.endereco_cep or (cliente.cep if cliente else "") or "").replace("-", "").replace(".", "")
         if not cep_destino:
-            raise HTTPException(status_code=400, detail="Cliente sem CEP cadastrado.")
+            raise HTTPException(status_code=400, detail="Cliente e Pedido sem CEP cadastrado.")
 
         # 3. Processa Itens (O campo 'itens' no modelo novo é JSON)
         lista_itens = pedido.itens if isinstance(pedido.itens, list) else []

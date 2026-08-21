@@ -23,8 +23,8 @@ export default function ModalCotacaoIntelipost({ isOpen, onClose, pedido, onSele
         setLoading(true);
         setResultado(null);
         try {
-            // Chama o endpoint novo que criamos no controller
-            const targetId = pedido.id_sequencial;
+            // Chama o endpoint de cotação
+            const targetId = pedido.id_sequencial ?? pedido.id;
             const response = await api.post(`/intelipost/cotacao/${targetId}`);
             setResultado(response.data);
         } catch (error) {
@@ -88,7 +88,7 @@ export default function ModalCotacaoIntelipost({ isOpen, onClose, pedido, onSele
                         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
                             <FaTruck className="text-teal-600"/> Cotação Intelipost
                         </h2>
-                        <p className="text-sm text-gray-500">Pedido #{pedido?.id} - {pedido?.cliente?.nome_razao || "Cliente N/A"}</p>
+                        <p className="text-sm text-gray-500">Pedido #{pedido?.id_sequencial ?? pedido?.id} - {pedido?.cliente?.nome_razao || "Cliente N/A"}</p>
                     </div>
                     <button onClick={onClose} className="text-gray-400 hover:text-red-500 transition-colors">
                         <FaTimes size={24} />

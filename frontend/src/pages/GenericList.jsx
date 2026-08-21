@@ -1437,8 +1437,8 @@ const GenericList = () => {
         id_transportadora: dadosFrete.transportadora_id,
         modalidade_frete: dadosFrete.modalidade_frete,
 
-        // --- ADICIONE ESTES CAMPOS ---
-        // Salva o ID do método de entrega (ex: 15707)
+        // Salva o ID do método de entrega Intelipost (ex: 15707)
+        delivery_method_id_intelipost: dadosFrete.delivery_method_id ? String(dadosFrete.delivery_method_id) : null,
         delivery_method_id: dadosFrete.delivery_method_id ? String(dadosFrete.delivery_method_id) : null,
 
         // Salva o ID da cotação para validar o preço depois (ESSENCIAL)

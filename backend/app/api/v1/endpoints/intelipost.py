@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from pydantic import BaseModel
@@ -177,17 +178,17 @@ async def receber_webhook_intelipost(
             res = run_query(models.Pedido.numero_nf == str(invoice_number))
             if res: return res
 
-        # 5. Busca por id_sequencial extraído do order_number (ex: "VAR3316N" -> 3316)
+        # 5. Busca por id_sequencial ou id extraído do order_number (ex: "VAR3316N" -> 3316)
         if order_number:
             if str(order_number).isdigit():
                 val = int(order_number)
-                res = run_query(models.Pedido.id_sequencial == val)
+                res = run_query(or_(models.Pedido.id_sequencial == val, models.Pedido.id == val))
                 if res: return res
 
             digits = "".join(filter(str.isdigit, str(order_number)))
             if digits:
                 val = int(digits)
-                res = run_query(models.Pedido.id_sequencial == val)
+                res = run_query(or_(models.Pedido.id_sequencial == val, models.Pedido.id == val))
                 if res: return res
 
         return None
@@ -349,6 +350,6 @@ def buscar_transportadora_por_nome(
         raise HTTPException(status_code=404, detail="Transportadora não encontrada no cadastro local.")
 
     return {
-        "id": transportadora.id,
+        "id": transportadora.id_sequencial if transportadora.id_sequencial is not None else transportadora.id,
         "nome_razao": transportadora.nome_razao
     }
