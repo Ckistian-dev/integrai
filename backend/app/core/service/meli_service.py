@@ -1428,7 +1428,20 @@ class MeliService:
             payload = {"status": new_ml_status}
             if tracking_number:
                 payload["tracking_number"] = tracking_number
-                
+
+            # Se for ME1 / Custom, o Mercado Livre exige obrigatoriamente 'service_id' para marcar como shipped
+            if mode == 'me1' or logistic_type in ['default', 'custom']:
+                existing_service_id = shipment_details.get('service_id')
+                if existing_service_id:
+                    payload["service_id"] = existing_service_id
+                else:
+                    shipping_opt_name = str(shipment_details.get('shipping_option', {}).get('name') or '').lower()
+                    shipping_method_id = shipment_details.get('shipping_option', {}).get('shipping_method_id')
+                    if "expresso" in shipping_opt_name or shipping_method_id == 182:
+                        payload["service_id"] = 22  # Sedex / Expresso
+                    else:
+                        payload["service_id"] = 21  # PAC / Normal (Padrão ME1 MLB)
+
             logger.info(f"Enviando atualização para envio {shipment_id}: {payload}")
             url = f"{self.base_url}/shipments/{shipment_id}"
             resp = await client.put(url, json=payload)

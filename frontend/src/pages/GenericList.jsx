@@ -735,9 +735,9 @@ const GenericList = () => {
     fetchPreferences();
   }, [modelName, !!metadata]); // Depende apenas da existência do metadata para evitar re-execuções desnecessárias
 
-  // --- SALVAMENTO AUTOMÁTICO DE FILTROS RÁPIDOS (APENAS EM MODO CONFIGURAR) ---
+  // --- SALVAMENTO AUTOMÁTICO DE FILTROS RÁPIDOS ---
   useEffect(() => {
-    if (!isEditMode || !metadata || loadingMetadata || loadingPreferences) return;
+    if (!metadata || loadingMetadata) return;
 
     const timeoutId = setTimeout(async () => {
       const currentValues = userPreferences.quickFilterValues || {};
@@ -755,7 +755,6 @@ const GenericList = () => {
 
         try {
           await api.post(`/preferences/${modelName}`, configToSave);
-          setUserPreferences(configToSave);
         } catch (err) {
           console.error("Erro ao salvar filtros rápidos:", err);
         }
@@ -763,7 +762,7 @@ const GenericList = () => {
     }, 1000); // Debounce de 1 segundo
 
     return () => clearTimeout(timeoutId);
-  }, [isEditMode, userPreferences, modelName, metadata, loadingMetadata, loadingPreferences, quickFilterValues]);
+  }, [userPreferences, modelName, metadata, loadingMetadata, quickFilterValues]);
 
   // --- RESET DA PAGINAÇÃO EM ATUALIZAÇÕES ---
   // Garante que a página volte para 1 sempre que filtros, status, ordenação ou dados forem atualizados
@@ -2638,33 +2637,12 @@ const GenericList = () => {
   };
 
   const handleSavePreferences = async (newConfig) => {
-    const configToSave = {
-      ...newConfig,
-      ...(isEditMode ? { quickFilterValues } : {})
-    };
-    setUserPreferences(configToSave);
+    setUserPreferences(newConfig);
     try {
-      await api.post(`/preferences/${modelName}`, configToSave);
+      await api.post(`/preferences/${modelName}`, newConfig);
     } catch (err) {
       toast.error("Erro ao salvar configurações.");
     }
-  };
-
-  const handleToggleEditMode = async () => {
-    if (isEditMode) {
-      // Ao sair do modo configurar, garante que os filtros rápidos e preferências atuais sejam salvos
-      const configToSave = {
-        ...userPreferences,
-        quickFilterValues: quickFilterValues
-      };
-      setUserPreferences(configToSave);
-      try {
-        await api.post(`/preferences/${modelName}`, configToSave);
-      } catch (err) {
-        console.error("Erro ao salvar preferências ao sair do modo configurar:", err);
-      }
-    }
-    setIsEditMode(!isEditMode);
   };
 
   const toggleSort = (field) => {
@@ -2783,43 +2761,24 @@ const GenericList = () => {
     }
     else if (type === '__dropdown__') defaultValue = { column: dropdownColumns[0]?.name || "", value: "" };
 
-    const newQuickFilterValues = { ...quickFilterValues, [uniqueKey]: defaultValue };
-    const newQuickFilterFields = [...currentFields, uniqueKey];
+    setQuickFilterValues(prev => ({ ...prev, [uniqueKey]: defaultValue }));
 
-    setQuickFilterValues(newQuickFilterValues);
-
-    const newPreferences = {
-      ...userPreferences,
-      quickFilterFields: newQuickFilterFields
-    };
-    setUserPreferences(newPreferences);
-
-    if (isEditMode) {
-      handleSavePreferences({
-        ...newPreferences,
-        quickFilterValues: newQuickFilterValues
-      });
-    }
+    setUserPreferences(prev => ({
+      ...prev,
+      quickFilterFields: [...currentFields, uniqueKey]
+    }));
   };
 
   const removeQuickFilterField = (uniqueKey) => {
-    const newQuickFilterFields = (userPreferences.quickFilterFields || []).filter(k => k !== uniqueKey);
-    const newQuickFilterValues = { ...quickFilterValues };
-    delete newQuickFilterValues[uniqueKey];
-
-    const newPreferences = {
-      ...userPreferences,
-      quickFilterFields: newQuickFilterFields
-    };
-    setUserPreferences(newPreferences);
-    setQuickFilterValues(newQuickFilterValues);
-
-    if (isEditMode) {
-      handleSavePreferences({
-        ...newPreferences,
-        quickFilterValues: newQuickFilterValues
-      });
-    }
+    setUserPreferences(prev => ({
+      ...prev,
+      quickFilterFields: (prev.quickFilterFields || []).filter(k => k !== uniqueKey)
+    }));
+    setQuickFilterValues(prev => {
+      const next = { ...prev };
+      delete next[uniqueKey];
+      return next;
+    });
   };
 
   const handleQuickFilterChange = (fieldName, value) => {
@@ -3328,7 +3287,7 @@ const GenericList = () => {
               </button>
             )}
             <button
-              onClick={handleToggleEditMode}
+              onClick={() => setIsEditMode(!isEditMode)}
               className={`flex items-center px-4 py-2 rounded-md shadow-sm text-sm font-medium transition-colors ${isEditMode ? 'bg-blue-800 text-white' : 'bg-blue-600 text-white hover:bg-blue-800'
                 }`}
             >
@@ -4334,30 +4293,30 @@ const GenericList = () => {
                             : selectedRowIds.includes(rowId) ? 'bg-blue-100' : 'hover:bg-gray-50'
                             }`}
                         >
-                        {displayColumns.map((colName) => {
-                          const isDraggingCell = colName === draggedColName;
-                          const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
-                          return (
-                            <td
-                              key={colName}
-                              style={{
-                                width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
-                                minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
-                                maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
-                              }}
-                              className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-0 whitespace-nowrap text-sm text-gray-700 transition-colors duration-150 ${hasCustomWidth ? 'truncate' : ''} ${isDraggingCell
-                                ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
-                                : ''
-                                }`}
-                            >
-                              {renderCellContent(item, colName)}
-                            </td>
-                          );
-                        })}
-                        {isEditMode && <td className="bg-gray-50/30"></td>}
-                      </tr>
-                    );
-                  };
+                          {displayColumns.map((colName) => {
+                            const isDraggingCell = colName === draggedColName;
+                            const hasCustomWidth = !!userPreferences.columnWidths?.[colName];
+                            return (
+                              <td
+                                key={colName}
+                                style={{
+                                  width: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                  minWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined,
+                                  maxWidth: hasCustomWidth ? `${userPreferences.columnWidths[colName]}px` : undefined
+                                }}
+                                className={`${hasCustomWidth ? 'px-2' : 'px-6'} py-0 whitespace-nowrap text-sm text-gray-700 transition-colors duration-150 ${hasCustomWidth ? 'truncate' : ''} ${isDraggingCell
+                                  ? 'bg-blue-50/60 font-medium text-blue-900 border-x border-blue-200'
+                                  : ''
+                                  }`}
+                              >
+                                {renderCellContent(item, colName)}
+                              </td>
+                            );
+                          })}
+                          {isEditMode && <td className="bg-gray-50/30"></td>}
+                        </tr>
+                      );
+                    };
 
                     const totalRowsRendered = (groupedData
                       ? groupedData.reduce((acc, g) => acc + 1 + g.itens.length, 0)
@@ -4522,11 +4481,10 @@ const GenericList = () => {
                         key={p}
                         onClick={() => setPage(p)}
                         disabled={isFetchingData}
-                        className={`w-9 h-9 rounded-lg text-sm font-medium transition-colors ${
-                          page === p
-                            ? 'bg-teal-600 text-white shadow-sm'
-                            : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed'
-                        }`}
+                        className={`w-9 h-9 rounded-lg text-sm font-medium transition-colors ${page === p
+                          ? 'bg-teal-600 text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed'
+                          }`}
                       >
                         {p}
                       </button>
