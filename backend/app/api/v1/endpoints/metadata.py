@@ -77,21 +77,46 @@ def get_model_metadata(model_name: str):
     Retorna os metadados de um modelo para o frontend construir
     formulários e tabelas dinamicamente.
     """
-    # 1. INTERCEPTAÇÃO MANUAL (Coloque isto NO TOPO da função)
-    if model_name == "mercadolivre_pedidos":
-        return ModelMetadata(
-            model_name="mercadolivre_pedidos",
-            display_name="Pedidos Mercado Livre",
-            display_field="id",
-            fields=[] # Campos dinâmicos construídos pelo frontend
-        )
-
+    # 1. INTERCEPTAÇÃO MANUAL PARA INTEGRAÇÕES
     if model_name == "magento_pedidos":
         return ModelMetadata(
             model_name="magento_pedidos",
             display_name="Pedidos Magento",
             display_field="increment_id",
-            fields=[] # Campos dinâmicos construídos pelo frontend
+            fields=[
+                FieldMetadata(name="increment_id", label="ID Pedido", type="text", required=False, visible=True),
+                FieldMetadata(name="created_at", label="Data Criação", type="datetime", format_mask="datetime", required=False, visible=True),
+                FieldMetadata(name="status", label="Status", type="text", required=False, visible=True),
+                FieldMetadata(name="grand_total", label="Valor Total", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="ja_importado", label="Importado", type="boolean", required=False, visible=True),
+                FieldMetadata(name="customer_name", label="Cliente", type="text", required=False, visible=True),
+                FieldMetadata(name="customer_email", label="E-mail", type="text", required=False, visible=True),
+                FieldMetadata(name="payment_method", label="Método de Pagamento", type="text", required=False, visible=True),
+                FieldMetadata(name="shipping_description", label="Frete / Transportadora", type="text", required=False, visible=True),
+                FieldMetadata(name="shipping_amount", label="Valor Frete", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="discount_amount", label="Desconto", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="items_count", label="Qtd Itens", type="integer", required=False, visible=True),
+                FieldMetadata(name="total_qty_ordered", label="Qtd Total Produtos", type="number", format_mask="decimal:2", required=False, visible=True),
+                FieldMetadata(name="customer_firstname", label="Primeiro Nome", type="text", required=False, visible=False),
+                FieldMetadata(name="customer_lastname", label="Sobrenome", type="text", required=False, visible=False),
+                FieldMetadata(name="entity_id", label="ID Magento (Entity)", type="integer", required=False, visible=False),
+            ]
+        )
+
+    if model_name == "mercadolivre_pedidos":
+        return ModelMetadata(
+            model_name="mercadolivre_pedidos",
+            display_name="Pedidos Mercado Livre",
+            display_field="id",
+            fields=[
+                FieldMetadata(name="id", label="ID Pedido ML", type="text", required=False, visible=True),
+                FieldMetadata(name="date_created", label="Data Criação", type="datetime", format_mask="datetime", required=False, visible=True),
+                FieldMetadata(name="status", label="Status", type="text", required=False, visible=True),
+                FieldMetadata(name="total_amount", label="Valor Total", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="ja_importado", label="Importado", type="boolean", required=False, visible=True),
+                FieldMetadata(name="buyer_nickname", label="Apelido Comprador", type="text", required=False, visible=True),
+                FieldMetadata(name="item_title", label="Título do Item", type="text", required=False, visible=True),
+            ]
         )
 
     if model_name == "tiktok_pedidos":
@@ -99,7 +124,14 @@ def get_model_metadata(model_name: str):
             model_name="tiktok_pedidos",
             display_name="Pedidos Tiktok Shop",
             display_field="id",
-            fields=[] # Campos dinâmicos construídos pelo frontend
+            fields=[
+                FieldMetadata(name="id", label="ID Pedido TikTok", type="text", required=False, visible=True),
+                FieldMetadata(name="create_time", label="Data Criação", type="datetime", format_mask="datetime", required=False, visible=True),
+                FieldMetadata(name="order_status", label="Status", type="text", required=False, visible=True),
+                FieldMetadata(name="payment_amount", label="Valor Total", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="ja_importado", label="Importado", type="boolean", required=False, visible=True),
+                FieldMetadata(name="buyer_email", label="E-mail", type="text", required=False, visible=True),
+            ]
         )
 
     if model_name == "shopee_pedidos":
@@ -107,7 +139,17 @@ def get_model_metadata(model_name: str):
             model_name="shopee_pedidos",
             display_name="Pedidos Shopee",
             display_field="order_sn",
-            fields=[] # Campos dinâmicos construídos pelo frontend
+            fields=[
+                FieldMetadata(name="order_sn", label="ID Pedido Shopee", type="text", required=False, visible=True),
+                FieldMetadata(name="create_time", label="Data Criação", type="datetime", format_mask="datetime", required=False, visible=True),
+                FieldMetadata(name="order_status", label="Status", type="text", required=False, visible=True),
+                FieldMetadata(name="total_amount", label="Valor Total", type="currency", format_mask="currency", required=False, visible=True),
+                FieldMetadata(name="ja_importado", label="Importado", type="boolean", required=False, visible=True),
+                FieldMetadata(name="buyer_username", label="Comprador", type="text", required=False, visible=True),
+                FieldMetadata(name="payment_method", label="Método de Pagamento", type="text", required=False, visible=True),
+                FieldMetadata(name="shipping_carrier", label="Transportadora", type="text", required=False, visible=True),
+                FieldMetadata(name="tracking_number", label="Rastreio", type="text", required=False, visible=True),
+            ]
         )
 
     registry_entry = get_registry_entry(model_name)

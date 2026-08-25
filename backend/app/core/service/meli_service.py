@@ -96,7 +96,7 @@ class MeliService:
             "client_secret": self.config.client_secret,
             "refresh_token": self.credentials.refresh_token,
         }
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0)) as client:
             logger.debug(f"Enviando requisição de refresh para {url}")
             resp = await client.post(url, data=payload)
             if resp.status_code != 200:
@@ -140,8 +140,8 @@ class MeliService:
             raise HTTPException(status_code=403, detail="Não há credenciais para sincronizar. Por favor, realize a conexão (Login) novamente.")
         await self._refresh_token()
 
-    async def get_client(self):
-        """Retorna um cliente HTTP autenticado"""
+    async def get_client(self, timeout: float = 30.0, connect_timeout: float = 15.0):
+        """Retorna um cliente HTTP autenticado com timeouts e pool configurados"""
         logger.debug(f"Solicitando cliente HTTP autenticado para empresa {self.id_empresa}")
         if not self.credentials:
              logger.warning(f"Tentativa de usar API do Mercado Livre sem tokens para empresa {self.id_empresa}. O usuário precisa realizar o login via OAuth.")
@@ -155,24 +155,34 @@ class MeliService:
             await self._refresh_token()
             
         logger.debug(f"Cliente HTTP pronto para uso (Empresa {self.id_empresa})")
-        return httpx.AsyncClient(headers={"Authorization": f"Bearer {self.credentials.access_token}"})
+        custom_timeout = httpx.Timeout(timeout, connect=connect_timeout, read=timeout, write=15.0, pool=30.0)
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
+        return httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {self.credentials.access_token}"},
+            timeout=custom_timeout,
+            limits=limits
+        )
 
     async def list_orders(self, limit=10, offset=0):
-        """Lista todos os pedidos (qualquer status e qualquer data) da API do ML"""
+        """Lista todos os pedidos (qualquer status e qualquer data) da API do ML de forma otimizada"""
         logger.info(f"Listando pedidos ML para empresa {self.id_empresa} (limit={limit}, offset={offset})")
         client = await self.get_client()
         
-        logger.debug("Buscando dados do usuário autenticado (/users/me)...")
-        me_resp = await client.get(f"{self.base_url}/users/me")
-        if me_resp.status_code != 200:
-            logger.error(f"Erro ao buscar dados do usuário (me) no ML: {me_resp.status_code} - {me_resp.text}")
-            raise HTTPException(status_code=me_resp.status_code, detail=f"Erro ao buscar dados do usuário no ML: {me_resp.text}")
+        # Reutiliza o user_id_ml salvo nas credenciais para evitar chamada HTTP extra a cada página
+        user_id = self.credentials.user_id_ml if self.credentials else None
+        if not user_id:
+            logger.debug("Buscando dados do usuário autenticado (/users/me)...")
+            me_resp = await client.get(f"{self.base_url}/users/me")
+            if me_resp.status_code != 200:
+                logger.error(f"Erro ao buscar dados do usuário (me) no ML: {me_resp.status_code} - {me_resp.text}")
+                raise HTTPException(status_code=me_resp.status_code, detail=f"Erro ao buscar dados do usuário no ML: {me_resp.text}")
+            user_id = me_resp.json().get('id')
+            if self.credentials:
+                self.credentials.user_id_ml = user_id
+                self.db.commit()
             
-        user_id = me_resp.json().get('id')
         logger.debug(f"User ID ML identificado: {user_id}. Iniciando busca total de pedidos...")
 
-        # Define o intervalo de tempo para ignorar o limite padrão de 15 dias do ML
-        # Buscando desde 2015 até agora para pegar todo o histórico disponível na busca comum
         agora = datetime.now().isoformat()
         
         # Busca Pedidos
@@ -182,12 +192,9 @@ class MeliService:
             "sort": "date_desc",
             "limit": limit,
             "offset": offset,
-            # Filtros de data para trazer tudo:
             "order.date_created.from": "2015-01-01T00:00:00.000-00:00",
-            "order.date_created.to": f"{agora}-03:00", # Ajustado para timezone Brasil se necessário
+            "order.date_created.to": f"{agora}-03:00",
         }
-        
-        # Ao NÃO enviar o parâmetro "status", o Mercado Livre traz todos (paid, cancelled, etc.)
         
         logger.debug(f"Enviando GET para {url} com params: {params}")
         resp = await client.get(url, params=params)
@@ -196,37 +203,47 @@ class MeliService:
             raise HTTPException(status_code=resp.status_code, detail=f"Erro ao buscar pedidos ML: {resp.text}")
             
         data = resp.json()
-        logger.info(f"Resultado da pesquisa de pedidos da API do Mercado Livre: {json.dumps(data, default=str)}")
         results = data.get("results", [])
         total = data.get("paging", {}).get("total", 0)
         
         logger.info(f"API do ML retornou {len(results)} resultados (Total disponível no filtro: {total})")
 
+        # Verificação em LOTE (Batch Query) de pedidos já importados no ERP
+        order_ids = [str(order.get('id')) for order in results if order.get('id')]
+        imported_ids = set()
+        if order_ids:
+            from sqlalchemy import or_
+            obs_conditions = [models.Pedido.observacao.contains(oid) for oid in order_ids]
+            existing_pedidos = self.db.query(models.Pedido.meli_order_id, models.Pedido.observacao).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.situacao != 'cancelado',
+                or_(
+                    models.Pedido.meli_order_id.in_(order_ids),
+                    *obs_conditions
+                )
+            ).all()
+            for p in existing_pedidos:
+                if p.meli_order_id:
+                    imported_ids.add(str(p.meli_order_id))
+                if p.observacao:
+                    for oid in order_ids:
+                        if oid in p.observacao:
+                            imported_ids.add(oid)
+
         formatted_items = []
         for order in results:
-            order_id = order.get('id')
-            
-            # Verifica se já importamos este pedido
-            search_str = f"{order_id}"
-            exists = self.db.query(models.Pedido).filter(
-                models.Pedido.observacao.contains(search_str),
-                models.Pedido.id_empresa == self.id_empresa,
-                models.Pedido.situacao != 'cancelado'
-            ).first()
+            order_id = str(order.get('id'))
             
             item_title = "Vários itens"
             if order.get('order_items') and len(order['order_items']) > 0:
-                item_title = order['order_items'][0]['item']['title']
+                item_title = order['order_items'][0].get('item', {}).get('title', 'Item sem título')
 
-            # Copia todos os dados originais do pedido para incluir todas as colunas da API
             item_data = order.copy()
-
-            # Adiciona campos calculados
             item_data.update({
-                "id": str(order_id),
-                "buyer_nickname": order['buyer']['nickname'],
+                "id": order_id,
+                "buyer_nickname": order.get('buyer', {}).get('nickname', 'Comprador ML'),
                 "item_title": item_title,
-                "ja_importado": bool(exists)
+                "ja_importado": order_id in imported_ids
             })
 
             formatted_items.append(item_data)
@@ -1536,93 +1553,110 @@ class MeliService:
         Processa notificações (Webhooks) do Mercado Livre para manter os pedidos atualizados no ERP.
         Suporta tópicos: 'shipments', 'orders_v2', 'orders', 'packs'.
         """
+        import asyncio
         from sqlalchemy import or_
         logger.info(f"Processando Webhook ML: topic={topic}, resource={resource}, user_id={user_id_ml} para empresa {self.id_empresa}")
         client = await self.get_client()
 
-        if topic == "shipments" or "/shipments/" in resource:
-            shipment_id = resource.strip().split('/')[-1]
-            if not shipment_id.isdigit():
-                return {"status": "ignored", "reason": "invalid_shipment_id"}
+        try:
+            # Helper para get com retentativas com backoff em caso de falha de conexão/timeout
+            async def _get_with_retry(url: str, max_retries: int = 3):
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        return await client.get(url)
+                    except (httpx.TimeoutException, httpx.NetworkError) as err:
+                        if attempt == max_retries:
+                            logger.error(f"Erro de rede/timeout ao consultar {url} no ML após {max_retries} tentativas: {err}")
+                            raise
+                        wait_time = attempt * 1.5
+                        logger.warning(f"Tentativa {attempt}/{max_retries} falhou ({type(err).__name__}) ao consultar {url}. Tentando novamente em {wait_time}s...")
+                        await asyncio.sleep(wait_time)
 
-            ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
-            if ship_resp.status_code != 200:
-                logger.error(f"Erro ao consultar shipment {shipment_id} no webhook: {ship_resp.status_code}")
-                return {"status": "error", "message": ship_resp.text}
+            if topic == "shipments" or "/shipments/" in resource:
+                shipment_id = resource.strip().split('/')[-1]
+                if not shipment_id.isdigit():
+                    return {"status": "ignored", "reason": "invalid_shipment_id"}
 
-            ship_data = ship_resp.json()
-            order_id = str(ship_data.get('order_id') or '')
-            ml_status = ship_data.get('status')
-            ml_substatus = ship_data.get('substatus')
-            tracking_number = ship_data.get('tracking_number')
-            logistic_type = ship_data.get('logistic_type')
-            
-            logger.info(f"Webhook ML Shipment {shipment_id}: Status={ml_status}, Substatus={ml_substatus}, OrderID={order_id}")
+                ship_resp = await _get_with_retry(f"{self.base_url}/shipments/{shipment_id}")
+                if ship_resp.status_code != 200:
+                    logger.error(f"Erro ao consultar shipment {shipment_id} no webhook: {ship_resp.status_code}")
+                    return {"status": "error", "message": ship_resp.text}
 
-            # Localiza o pedido no ERP
-            pedido = self.db.query(models.Pedido).filter(
-                models.Pedido.id_empresa == self.id_empresa,
-                or_(
-                    models.Pedido.meli_shipment_id == str(shipment_id),
-                    models.Pedido.meli_order_id.contains(str(order_id)) if order_id else False,
-                    models.Pedido.observacao.contains(str(order_id)) if order_id else False,
-                    models.Pedido.observacao.contains(str(shipment_id))
-                )
-            ).first()
+                ship_data = ship_resp.json()
+                order_id = str(ship_data.get('order_id') or '')
+                ml_status = ship_data.get('status')
+                ml_substatus = ship_data.get('substatus')
+                tracking_number = ship_data.get('tracking_number')
+                logistic_type = ship_data.get('logistic_type')
+                
+                logger.info(f"Webhook ML Shipment {shipment_id}: Status={ml_status}, Substatus={ml_substatus}, OrderID={order_id}")
 
-            if not pedido:
-                logger.info(f"Pedido correspondente ao shipment {shipment_id} / order {order_id} não encontrado no banco local.")
-                return {"status": "not_found", "shipment_id": shipment_id}
+                # Localiza o pedido no ERP
+                pedido = self.db.query(models.Pedido).filter(
+                    models.Pedido.id_empresa == self.id_empresa,
+                    or_(
+                        models.Pedido.meli_shipment_id == str(shipment_id),
+                        models.Pedido.meli_order_id.contains(str(order_id)) if order_id else False,
+                        models.Pedido.observacao.contains(str(order_id)) if order_id else False,
+                        models.Pedido.observacao.contains(str(shipment_id))
+                    )
+                ).first()
 
-            # Atualiza campos dedicados
-            pedido.meli_shipment_id = str(shipment_id)
-            if ml_status:
-                pedido.meli_status_envio = str(ml_status)
-            if tracking_number and not pedido.meli_tracking_number:
-                pedido.meli_tracking_number = str(tracking_number)
-            if logistic_type and not pedido.meli_logistic_type:
-                pedido.meli_logistic_type = str(logistic_type)
+                if not pedido:
+                    logger.info(f"Pedido correspondente ao shipment {shipment_id} / order {order_id} não encontrado no banco local.")
+                    return {"status": "not_found", "shipment_id": shipment_id}
 
-            # Atualiza datas de despacho / entrega
-            if ml_status in ['shipped', 'in_transit']:
-                if not pedido.data_despacho:
-                    pedido.data_despacho = datetime.now(timezone.utc).date()
-            elif ml_status in ['delivered']:
-                if not pedido.data_finalizacao:
-                    pedido.data_finalizacao = datetime.now(timezone.utc).date()
-                if not pedido.data_entrega:
-                    pedido.data_entrega = datetime.now(timezone.utc).date()
+                # Atualiza campos dedicados
+                pedido.meli_shipment_id = str(shipment_id)
+                if ml_status:
+                    pedido.meli_status_envio = str(ml_status)
+                if tracking_number and not pedido.meli_tracking_number:
+                    pedido.meli_tracking_number = str(tracking_number)
+                if logistic_type and not pedido.meli_logistic_type:
+                    pedido.meli_logistic_type = str(logistic_type)
 
-            self.db.commit()
-            self.db.refresh(pedido)
-            logger.info(f"Pedido ERP #{pedido.id} atualizado via Webhook ML! meli_status_envio={pedido.meli_status_envio}")
-            return {"status": "success", "pedido_id": pedido.id, "meli_status_envio": pedido.meli_status_envio}
+                # Atualiza datas de despacho / entrega
+                if ml_status in ['shipped', 'in_transit']:
+                    if not pedido.data_despacho:
+                        pedido.data_despacho = datetime.now(timezone.utc).date()
+                elif ml_status in ['delivered']:
+                    if not pedido.data_finalizacao:
+                        pedido.data_finalizacao = datetime.now(timezone.utc).date()
+                    if not pedido.data_entrega:
+                        pedido.data_entrega = datetime.now(timezone.utc).date()
 
-        elif topic in ["orders_v2", "orders"] or "/orders/" in resource:
-            order_id = resource.strip().split('/')[-1]
-            if not order_id.isdigit():
-                return {"status": "ignored", "reason": "invalid_order_id"}
-
-            order_resp = await client.get(f"{self.base_url}/orders/{order_id}")
-            if order_resp.status_code != 200:
-                return {"status": "error", "message": order_resp.text}
-
-            order_data = order_resp.json()
-            shipping_id = order_data.get('shipping', {}).get('id')
-            
-            pedido = self.db.query(models.Pedido).filter(
-                models.Pedido.id_empresa == self.id_empresa,
-                or_(
-                    models.Pedido.meli_order_id.contains(str(order_id)),
-                    models.Pedido.observacao.contains(str(order_id)),
-                    models.Pedido.meli_shipment_id == str(shipping_id) if shipping_id else False
-                )
-            ).first()
-
-            if pedido:
-                if shipping_id and not pedido.meli_shipment_id:
-                    pedido.meli_shipment_id = str(shipping_id)
                 self.db.commit()
-                return {"status": "success", "pedido_id": pedido.id}
+                self.db.refresh(pedido)
+                logger.info(f"Pedido ERP #{pedido.id} atualizado via Webhook ML! meli_status_envio={pedido.meli_status_envio}")
+                return {"status": "success", "pedido_id": pedido.id, "meli_status_envio": pedido.meli_status_envio}
 
-        return {"status": "ok"}
+            elif topic in ["orders_v2", "orders"] or "/orders/" in resource:
+                order_id = resource.strip().split('/')[-1]
+                if not order_id.isdigit():
+                    return {"status": "ignored", "reason": "invalid_order_id"}
+
+                order_resp = await _get_with_retry(f"{self.base_url}/orders/{order_id}")
+                if order_resp.status_code != 200:
+                    return {"status": "error", "message": order_resp.text}
+
+                order_data = order_resp.json()
+                shipping_id = order_data.get('shipping', {}).get('id')
+                
+                pedido = self.db.query(models.Pedido).filter(
+                    models.Pedido.id_empresa == self.id_empresa,
+                    or_(
+                        models.Pedido.meli_order_id.contains(str(order_id)),
+                        models.Pedido.observacao.contains(str(order_id)),
+                        models.Pedido.meli_shipment_id == str(shipping_id) if shipping_id else False
+                    )
+                ).first()
+
+                if pedido:
+                    if shipping_id and not pedido.meli_shipment_id:
+                        pedido.meli_shipment_id = str(shipping_id)
+                    self.db.commit()
+                    return {"status": "success", "pedido_id": pedido.id}
+
+            return {"status": "ok"}
+        finally:
+            await client.aclose()

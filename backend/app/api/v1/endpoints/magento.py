@@ -15,18 +15,34 @@ def list_magento_orders_proxy(
     skip: int = 0,
     limit: int = 10,
     filters: str = None,
+    refresh: bool = False,
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """
-    Endpoint Proxy: Busca pedidos diretamente na API do Magento e retorna formatado.
+    Endpoint Proxy: Busca pedidos diretamente na API do Magento com cache inteligente.
     """
     try:
         service = MagentoService(db, current_user.id_empresa)
-        data = service.list_orders(limit=limit, offset=skip, filters=filters)
+        data = service.list_orders(limit=limit, offset=skip, filters=filters, force_refresh=refresh)
         return data
     except Exception as e:
         logger.exception(f"Erro ao listar pedidos Magento: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/magento/sync")
+def sync_magento_connection(
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Força atualização da lista de pedidos do Magento limpando o cache em memória.
+    """
+    try:
+        MagentoService.clear_cache(current_user.id_empresa)
+        return {"message": "Sincronização com Magento concluída com sucesso!"}
+    except Exception as e:
+        logger.exception(f"Erro ao sincronizar Magento: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/magento/pedidos/{entity_id}/importar")

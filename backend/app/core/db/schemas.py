@@ -1217,6 +1217,7 @@ class UsuarioPreferenciaBase(BaseModel):
 class UsuarioPreferencia(UsuarioPreferenciaBase):
     id: int
     id_usuario: int
+    id_empresa: Optional[int] = None
 
 # --- 13. Schemas de Dashboard Customizável ---
 

@@ -6,10 +6,10 @@ import csv # Importar csv
 import json # Importar json
 import zipfile # Importar zipfile
 import enum # Importar enum
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload, defer
 from sqlalchemy import or_, and_, String, cast, func, distinct, text, asc, desc, inspect, case
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.types import Text, Enum, Date, DateTime, Integer, Numeric, Boolean, Float
+from sqlalchemy.types import Text, Enum, Date, DateTime, Integer, BigInteger, Numeric, Boolean, Float
 from typing import List, Any, Dict
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
@@ -38,75 +38,119 @@ from app.crud import crud_user
 
 router = APIRouter()
 
+def is_pure_string_type(col_type):
+    if col_type is None:
+        return False
+    if isinstance(col_type, (Enum, models.SQLAlchemyEnum)) or hasattr(col_type, "enums") or hasattr(col_type, "enum_class"):
+        return False
+    return isinstance(col_type, (String, Text))
+
+def is_enum_type(col_type):
+    if col_type is None:
+        return False
+    return isinstance(col_type, (Enum, models.SQLAlchemyEnum)) or hasattr(col_type, "enums") or hasattr(col_type, "enum_class")
+
+def safe_unaccent(col_attr, col_obj=None):
+    """Retorna expressão unaccent segura para PostgreSQL, fazendo cast de Enum para String quando necessário."""
+    col_type = getattr(col_obj, "type", None) or getattr(col_attr, "type", None)
+    if is_pure_string_type(col_type):
+        return func.unaccent(col_attr)
+    return func.unaccent(cast(col_attr, String))
+
 def apply_search_filter(query, model, search_term: str, search_field: str = None):
-    """Aplica filtro de busca textual em colunas e relacionamentos (FKs)."""
+    """Aplica filtro de busca textual inteligente e otimizado em colunas e relacionamentos (FKs)."""
     if not search_term:
         return query
 
-    # Campos que nunca devem ser buscados (segurança/sistema)
-    ALWAYS_SKIP = ["id_empresa", "senha", "hashed_password"]
-    
-    # Campos que são pulados na busca global, mas permitidos na busca específica
-    GLOBAL_SKIP = ["id", "criado_em", "atualizado_em"]
+    search_term = str(search_term).strip()
+    if not search_term:
+        return query
 
+    # 1. BUSCA EM CAMPO ESPECÍFICO
+    if search_field:
+        if search_field == "id" and hasattr(model, "id_sequencial"):
+            search_field = "id_sequencial"
+
+        if hasattr(model, search_field):
+            col_attr = getattr(model, search_field)
+            mapper = inspect(model)
+            col_obj = model.__table__.columns.get(search_field)
+
+            # Se for FK com busca textual, busca no display do relacionamento
+            if col_obj is not None and col_obj.foreign_keys:
+                rel = next((r for r in mapper.relationships if col_obj in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                if rel:
+                    related_model = rel.mapper.class_
+                    PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
+                    display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
+                    if display_field:
+                        rel_alias = aliased(related_model)
+                        query = query.outerjoin(rel_alias, getattr(model, rel.key))
+                        rel_col_obj = related_model.__table__.columns.get(display_field)
+                        return query.filter(safe_unaccent(getattr(rel_alias, display_field), rel_col_obj).ilike(func.unaccent(f"%{search_term}%")))
+
+            if col_obj is not None and isinstance(col_obj.type, (Integer, BigInteger)):
+                clean_num = search_term.lstrip('#').strip()
+                if clean_num.isdigit():
+                    return query.filter(col_attr == int(clean_num))
+                return query.filter(cast(col_attr, String).like(f"%{clean_num}%"))
+            else:
+                return query.filter(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{search_term}%")))
+
+        return query
+
+    # 2. BUSCA GLOBAL INTELIGENTE
     filter_conditions = []
-    if isinstance(search_term, str):
-        search_term = search_term.strip()
-    
     search_pattern = f"%{search_term}%"
-    
-    # 1. Busca nas colunas do próprio modelo
-    for col in model.__table__.columns:
-        if col.name in ALWAYS_SKIP:
-            continue
-            
-        # Se não for busca específica, pula os campos globais ignorados
-        if not search_field and col.name in GLOBAL_SKIP:
-            continue
-            
-        # Se for busca específica, ignora colunas que não são a alvo (permite id_sequencial quando search_field == 'id')
-        if search_field and col.name != search_field and not (search_field == "id" and col.name == "id_sequencial"):
-            continue
 
-        column_attr = getattr(model, col.name)
-        filter_conditions.append(
-            func.unaccent(cast(column_attr, String)).ilike(func.unaccent(search_pattern))
-        )
+    # Se for número (ex: ID do pedido, código sequencial, NF), busca direta por igualdade / like numérico
+    clean_digits = search_term.lstrip('#').strip()
+    if clean_digits.isdigit():
+        num_val = int(clean_digits)
+        if hasattr(model, "id_sequencial"):
+            filter_conditions.append(model.id_sequencial == num_val)
+        if hasattr(model, "id"):
+            filter_conditions.append(model.id == num_val)
+        if hasattr(model, "numero_nf"):
+            filter_conditions.append(model.numero_nf.like(f"%{clean_digits}%"))
 
-    # 2. Busca em relacionamentos (Foreign Keys)
+    # Colunas de texto prioritárias do próprio modelo
+    PRIORITY_TEXT_FIELDS = [
+        "descricao", "nome_razao", "fantasia", "nome", "sku", "email",
+        "chave_acesso", "numero_nf", "shopee_order_sn", "meli_order_id",
+        "id_pedido_intelipost", "observacao", "observacoes_nf", "titulo",
+        "cidade", "bairro", "logradouro", "endereco_cidade", "endereco_logradouro",
+        "caixa_destino_origem", "origem_venda", "lote", "deposito", "increment_id"
+    ]
+
+    for field_name in PRIORITY_TEXT_FIELDS:
+        if hasattr(model, field_name):
+            col_obj = model.__table__.columns.get(field_name)
+            if col_obj is not None:
+                col_attr = getattr(model, field_name)
+                if is_pure_string_type(col_obj.type) or is_enum_type(col_obj.type):
+                    filter_conditions.append(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(search_pattern)))
+
+    # Busca em relacionamentos chave (cliente, vendedor, transportadora, etc.)
     mapper = inspect(model)
     PREFERRED_DISPLAY_FIELDS = [
-        "nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"
+        "nome_razao", "fantasia", "nome", "descricao", "razao", "sku"
     ]
 
     for rel in mapper.relationships:
         if rel.direction.name == 'MANYTOONE':
-            # Se for busca específica, verifica se o campo alvo é a FK deste relacionamento
-            if search_field:
-                # Verifica se search_field é uma das colunas locais da FK (ex: id_cliente)
-                is_target_rel = any(c.name == search_field for c in rel.local_columns)
-                if not is_target_rel:
-                    continue
-
             related_model = rel.mapper.class_
-            display_field = None
-            for field in PREFERRED_DISPLAY_FIELDS:
-                if hasattr(related_model, field):
-                    display_field = field
-                    break
-            
+            display_field = next((f for f in PREFERRED_DISPLAY_FIELDS if hasattr(related_model, f)), None)
             if display_field:
                 rel_alias = aliased(related_model)
-                rel_attr = getattr(model, rel.key)
-                query = query.outerjoin(rel_alias, rel_attr)
-                related_column_attr = getattr(rel_alias, display_field)
-                filter_conditions.append(
-                    func.unaccent(cast(related_column_attr, String)).ilike(func.unaccent(search_pattern))
-                )
+                query = query.outerjoin(rel_alias, getattr(model, rel.key))
+                related_attr = getattr(rel_alias, display_field)
+                rel_col_obj = related_model.__table__.columns.get(display_field)
+                filter_conditions.append(safe_unaccent(related_attr, rel_col_obj).ilike(func.unaccent(search_pattern)))
 
     if filter_conditions:
         query = query.filter(or_(*filter_conditions))
-    
+
     return query
 
 # --- NOVA ROTA DE ETIQUETA (AJUSTE FINO - VISUAL JADLOG IDÊNTICO) ---
@@ -1224,20 +1268,20 @@ def list_items(
                 
                 # Resolve atributo (suporta caminhos aninhados como 'cliente.nome_razao')
                 parts = field_name.split('.')
+                col_obj = None
                 if len(parts) == 1:
                     if not hasattr(registry["model"], field_name): continue
                     
-                    # Verificação de FK para busca textual automática em relacionamentos
                     model = registry["model"]
                     mapper = inspect(model)
-                    column = model.__table__.columns.get(field_name)
+                    col_obj = model.__table__.columns.get(field_name)
                     column_attr = getattr(model, field_name)
 
                     # Se for uma FK e a busca for textual (contains/starts_with), tenta buscar no campo de display do relacionado
                     is_textual_search = any(f.get("operator") in ["contains", "starts_with", "ends_with"] for f in field_filters)
                     
-                    if column is not None and column.foreign_keys and is_textual_search:
-                        rel = next((r for r in mapper.relationships if column in r.local_columns and r.direction.name == 'MANYTOONE'), None)
+                    if col_obj is not None and col_obj.foreign_keys and is_textual_search:
+                        rel = next((r for r in mapper.relationships if col_obj in r.local_columns and r.direction.name == 'MANYTOONE'), None)
                         if rel:
                             related_model = rel.mapper.class_
                             PREFERRED_DISPLAY_FIELDS = ["nome_razao", "fantasia", "nome", "descricao", "razao", "sku", "email", "titulo", "increment_id"]
@@ -1251,6 +1295,7 @@ def list_items(
                                     relation_aliases[rel_name] = rel_alias
                                 
                                 column_attr = getattr(relation_aliases[rel_name], display_field)
+                                col_obj = related_model.__table__.columns.get(display_field)
                 else:
                     rel_name = parts[0]
                     field_part = parts[1]
@@ -1266,43 +1311,107 @@ def list_items(
                     
                     column_attr = getattr(relation_aliases[rel_name], field_part, None)
                     if column_attr is None: continue
+                    try:
+                        col_obj = relation_aliases[rel_name].__table__.columns.get(field_part)
+                    except: pass
                 
+                is_datetime_col = col_obj is not None and isinstance(col_obj.type, DateTime)
+                is_date_col = col_obj is not None and isinstance(col_obj.type, Date)
+                is_pure_text_col = col_obj is not None and is_pure_string_type(col_obj.type)
+                is_enum_col = col_obj is not None and is_enum_type(col_obj.type)
+                is_int_col = col_obj is not None and isinstance(col_obj.type, (Integer, BigInteger))
+
                 for f in field_filters:
                     operator = f.get("operator")
                     value = f.get("value")
-                    
+                    if value is None and operator not in ["is_true", "is_false", "today"]:
+                        continue
+
                     if operator == "contains":
-                        field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
+                        if is_pure_text_col:
+                            field_conditions.append(func.unaccent(column_attr).ilike(func.unaccent(f"%{value}%")))
+                        elif is_enum_col:
+                            field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
+                        elif is_int_col and str(value).isdigit():
+                            field_conditions.append(column_attr == int(value))
+                        else:
+                            field_conditions.append(cast(column_attr, String).ilike(f"%{value}%"))
+
+                    elif operator == "starts_with":
+                        if is_pure_text_col:
+                            field_conditions.append(func.unaccent(column_attr).ilike(func.unaccent(f"{value}%")))
+                        elif is_enum_col:
+                            field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"{value}%")))
+                        else:
+                            field_conditions.append(cast(column_attr, String).ilike(f"{value}%"))
+
+                    elif operator == "ends_with":
+                        if is_pure_text_col:
+                            field_conditions.append(func.unaccent(column_attr).ilike(func.unaccent(f"%{value}")))
+                        elif is_enum_col:
+                            field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}")))
+                        else:
+                            field_conditions.append(cast(column_attr, String).ilike(f"%{value}"))
+
                     elif operator == "equals":
                         if isinstance(value, str) and "," in value:
                             vals = [v.strip() for v in value.split(",")]
                             field_conditions.append(column_attr.in_(vals))
+                        elif is_datetime_col and isinstance(value, str) and len(value) == 10:
+                            field_conditions.append(and_(column_attr >= f"{value} 00:00:00", column_attr <= f"{value} 23:59:59"))
                         else:
                             field_conditions.append(column_attr == value)
+
                     elif operator == "in":
                         vals = [v.strip() for v in str(value).split(",")] if isinstance(value, str) else value
                         field_conditions.append(column_attr.in_(vals))
-                    elif operator == "starts_with":
-                        field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"{value}%")))
-                    elif operator == "ends_with":
-                        field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}")))
-                    elif operator == "gt": field_conditions.append(column_attr > value)
-                    elif operator == "gte": field_conditions.append(column_attr >= value)
-                    elif operator == "lt": field_conditions.append(column_attr < value)
-                    elif operator == "lte": field_conditions.append(column_attr <= value)
-                    elif operator == "neq": field_conditions.append(column_attr != value)
-                    elif operator == "is_true": field_conditions.append(column_attr == True)
-                    elif operator == "is_false": field_conditions.append(column_attr == False)
+
+                    elif operator == "gt":
+                        field_conditions.append(column_attr > value)
+
+                    elif operator == "gte":
+                        if is_datetime_col and isinstance(value, str) and len(value) == 10:
+                            field_conditions.append(column_attr >= f"{value} 00:00:00")
+                        else:
+                            field_conditions.append(column_attr >= value)
+
+                    elif operator == "lt":
+                        field_conditions.append(column_attr < value)
+
+                    elif operator == "lte":
+                        if is_datetime_col and isinstance(value, str) and len(value) == 10:
+                            field_conditions.append(column_attr <= f"{value} 23:59:59")
+                        else:
+                            field_conditions.append(column_attr <= value)
+
+                    elif operator == "neq":
+                        field_conditions.append(column_attr != value)
+
+                    elif operator == "is_true":
+                        field_conditions.append(column_attr == True)
+
+                    elif operator == "is_false":
+                        field_conditions.append(column_attr == False)
+
                     elif operator == "today":
-                        today = date.today()
-                        field_conditions.append(cast(column_attr, Date) == today)
+                        if is_datetime_col:
+                            today_start = datetime.combine(date.today(), datetime.min.time())
+                            today_end = datetime.combine(date.today(), datetime.max.time())
+                            field_conditions.append(and_(column_attr >= today_start, column_attr <= today_end))
+                        else:
+                            field_conditions.append(column_attr == date.today())
+
                     elif operator == "last_days":
                         try:
                             days = int(value)
                         except:
                             days = 0
-                        today = date.today()
-                        field_conditions.append(and_(cast(column_attr, Date) >= today - timedelta(days=days), cast(column_attr, Date) <= today))
+                        if is_datetime_col:
+                            start_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+                            end_dt = datetime.combine(date.today(), datetime.max.time())
+                            field_conditions.append(and_(column_attr >= start_dt, column_attr <= end_dt))
+                        else:
+                            field_conditions.append(and_(column_attr >= (date.today() - timedelta(days=days)), column_attr <= date.today()))
                 
                 if field_conditions:
                     # Se múltiplos 'equals' ou 'in' no mesmo campo -> OR. Senão -> AND.
@@ -1370,7 +1479,8 @@ def list_items(
             if sort_col is not None:
                 # Identifica o tipo da coluna para decidir a estratégia de ordenação
                 is_text_field = False
-                if hasattr(sort_col, "type") and isinstance(sort_col.type, (String, Text)):
+                col_type = getattr(sort_col, "type", None)
+                if col_type and (is_pure_string_type(col_type) or is_enum_type(col_type)):
                     is_text_field = True
 
                 needs_numeric_sort = any(kw in sb.lower() for kw in ['numero', 'nsu', 'cep', 'cpf_cnpj'])
@@ -1379,7 +1489,10 @@ def list_items(
                 if needs_numeric_sort:
                     sort_expressions = [func.length(cast(sort_col, String)), sort_col]
                 elif is_text_field:
-                    sort_expressions = [func.unaccent(func.lower(sort_col))]
+                    if is_pure_string_type(col_type):
+                        sort_expressions = [func.unaccent(func.lower(sort_col))]
+                    else:
+                        sort_expressions = [func.unaccent(func.lower(cast(sort_col, String)))]
                 else:
                     sort_expressions = [sort_col]
 
@@ -1412,41 +1525,54 @@ def list_items(
     # 5. Obter a contagem total (removendo ordenação para otimizar e evitar conflito no PostgreSQL)
     total_count = base_query.order_by(None).count()
     
-    # --- CÁLCULO DE TOTAIS (Para todas as páginas) ---
+    # --- CÁLCULO DE TOTAIS OTIMIZADO (Apenas para modelos relevantes que exibem linha de totais) ---
     totals = {}
     model = registry["model"]
-    sum_columns = []
     
-    # Identifica colunas numéricas (Numeric, Integer, Float) que fazem sentido somar
-    for col in model.__table__.columns:
-        # Ignora chaves primárias, chaves estrangeiras e campos de controle/configuração
-        if isinstance(col.type, (Numeric, Integer, Float)) and not col.primary_key and not col.foreign_keys:
-            # Lista de campos comuns que não devem ser somados mesmo sendo numéricos
-            if col.name.lower() in [
-                "nfe_serie", "nfe_numero_sequencial", "nfce_serie", "nfce_numero_sequencial", 
-                "modelo_fiscal", "indicador_presenca", "prioridade", "id_empresa",
-                "numero_nf", "ordem_finalizacao", "numero_conta", "codigo_ibge", "cep",
-                "crt", "indicador_ie", "id_integracao", "entity_id"
-            ]:
-                continue
-            sum_columns.append(col)
+    # Lista restrita de modelos e colunas de soma para não onerar todas as listagens do sistema
+    TARGET_TOTAL_MODELS = {
+        "pedidos": ["total", "total_desconto", "desconto", "valor_frete", "total_frete"],
+        "contas": ["valor", "valor_pago"]
+    }
 
-    if sum_columns:
-        # Cria expressões de soma: func.sum(Model.coluna)
-        sum_exprs = [func.sum(getattr(model, col.name)).label(col.name) for col in sum_columns]
-        # Executa a query de agregação removendo a ordenação para otimizar a performance
-        totals_row = base_query.order_by(None).with_entities(*sum_exprs).first()
-        
-        if totals_row:
-            for i, col in enumerate(sum_columns):
-                val = totals_row[i]
-                # Converte para float para garantir serialização JSON correta
-                totals[col.name] = float(val) if val is not None else 0
+    if model_name in TARGET_TOTAL_MODELS:
+        allowed_cols = TARGET_TOTAL_MODELS[model_name]
+        sum_columns = [col for col in model.__table__.columns if col.name in allowed_cols]
+        if sum_columns:
+            sum_exprs = [func.coalesce(func.sum(getattr(model, col.name)), 0).label(col.name) for col in sum_columns]
+            totals_row = base_query.order_by(None).with_entities(*sum_exprs).first()
+            if totals_row:
+                for i, col in enumerate(sum_columns):
+                    val = totals_row[i]
+                    totals[col.name] = float(val) if val is not None else 0.0
 
-    # 6. Obter os itens paginados (APLICA OFFSET E LIMIT DEPOIS DO FILTRO)
-    items = base_query.offset(skip).limit(limit).all()
+    # 6. EAGER LOADING E DEFER DE COLUNAS PESADAS (Elimina N+1 e economiza banda)
+    items_query = base_query
+    eager_options = []
+
+    if model_name == "pedidos":
+        eager_options.extend([
+            joinedload(models.Pedido.cliente),
+            joinedload(models.Pedido.vendedor),
+            joinedload(models.Pedido.transportadora),
+            defer(models.Pedido.xml_autorizado),
+            defer(models.Pedido.pdf_danfe),
+            defer(models.Pedido.pdf_cce),
+        ])
+    elif model_name == "contas":
+        if hasattr(models.Conta, "cadastro"):
+            eager_options.append(joinedload(models.Conta.cadastro))
+    elif model_name == "estoque":
+        if hasattr(models.Estoque, "produto"):
+            eager_options.append(joinedload(models.Estoque.produto))
+
+    if eager_options:
+        items_query = items_query.options(*eager_options)
+
+    # 7. Obter os itens paginados
+    items = items_query.offset(skip).limit(limit).all()
     
-    # 7. Serializar os itens
+    # 8. Serializar os itens
     serialized_items = [registry["schema"].from_orm(item) for item in items]
     
     return {"items": serialized_items, "total_count": total_count, "totals": totals}
@@ -2523,27 +2649,31 @@ def resolve_related_ids(db: Session, model: Any, item_data: Dict[str, Any], id_e
             col_name = col.name
             if col_name in item_data and item_data[col_name] is not None:
                 val = item_data[col_name]
+                target_table_name = None
                 if col.foreign_keys:
                     for fk in col.foreign_keys:
-                        target_table_name = fk.column.table.name
-                        if target_table_name == "empresas":
-                            continue
+                        if fk.column.table.name != "empresas":
+                            target_table_name = fk.column.table.name
+                            break
+                if not target_table_name and col.info and col.info.get("foreign_key_model"):
+                    target_table_name = col.info.get("foreign_key_model")
 
-                        target_model = _get_model_class_by_tablename(target_table_name)
-                        if target_model and hasattr(target_model, "id_sequencial"):
-                            if isinstance(val, (int, str)) and str(val).isdigit():
-                                num_val = int(val)
-                                q = db.query(target_model)
-                                if hasattr(target_model, "id_empresa"):
-                                    q = q.filter(target_model.id_empresa == id_empresa)
+                if target_table_name and target_table_name != "empresas":
+                    target_model = _get_model_class_by_tablename(target_table_name)
+                    if target_model and hasattr(target_model, "id_sequencial"):
+                        if isinstance(val, (int, str)) and str(val).isdigit():
+                            num_val = int(val)
+                            q = db.query(target_model)
+                            if hasattr(target_model, "id_empresa"):
+                                q = q.filter(target_model.id_empresa == id_empresa)
 
-                                target_obj = q.filter(target_model.id_sequencial == num_val).first()
-                                if target_obj and target_obj.id_sequencial is not None:
-                                    item_data[col_name] = target_obj.id_sequencial
-                                else:
-                                    target_obj_by_id = q.filter(target_model.id == num_val).first()
-                                    if target_obj_by_id and target_obj_by_id.id_sequencial is not None:
-                                        item_data[col_name] = target_obj_by_id.id_sequencial
+                            target_obj = q.filter(target_model.id_sequencial == num_val).first()
+                            if target_obj and target_obj.id_sequencial is not None:
+                                item_data[col_name] = target_obj.id_sequencial
+                            else:
+                                target_obj_by_id = q.filter(target_model.id == num_val).first()
+                                if target_obj_by_id and target_obj_by_id.id_sequencial is not None:
+                                    item_data[col_name] = target_obj_by_id.id_sequencial
     except Exception as e:
         print(f"Aviso ao resolver IDs relacionados em {model}: {e}")
 
@@ -3238,16 +3368,25 @@ def get_user_preferences(
     db: Session = Depends(database.get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
-    """Retorna as preferências salvas do usuário para um modelo específico."""
-    user_id_target = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
+    """Retorna as preferências salvas do usuário para um modelo específico filtrando pela empresa logada e id_sequencial."""
+    user_seq = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
     pref = db.query(models.UsuarioPreferencia).filter(
-        or_(models.UsuarioPreferencia.id_usuario == user_id_target, models.UsuarioPreferencia.id_usuario == current_user.id),
+        models.UsuarioPreferencia.id_empresa == current_user.id_empresa,
+        models.UsuarioPreferencia.id_usuario == user_seq,
         models.UsuarioPreferencia.model_name == model_name
     ).first()
     
     if not pref:
+        # Fallback para registros antigos sem id_empresa
+        pref = db.query(models.UsuarioPreferencia).filter(
+            models.UsuarioPreferencia.id_empresa.is_(None),
+            models.UsuarioPreferencia.id_usuario == user_seq,
+            models.UsuarioPreferencia.model_name == model_name
+        ).first()
+    
+    if not pref:
         # Retorna objeto vazio se não existir
-        return schemas.UsuarioPreferencia(id=0, id_usuario=user_id_target, model_name=model_name, config={})
+        return schemas.UsuarioPreferencia(id=0, id_usuario=user_seq, id_empresa=current_user.id_empresa, model_name=model_name, config={})
     
     return pref
 
@@ -3258,17 +3397,32 @@ def save_user_preferences(
     db: Session = Depends(database.get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
-    """Salva ou atualiza as preferências do usuário."""
-    user_id_target = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
+    """Salva ou atualiza as preferências do usuário na empresa logada via id_sequencial."""
+    user_seq = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
     pref = db.query(models.UsuarioPreferencia).filter(
-        or_(models.UsuarioPreferencia.id_usuario == user_id_target, models.UsuarioPreferencia.id_usuario == current_user.id),
+        models.UsuarioPreferencia.id_empresa == current_user.id_empresa,
+        models.UsuarioPreferencia.id_usuario == user_seq,
         models.UsuarioPreferencia.model_name == model_name
     ).first()
     
+    if not pref:
+        pref = db.query(models.UsuarioPreferencia).filter(
+            models.UsuarioPreferencia.id_empresa.is_(None),
+            models.UsuarioPreferencia.id_usuario == user_seq,
+            models.UsuarioPreferencia.model_name == model_name
+        ).first()
+    
     if pref:
         pref.config = config
+        pref.id_empresa = current_user.id_empresa
+        pref.id_usuario = user_seq
     else:
-        pref = models.UsuarioPreferencia(id_usuario=user_id_target, model_name=model_name, config=config)
+        pref = models.UsuarioPreferencia(
+            id_usuario=user_seq,
+            id_empresa=current_user.id_empresa,
+            model_name=model_name,
+            config=config
+        )
         db.add(pref)
     
     db.commit()

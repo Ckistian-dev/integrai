@@ -210,7 +210,7 @@ class ShopeeService:
         sign = self._generate_sign(path, timestamp, access_token, shop_id)
 
         # Paginação na Shopee: Shopee limita o intervalo a no máximo 15 dias por requisição (diff in 15days).
-        # Consultamos 2 janelas de 15 dias (últimos 30 dias no total).
+        # Consultamos a janela mais recente primeiro (15 dias); se necessário, a segunda (15-30 dias).
         all_order_sns = []
         now = datetime.now()
         time_windows = [
@@ -218,11 +218,14 @@ class ShopeeService:
             (int((now - timedelta(days=30)).timestamp()), int((now - timedelta(days=15)).timestamp()))
         ]
 
+        session = requests.Session()
+        orders_list = []
+
         try:
             for t_from, t_to in time_windows:
                 has_more = True
                 cursor = ""
-                while has_more and len(all_order_sns) < 200:
+                while has_more and len(all_order_sns) < 100:
                     timestamp = int(time.time())
                     sign = self._generate_sign(path, timestamp, access_token, shop_id)
                     params = {
@@ -239,7 +242,7 @@ class ShopeeService:
                     if cursor:
                         params["cursor"] = cursor
 
-                    resp = requests.get(f"{self.api_base}{path}", params=params, timeout=10.0)
+                    resp = session.get(f"{self.api_base}{path}", params=params, timeout=10.0)
                     data = resp.json()
 
                     if resp.status_code == 200 and not data.get("error"):
@@ -256,8 +259,11 @@ class ShopeeService:
                         logger.warning(f"Resposta de aviso ao buscar lista de pedidos Shopee: {resp.text}")
                         break
 
+                # Se já obteve pedidos suficientes para atender a listagem, não bloqueia na segunda janela
+                if len(all_order_sns) >= max(limit, 50):
+                    break
+
             # Busca detalhes em lotes de até 50 por vez
-            orders_list = []
             if all_order_sns:
                 detail_path = "/api/v2/order/get_order_detail"
                 for i in range(0, len(all_order_sns), 50):
@@ -275,7 +281,7 @@ class ShopeeService:
                         "response_optional_fields": "buyer_user_id,buyer_username,buyer_cpf_id,buyer_cnpj_id,recipient_address,item_list,total_amount,shipping_carrier,payment_method,invoice_data"
                     }
 
-                    detail_resp = requests.get(f"{self.api_base}{detail_path}", params=detail_params, timeout=10.0)
+                    detail_resp = session.get(f"{self.api_base}{detail_path}", params=detail_params, timeout=10.0)
                     detail_data = detail_resp.json()
 
                     if detail_resp.status_code == 200 and not detail_data.get("error"):
@@ -293,19 +299,34 @@ class ShopeeService:
                             })
         except Exception as e:
             logger.warning(f"Não foi possível buscar pedidos em tempo real na Shopee ({e}). Retornando lista vazia ou filtro.")
+        finally:
+            session.close()
 
-        # --- PRE-PROCESSAMENTO: Verificar se o pedido já existe no banco local por shopee_order_sn ---
+        # --- PRE-PROCESSAMENTO: Verificar se o pedido já existe no banco local em LOTE (Batch Query) ---
+        order_sns = [str(o.get('order_sn')) for o in orders_list if o.get('order_sn')]
+        imported_sns = set()
+        if order_sns:
+            from sqlalchemy import or_
+            obs_conditions = [models.Pedido.observacao.contains(sn) for sn in order_sns]
+            existing_pedidos = self.db.query(models.Pedido.shopee_order_sn, models.Pedido.observacao).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.situacao != PedidoSituacaoEnum.cancelado,
+                or_(
+                    models.Pedido.shopee_order_sn.in_(order_sns),
+                    *obs_conditions
+                )
+            ).all()
+            for p in existing_pedidos:
+                if p.shopee_order_sn:
+                    imported_sns.add(str(p.shopee_order_sn))
+                if p.observacao:
+                    for sn in order_sns:
+                        if sn in p.observacao:
+                            imported_sns.add(sn)
+
         for order in orders_list:
-            order_sn = order.get('order_sn')
-            if order_sn:
-                exists = self.db.query(models.Pedido.id).filter(
-                    models.Pedido.shopee_order_sn == order_sn,
-                    models.Pedido.id_empresa == self.id_empresa,
-                    models.Pedido.situacao != PedidoSituacaoEnum.cancelado
-                ).first()
-                order['ja_importado'] = True if exists else False
-            else:
-                order['ja_importado'] = False
+            sn = str(order.get('order_sn'))
+            order['ja_importado'] = sn in imported_sns
 
         # --- FILTRAGEM LOCAL ---
         active_filters = []

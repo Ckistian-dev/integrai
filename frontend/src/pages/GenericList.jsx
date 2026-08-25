@@ -531,9 +531,41 @@ const GenericList = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [addColumnSearch, setAddColumnSearch] = useState("");
   const [userPreferences, setUserPreferences] = useState({ visibleColumns: null, columnWidths: {}, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
-  const [columnsToDisplay, setColumnsToDisplay] = useState([]); // Colunas efetivamente renderizadas
   const [draggedColName, setDraggedColName] = useState(null);
   const [dragTargetColName, setDragTargetColName] = useState(null);
+
+  // Calcula as colunas a exibir baseado nas preferências e metadados de forma síncrona
+  const columnsToDisplay = useMemo(() => {
+    if (!metadata) return [];
+
+    let cols = [];
+    if (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared)) {
+      cols = userPreferences.visibleColumns;
+    } else {
+      cols = metadata.fields
+        ?.filter(f => f.visible !== false)
+        ?.map((field) => field.name) || [];
+      if (cols.includes('id_sequencial')) {
+        const idSeqIdx = cols.indexOf('id_sequencial');
+        if (idSeqIdx > -1) {
+          cols.splice(idSeqIdx, 1);
+          cols.unshift('id_sequencial');
+        }
+      }
+    }
+
+    if (user?.perfil !== 'admin' && userPermissions.colunas && userPermissions.colunas.length > 0) {
+      cols = cols.filter(col => userPermissions.colunas.includes(col));
+    }
+
+    return cols.filter((col) =>
+      col &&
+      col !== 'id' &&
+      col !== 'itens' &&
+      col !== 'retiradas_detalhadas' &&
+      col !== 'retiradas_detalhadas_json'
+    );
+  }, [metadata, userPreferences, userPermissions, user]);
 
   // Pré-visualização dinâmica em tempo real da tabela enquanto arrasta a coluna
   const displayColumns = useMemo(() => {
@@ -564,47 +596,6 @@ const GenericList = () => {
   const filtersJson = JSON.stringify(userPreferences.filters);
   const sortsJson = JSON.stringify(userPreferences.sort);
 
-  useEffect(() => {
-    const fetchMetadata = async () => {
-      setLoadingMetadata(true);
-      setLoadingPreferences(true); // Bloqueia a busca de dados até que as preferências do novo modelo sejam carregadas
-      setIsFetchingData(true); // Também ativamos este para o loading inicial
-      setError('');
-      setMetadata(null); // Limpa metadados antigos
-      setData([]); // Limpa dados antigos
-      setTotals({}); // Limpa totais antigos
-      setPage(1); // Reseta a página
-      setSearchTerm(""); // Reseta a busca
-      setSearchColumn(""); // Reseta a coluna de busca
-      setDateFilterColumn(""); // Reseta filtro de data
-      setDateStart("");
-      setDateEnd("");
-      setDropdownFilterColumn(""); // Reseta filtro de dropdown
-      setDropdownFilterValue("");
-
-      // Reseta estados que podem persistir entre navegações e causar conflitos
-      setUserPreferences({ visibleColumns: null, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
-      setColumnsToDisplay([]);
-      setMagentoDynamicFilters([]);
-      setQuickFilterValues({}); // Limpa filtros da tela anterior para evitar busca com parâmetros errados
-
-      isInitialLoad.current = true; // Reseta a flag de carga inicial para garantir a aplicação dos filtros
-      lastFetchedParamsRef.current = null; // Limpa o cache de busca para o novo modelo
-
-      try {
-        const metaRes = await api.get(`/metadata/${modelName}`);
-        setMetadata({ ...metaRes.data, model_name: modelName }); // Vincula o metadata ao modelo atual
-      } catch (err) {
-        setError(`Não foi possível carregar os metadados para "${modelName}".`);
-        toast.error(`Erro ao carregar metadados: ${err.message || 'Erro desconhecido'}`);
-      } finally {
-        setLoadingMetadata(false);
-        // isFetchingData será controlado pelo useEffect de dados
-      }
-    };
-    fetchMetadata();
-  }, [modelName]);
-
   // --- IDENTIFICA COLUNAS DE DATA ---
   const dateColumns = useMemo(() => {
     if (!metadata?.fields) return [];
@@ -622,9 +613,9 @@ const GenericList = () => {
   }, [metadata]);
 
   // --- OBTER CONFIGURAÇÃO PADRÃO DE PREFERÊNCIAS ---
-  const getDefaultPreferences = () => {
-    const defaultSortField = metadata?.fields?.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id';
-    if (!metadata?.fields || metadata.fields.length === 0) {
+  const getDefaultPreferences = (meta = metadata) => {
+    const defaultSortField = meta?.fields?.some(f => f.name === 'id_sequencial') ? 'id_sequencial' : 'id';
+    if (!meta?.fields || meta.fields.length === 0) {
       return {
         visibleColumns: null,
         columnWidths: {},
@@ -637,7 +628,8 @@ const GenericList = () => {
       };
     }
 
-    const allCols = metadata.fields
+    const allCols = meta.fields
+      .filter(f => f.visible !== false)
       .map(f => f.name)
       .filter(c => c !== 'id' && c !== 'itens' && c !== 'retiradas_detalhadas' && c !== 'retiradas_detalhadas_json');
 
@@ -657,18 +649,20 @@ const GenericList = () => {
     defaultQuickFields.push(searchKey);
     defaultQuickValues[searchKey] = { column: "", term: "" };
 
-    if (dropdownColumns.length > 0) {
+    const dropdownCols = meta.fields.filter(f => f.type === 'select' && f.options && f.options.length > 0);
+    if (dropdownCols.length > 0) {
       const dropdownKey = `__dropdown__:${now + 1}`;
       defaultQuickFields.push(dropdownKey);
-      defaultQuickValues[dropdownKey] = { column: dropdownColumns[0].name, value: "" };
+      defaultQuickValues[dropdownKey] = { column: dropdownCols[0].name, value: "" };
     }
 
-    if (dateColumns.length > 0) {
+    const dateCols = meta.fields.filter(f => f.type === 'date' || f.type === 'datetime');
+    if (dateCols.length > 0) {
       const dateKey = `__date__:${now + 2}`;
       defaultQuickFields.push(dateKey);
-      const preferred = dateColumns.find(c => ['data_orcamento', 'data_emissao', 'data', 'created_at', 'criado_em'].includes(c.name));
+      const preferred = dateCols.find(c => ['data_orcamento', 'data_emissao', 'data', 'created_at', 'criado_em'].includes(c.name));
       defaultQuickValues[dateKey] = {
-        column: preferred ? preferred.name : dateColumns[0].name,
+        column: preferred ? preferred.name : dateCols[0].name,
         start: "",
         end: ""
       };
@@ -695,7 +689,6 @@ const GenericList = () => {
     };
     setUserPreferences(resetConfig);
     setQuickFilterValues(resetConfig.quickFilterValues || {});
-    setColumnsToDisplay([]);
     try {
       await api.post(`/preferences/${modelName}`, resetConfig);
       toast.success("Todos os campos da tabela foram excluídos!");
@@ -704,17 +697,50 @@ const GenericList = () => {
     }
   };
 
-  // --- CARREGAR PREFERÊNCIAS DO USUÁRIO ---
+  // --- CARREGAR METADADOS E PREFERÊNCIAS EM PARALELO ---
   useEffect(() => {
-    if (!modelName || !metadata) return; // Aguarda os metadados para evitar carregamento prematuro ou sem fallback
+    let isMounted = true;
 
-    const fetchPreferences = async () => {
+    const loadMetaAndPrefs = async () => {
+      setLoadingMetadata(true);
       setLoadingPreferences(true);
+      setIsFetchingData(true);
+      setError('');
+      setMetadata(null);
+      setData([]);
+      setTotals({});
+      setPage(1);
+      setSearchTerm("");
+      setSearchColumn("");
+      setDateFilterColumn("");
+      setDateStart("");
+      setDateEnd("");
+      setDropdownFilterColumn("");
+      setDropdownFilterValue("");
+
+      setUserPreferences({ visibleColumns: null, filters: [], sort: [{ field: 'id', direction: 'desc' }] });
+      setMagentoDynamicFilters([]);
+      setQuickFilterValues({});
+
+      isInitialLoad.current = true;
+      lastFetchedParamsRef.current = null;
+
       try {
-        const res = await api.get(`/preferences/${modelName}`);
-        if (res.data && res.data.config && Object.keys(res.data.config).length > 0) {
-          const config = { ...res.data.config };
-          if (hasIdSeq && config.sort) {
+        const [metaRes, prefRes] = await Promise.all([
+          api.get(`/metadata/${modelName}`),
+          api.get(`/preferences/${modelName}`).catch(() => ({ data: null }))
+        ]);
+
+        if (!isMounted) return;
+
+        const metaData = { ...metaRes.data, model_name: modelName };
+        setMetadata(metaData);
+
+        const hasSeq = metaData.fields?.some(f => f.name === 'id_sequencial');
+
+        if (prefRes?.data?.config && Object.keys(prefRes.data.config).length > 0) {
+          const config = { ...prefRes.data.config };
+          if (hasSeq && config.sort) {
             config.sort = getSortArray(config.sort, true);
           }
           setUserPreferences(config);
@@ -722,18 +748,28 @@ const GenericList = () => {
             setQuickFilterValues(config.quickFilterValues);
           }
         } else {
-          const defaultConfig = getDefaultPreferences();
+          const defaultConfig = getDefaultPreferences(metaData);
           setUserPreferences(defaultConfig);
           setQuickFilterValues(defaultConfig.quickFilterValues || {});
         }
       } catch (err) {
-        // Silencioso ou toast se crítico
+        if (!isMounted) return;
+        setError(`Não foi possível carregar os metadados para "${modelName}".`);
+        toast.error(`Erro ao carregar metadados: ${err.message || 'Erro desconhecido'}`);
       } finally {
-        setLoadingPreferences(false);
+        if (isMounted) {
+          setLoadingMetadata(false);
+          setLoadingPreferences(false);
+        }
       }
     };
-    fetchPreferences();
-  }, [modelName, !!metadata]); // Depende apenas da existência do metadata para evitar re-execuções desnecessárias
+
+    loadMetaAndPrefs();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [modelName]); // Depende apenas da existência do metadata para evitar re-execuções desnecessárias
 
   // --- SALVAMENTO AUTOMÁTICO DE FILTROS RÁPIDOS ---
   useEffect(() => {
@@ -959,23 +995,27 @@ const GenericList = () => {
     // Também bloqueia se o metadata for de um modelo anterior (durante a transição de rota)
     if (!metadata || loadingPreferences || metadata.model_name !== modelName) return;
 
-    // Evita o carregamento duplo e busca com dados obsoletos:
-    // Se os valores dos filtros mudaram (por digitação ou carga de preferências), 
-    // aguarda o debounce (500ms) para disparar a busca única com os valores processados.
-    const isStale = debouncedQuickFilterValuesJson !== JSON.stringify(quickFilterValues);
-    if (isStale) return;
+    // Se NÃO for a carga inicial, aguarda o debounce de digitação para evitar requisições intermediárias
+    if (!isInitialLoad.current) {
+      const isStale = debouncedQuickFilterValuesJson !== JSON.stringify(quickFilterValues);
+      if (isStale) return;
+    }
+
+    const controller = new AbortController();
 
     const fetchData = async () => {
+      // Na carga inicial usa os valores imediatos para não esperar o debounce
+      const effectiveFilterValues = isInitialLoad.current ? quickFilterValues : debouncedQuickFilterValues;
+
       // Monta uma chave única para identificar se os parâmetros de busca mudaram de fato
       const paramsKey = JSON.stringify({
         modelName, page, effectiveLimit, statusFilter,
         filtersJson, sortsJson,
         refreshTrigger, isMeliView, isMagentoView,
-        debouncedQuickFilterValuesJson
+        filterValues: effectiveFilterValues
       });
 
-      // Se os parâmetros são idênticos aos da última busca, ignora para evitar a "piscada" (double fetch)
-      // Isso acontece principalmente quando o debouncedSearchTerm "alcança" o searchTerm inicial
+      // Se os parâmetros são idênticos aos da última busca, ignora para evitar double fetch
       if (paramsKey === lastFetchedParamsRef.current) {
         return;
       }
@@ -985,8 +1025,6 @@ const GenericList = () => {
 
       try {
         const skip = (page - 1) * effectiveLimit;
-
-        // CORREÇÃO 1: Declarar a variável url
         let url = '';
 
         const sortList = getSortArray(userPreferences.sort, hasIdSeq);
@@ -999,19 +1037,14 @@ const GenericList = () => {
         };
 
         if (isMeliView) {
-          // ROTA ESPECÍFICA PROXY DO ML
           url = `/mercadolivre/pedidos`;
         } else if (isMagentoView) {
-          // ROTA ESPECÍFICA PROXY DO MAGENTO
           url = `/magento/pedidos`;
         } else if (isTiktokView) {
-          // ROTA ESPECÍFICA PROXY DO TIKTOK
           url = `/tiktok/pedidos`;
         } else if (isShopeeView) {
-          // ROTA ESPECÍFICA PROXY DA SHOPEE
           url = `/shopee/pedidos`;
         } else {
-          // ROTA PADRÃO GENÉRICA
           url = `/generic/${modelName}`;
         }
 
@@ -1024,13 +1057,12 @@ const GenericList = () => {
         }
 
         // Aplica filtros avançados (JSON)
-        // Combina filtros salvos com filtros rápidos de data
         let activeFilters = userPreferences.filters ? [...userPreferences.filters] : [];
 
-        // --- PROCESSA FILTROS RÁPIDOS (NOVA LÓGICA MULTI-FILTRO) ---
+        // --- PROCESSA FILTROS RÁPIDOS ---
         let mainSearchTerm = "";
         (userPreferences.quickFilterFields || []).forEach(key => {
-          const val = debouncedQuickFilterValues[key];
+          const val = effectiveFilterValues[key];
           if (val === undefined || val === null || val === "") return;
 
           const [type] = key.split(':');
@@ -1058,7 +1090,6 @@ const GenericList = () => {
               activeFilters.push({ field: val.column, operator: 'equals', value: val.value });
             }
           } else {
-            // Campo pinado normal
             const field = fieldMetaMap.get(type);
             if (field) {
               const op = (field.type === 'text' || field.type === 'email') ? 'contains' : 'equals';
@@ -1075,17 +1106,13 @@ const GenericList = () => {
           params.filters = JSON.stringify(activeFilters);
         }
 
-        // CORREÇÃO 2: Usar a variável 'url' definida acima, e não o texto fixo
-        const dataRes = await api.get(url, { params });
+        const dataRes = await api.get(url, { params, signal: controller.signal });
 
-        // Ajuste para garantir que o Magento retorne 'id' para a tabela
-        // Se a API retornar 'entity_id', mapeamos para 'id' para o componente GenericList funcionar
         const rawItems = (dataRes.data.items || []).map(item => ({
           ...item,
-          id: item.id || item.entity_id || item.id // Garante ID
+          id: item.id || item.entity_id || item.id
         }));
 
-        // Desduplicação defensiva por ID para evitar re-renderização de itens repetidos no DOM
         const seenIds = new Set();
         const items = rawItems.filter(item => {
           if (!item.id) return true;
@@ -1094,18 +1121,16 @@ const GenericList = () => {
           return true;
         });
 
-        // --- LÓGICA DINÂMICA DE CAMPOS ---
-        // Se o metadata não trouxe campos (ex: Magento/ML), construímos a partir dos dados recebidos
+        // Se o metadata não trouxe campos, constrói dinamicamente
         if (metadata.fields.length === 0 && items.length > 0) {
           const dynamicFields = Object.keys(items[0]).map(key => ({
             name: key,
             label: formatLabel(key),
-            type: 'text' // Tipo padrão, renderização ajusta se for booleano/etc
+            type: 'text'
           }));
 
           setMetadata(prev => ({ ...prev, fields: dynamicFields }));
 
-          // Define colunas visíveis iniciais mais limpas por padrão para as integrações (ML, Magento, TikTok, etc.)
           let defaultCols = dynamicFields.map(f => f.name);
           if (isMagentoView) {
             const magentoMainCols = ['increment_id', 'created_at', 'status', 'grand_total', 'ja_importado', 'customer_firstname', 'customer_lastname', 'customer_email'];
@@ -1132,9 +1157,7 @@ const GenericList = () => {
               : (prev.isExplicitlyCleared ? [] : defaultCols)
           }));
         }
-        // ---------------------------------
 
-        // Se for Magento, captura os filtros dinâmicos vindos no 'extra'
         if (isMagentoView && dataRes.data.extra?.available_filters) {
           setMagentoDynamicFilters(dataRes.data.extra.available_filters);
         }
@@ -1146,8 +1169,10 @@ const GenericList = () => {
         lastFetchedParamsRef.current = paramsKey;
         isInitialLoad.current = false;
       } catch (err) {
+        if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED' || err?.message === 'canceled') {
+          return;
+        }
         console.error('[fetchData] Erro ao buscar dados:', err?.response?.data || err?.message || err);
-        // Só define o erro se já não houver um erro de metadados
         if (!error) {
           if (err.response && err.response.status === 403 && isMeliView) {
             setError("Não conectado ao Mercado Livre. Clique em 'Sincronizar' para conectar.");
@@ -1170,6 +1195,10 @@ const GenericList = () => {
     };
 
     fetchData();
+
+    return () => {
+      controller.abort();
+    };
   }, [
     metadata,
     loadingPreferences,
@@ -1194,45 +1223,6 @@ const GenericList = () => {
     });
     return map;
   }, [metadata]); // Só roda quando os metadados mudam
-
-  // Calcula as colunas a exibir baseado nas preferências
-  useEffect(() => {
-    // Aguarda o carregamento das preferências terminar para evitar calcular colunas temporárias
-    if (!metadata || loadingPreferences) return;
-
-    let cols = [];
-    // Se tiver preferência salva válida de colunas, usa ela.
-    // Se for um Array VAZIO ([]), só considera limpo se isExplicitlyCleared for true.
-    if (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared)) {
-      cols = userPreferences.visibleColumns;
-    } else {
-      // Fallback padrão: todas as colunas do metadata, garantindo id_sequencial sempre em primeiro lugar
-      cols = metadata.fields.map((field) => field.name);
-      if (cols.includes('id_sequencial')) {
-        const idSeqIdx = cols.indexOf('id_sequencial');
-        if (idSeqIdx > -1) {
-          cols.splice(idSeqIdx, 1);
-          cols.unshift('id_sequencial');
-        }
-      }
-    }
-
-    // --- FILTRO DE PERMISSÕES DE COLUNA ---
-    if (user?.perfil !== 'admin' && userPermissions.colunas && userPermissions.colunas.length > 0) {
-      cols = cols.filter(col => userPermissions.colunas.includes(col));
-    }
-
-    // Filtra colunas complexas que quebram a tabela (JSONs grandes), ID primário e valores nulos
-    const finalCols = cols.filter((col) =>
-      col &&
-      col !== 'id' &&
-      col !== 'itens' &&
-      col !== 'retiradas_detalhadas' &&
-      col !== 'retiradas_detalhadas_json'
-    );
-
-    setColumnsToDisplay(finalCols);
-  }, [metadata, userPreferences, isMagentoView, loadingPreferences]);
 
   const magentoFilterOptions = useMemo(() => {
     if (!isMagentoView) return [];
@@ -1492,6 +1482,7 @@ const GenericList = () => {
   const handleMagentoSyncClick = async () => {
     try {
       setIsFetchingData(true);
+      await api.post('/magento/sync');
       setRefreshTrigger(prev => prev + 1);
       toast.success("Pedidos sincronizados com a Magento!");
     } catch (err) {
@@ -4054,9 +4045,9 @@ const GenericList = () => {
               </thead>
 
               {/* Corpo da Tabela */}
-              <tbody className="bg-white">
-                {isFetchingData && data.length === 0 ? (
-                  <TableSkeleton columns={isEditMode ? [...displayColumns, ''] : displayColumns} rows={limit} />
+              <tbody className={`bg-white transition-opacity duration-150 ${(isFetchingData && data.length > 0) ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+                {(isFetchingData || loadingMetadata || loadingPreferences) && data.length === 0 ? (
+                  <TableSkeleton columns={displayColumns.length > 0 ? (isEditMode ? [...displayColumns, ''] : displayColumns) : Array(6).fill('')} rows={limit} />
                 ) : error && data.length === 0 ? (
                   <tr style={{ height: `${limit * 53}px` }}>
                     <td colSpan={Math.max(1, displayColumns.length + (isEditMode ? 1 : 0))} className="px-6 py-12 text-center align-middle text-gray-500 bg-gray-50/20">

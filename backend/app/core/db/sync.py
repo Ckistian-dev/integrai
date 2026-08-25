@@ -276,31 +276,36 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
             source_tables = {m[0] for m in fk_mappings if m[0] in existing_tables}
 
             for tbl in source_tables:
-                fk_constraints = conn.execute(text("""
-                    SELECT tc.constraint_name, kcu.column_name,
-                           ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
-                    FROM information_schema.table_constraints AS tc
-                    JOIN information_schema.key_column_usage AS kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                        AND tc.table_schema = kcu.table_schema
-                    JOIN information_schema.constraint_column_usage AS ccu
-                        ON ccu.constraint_name = tc.constraint_name
-                    WHERE tc.constraint_type = 'FOREIGN KEY'
-                      AND tc.table_name = :tbl
-                      AND tc.table_schema = 'public'
-                """), {"tbl": tbl}).fetchall()
+                try:
+                    fk_constraints = conn.execute(text("""
+                        SELECT c.conname AS constraint_name,
+                               att.attname AS column_name,
+                               confrel.relname AS foreign_table,
+                               fatt.attname AS foreign_column
+                        FROM pg_constraint c
+                        JOIN pg_class conrel ON conrel.oid = c.conrelid
+                        JOIN pg_namespace ns ON ns.oid = conrel.relnamespace
+                        JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = c.conkey[1]
+                        LEFT JOIN pg_class confrel ON confrel.oid = c.confrelid
+                        LEFT JOIN pg_attribute fatt ON fatt.attrelid = c.confrelid AND fatt.attnum = c.confkey[1]
+                        WHERE c.contype = 'f'
+                          AND ns.nspname = 'public'
+                          AND conrel.relname = :tbl
+                    """), {"tbl": tbl}).fetchall()
 
-                for row in fk_constraints:
-                    constraint_name, col_name, foreign_table, foreign_col = row
-                    conn.execute(text(
-                        f'ALTER TABLE "{tbl}" DROP CONSTRAINT IF EXISTS "{constraint_name}"'
-                    ))
-                    dropped_constraints.append({
-                        "table": tbl, "constraint": constraint_name,
-                        "column": col_name, "foreign_table": foreign_table,
-                        "foreign_column": foreign_col,
-                    })
-                    logger.info(f"[MIGRAÇÃO] Constraint {constraint_name} removida temporariamente.")
+                    for row in fk_constraints:
+                        constraint_name, col_name, foreign_table, foreign_col = row
+                        conn.execute(text(
+                            f'ALTER TABLE "{tbl}" DROP CONSTRAINT IF EXISTS "{constraint_name}" CASCADE'
+                        ))
+                        dropped_constraints.append({
+                            "table": tbl, "constraint": constraint_name,
+                            "column": col_name, "foreign_table": foreign_table,
+                            "foreign_column": foreign_col,
+                        })
+                        logger.info(f"[MIGRAÇÃO] Constraint {constraint_name} removida temporariamente.")
+                except Exception as query_err:
+                    logger.debug(f"[MIGRAÇÃO] Consulta de constraints para {tbl}: {query_err}")
 
             # Executa UPDATEs de FK sem constraints
             for source_tbl, fk_col, target_tbl in fk_mappings:
@@ -334,8 +339,8 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
                         SET "{fk_col}" = target.id_sequencial
                         FROM "{target_tbl}" target
                         WHERE s."{fk_col}" = target.id
-                          AND s."{fk_col}" IS NOT NULL
-                          {emp_clause}
+                        AND s."{fk_col}" IS NOT NULL
+                        {emp_clause}
                     """))
 
             # Recria constraints apontando para id_sequencial ou id_empresa, id_sequencial se for id_sequencial
@@ -377,41 +382,70 @@ def fix_legacy_foreign_keys(engine: Engine):
     """
     logger.info("[MIGRAÇÃO] Verificando e corrigindo FKs monocoluna legadas...")
     
-    fk_configs = [
-        ("pedidos", "id_transportadora", "cadastros", "fk_pedidos_transportadora_empresa_seq"),
-        ("pedidos", "id_cliente", "cadastros", "fk_pedidos_cliente_empresa_seq"),
-        ("pedidos", "id_vendedor", "cadastros", "fk_pedidos_vendedor_empresa_seq"),
-        ("produtos", "id_fornecedor", "cadastros", "fk_produtos_fornecedor_empresa_seq"),
-        ("produtos", "id_embalagem", "embalagens", "fk_produtos_embalagem_empresa_seq"),
-        ("contas", "id_fornecedor", "cadastros", "fk_contas_fornecedor_empresa_seq"),
-        ("estoque", "id_produto", "produtos", "fk_estoque_produto_empresa_seq"),
+    legacy_constraint_names = [
+        ("contas", "contas_id_fornecedor_fkey"),
+        ("contas", "contas_id_classificacao_contabil_fkey"),
+        ("produtos", "produtos_id_fornecedor_fkey"),
+        ("produtos", "produtos_id_embalagem_fkey"),
+        ("estoque", "estoque_id_produto_fkey"),
+        ("pedidos", "pedidos_id_cliente_fkey"),
+        ("pedidos", "pedidos_id_vendedor_fkey"),
+        ("pedidos", "pedidos_id_transportadora_fkey"),
+        ("usuarios", "usuarios_id_perfil_fkey"),
+        ("empresas", "empresas_id_classificacao_contabil_padrao_fkey"),
+        ("empresas", "empresas_id_classificacao_contabil_cancelamento_fkey"),
+        ("usuario_preferencias", "usuario_preferencias_id_usuario_fkey"),
+        ("dashboard_preferencias", "dashboard_preferencias_id_usuario_fkey"),
     ]
 
+    # 1. Drop explícito de nomes conhecidos de constraints legadas
+    for tbl, cname in legacy_constraint_names:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE "{tbl}" DROP CONSTRAINT IF EXISTS "{cname}" CASCADE'))
+        except Exception as e:
+            logger.debug(f"[MIGRAÇÃO] Drop de constraint legada '{cname}' em '{tbl}': {e}")
+
+    # 2. Drop dinâmico de qualquer outra FK monocoluna em tabelas multi-tenant no PostgreSQL
     try:
         with engine.begin() as conn:
-            for tbl, col_name, target_tbl, new_constraint_name in fk_configs:
-                # Busca constraints existentes na tabela que utilizam a coluna col_name
-                fk_constraints = conn.execute(text("""
-                    SELECT tc.constraint_name, ccu.column_name AS foreign_column
-                    FROM information_schema.table_constraints AS tc
-                    JOIN information_schema.key_column_usage AS kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                        AND tc.table_schema = kcu.table_schema
-                    JOIN information_schema.constraint_column_usage AS ccu
-                        ON ccu.constraint_name = tc.constraint_name
-                    WHERE tc.constraint_type = 'FOREIGN KEY'
-                      AND tc.table_name = :tbl
-                      AND kcu.column_name = :col
-                      AND tc.table_schema = 'public'
-                """), {"tbl": tbl, "col": col_name}).fetchall()
+            monocol_fks = conn.execute(text("""
+                SELECT c.conname AS constraint_name,
+                       conrel.relname AS table_name,
+                       att.attname AS column_name
+                FROM pg_constraint c
+                JOIN pg_class conrel ON conrel.oid = c.conrelid
+                JOIN pg_namespace ns ON ns.oid = conrel.relnamespace
+                JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = c.conkey[1]
+                WHERE c.contype = 'f'
+                  AND ns.nspname = 'public'
+                  AND ARRAY_LENGTH(c.conkey, 1) = 1
+                  AND conrel.relname IN ('contas', 'produtos', 'estoque', 'pedidos', 'usuarios', 'empresas', 'usuario_preferencias', 'dashboard_preferencias')
+            """)).fetchall()
 
-                for constraint_name, foreign_column in fk_constraints:
-                    # Se a constraint aponta para 'id' (monocoluna antiga) ou tem nome antigo, dropa
-                    if foreign_column == "id" or constraint_name != new_constraint_name:
-                        logger.info(f"[MIGRAÇÃO] Removendo FK legada '{constraint_name}' de '{tbl}.{col_name}'...")
-                        conn.execute(text(f'ALTER TABLE "{tbl}" DROP CONSTRAINT IF EXISTS "{constraint_name}"'))
+            for r_cname, r_tbl, r_col in monocol_fks:
+                if r_col not in ["id_empresa"]:
+                    logger.info(f"[MIGRAÇÃO] Removendo FK monocoluna legada '{r_cname}' de '{r_tbl}.{r_col}'...")
+                    conn.execute(text(f'ALTER TABLE "{r_tbl}" DROP CONSTRAINT IF EXISTS "{r_cname}" CASCADE'))
+    except Exception as e:
+        logger.debug(f"[MIGRAÇÃO] Varredura dinâmica de FKs monocoluna: {e}")
 
-                # Verifica se a nova FK composta já existe
+    # 3. Garante as novas FKs compostas (uma transação isolada por tabela/coluna)
+    fk_configs = [
+        ("pedidos", "id_transportadora", "cadastros", "fk_pedidos_transportadora_empresa_seq", "SET NULL"),
+        ("pedidos", "id_cliente", "cadastros", "fk_pedidos_cliente_empresa_seq", "SET NULL"),
+        ("pedidos", "id_vendedor", "cadastros", "fk_pedidos_vendedor_empresa_seq", "SET NULL"),
+        ("produtos", "id_fornecedor", "cadastros", "fk_produtos_fornecedor_empresa_seq", "SET NULL"),
+        ("produtos", "id_embalagem", "embalagens", "fk_produtos_embalagem_empresa_seq", "SET NULL"),
+        ("contas", "id_fornecedor", "cadastros", "fk_contas_fornecedor_empresa_seq", "RESTRICT"),
+        ("contas", "id_classificacao_contabil", "classificacao_contabil", "fk_contas_classificacao_empresa_seq", "RESTRICT"),
+        ("estoque", "id_produto", "produtos", "fk_estoque_produto_empresa_seq", "RESTRICT"),
+        ("usuarios", "id_perfil", "perfil", "fk_usuarios_perfil_empresa_seq", "SET NULL"),
+    ]
+
+    for tbl, col_name, target_tbl, new_constraint_name, on_delete in fk_configs:
+        try:
+            with engine.begin() as conn:
                 check_new = conn.execute(text("""
                     SELECT constraint_name 
                     FROM information_schema.table_constraints 
@@ -427,11 +461,11 @@ def fix_legacy_foreign_keys(engine: Engine):
                         ADD CONSTRAINT "{new_constraint_name}"
                         FOREIGN KEY ("id_empresa", "{col_name}")
                         REFERENCES "{target_tbl}" ("id_empresa", "id_sequencial")
-                        ON DELETE SET NULL ON UPDATE CASCADE
+                        ON DELETE {on_delete} ON UPDATE CASCADE
                     """))
                     logger.info(f"[MIGRAÇÃO] FK composta '{new_constraint_name}' criada com sucesso!")
-    except Exception as e:
-        logger.error(f"[MIGRAÇÃO] Falha ao corrigir FKs legadas: {e}")
+        except Exception as e:
+            logger.warning(f"[MIGRAÇÃO] Não foi possível criar FK composta '{new_constraint_name}' em '{tbl}': {e}")
 
 
 def backfill_meli_fields_from_observacao(engine: Engine):
@@ -567,6 +601,27 @@ def sync_database_schema(engine: Engine, base):
             backfill_meli_fields_from_observacao(engine)
         except Exception as bf_err:
             logger.error(f"[SYNC] Backfill Mercado Livre falhou: {bf_err}")
+
+        # 5. Criação automática de índices declarados nos modelos
+        try:
+            inspector_indexes = inspect(engine)
+            for table_name, table in base.metadata.tables.items():
+                if table_name not in existing_tables:
+                    continue
+                try:
+                    existing_indexes = {idx["name"].lower() for idx in inspector_indexes.get_indexes(table_name) if idx.get("name")}
+                except Exception:
+                    existing_indexes = set()
+
+                for index in table.indexes:
+                    if index.name and index.name.lower() not in existing_indexes:
+                        try:
+                            index.create(bind=engine)
+                            logger.info(f"[SYNC] Índice '{index.name}' criado com sucesso na tabela '{table_name}'.")
+                        except Exception as idx_err:
+                            logger.warning(f"[SYNC] Aviso ao criar índice '{index.name}': {idx_err}")
+        except Exception as idx_sync_err:
+            logger.error(f"[SYNC] Erro na sincronização de índices: {idx_sync_err}")
 
         logger.info("[SYNC] Sincronização concluída com sucesso.")
     except Exception as e:

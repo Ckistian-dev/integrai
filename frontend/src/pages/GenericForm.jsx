@@ -63,6 +63,25 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
   // Ref para rastrear qual era o cliente anterior (para preenchimento automático ao trocar)
   const previousClientIdRef = useRef(null);
 
+  // Refs para evitar disparos repetidos de busca de CNPJ e CEP
+  const lastQueriedCnpjRef = useRef(null);
+  const lastQueriedCepRef = useRef(null);
+
+  // Funções utilitárias para validar formato de CNPJ e CEP antes de consultar APIs externas
+  const isValidCnpjFormat = (cnpj) => {
+    const clean = String(cnpj || '').replace(/\D/g, '');
+    if (clean.length !== 14) return false;
+    if (/^(\d)\1+$/.test(clean)) return false; // descarta sequências como 00000000000000 ou 11111111111111
+    return true;
+  };
+
+  const isValidCepFormat = (cep) => {
+    const clean = String(cep || '').replace(/\D/g, '');
+    if (clean.length !== 8) return false;
+    if (/^(\d)\1+$/.test(clean)) return false; // descarta sequências como 00000000 ou 99999999
+    return true;
+  };
+
   // Filtra abas que possuem pelo menos um campo visível
   const visibleTabs = useMemo(() => {
     return tabs.filter(tab => tab.fields.some(field => field.visible !== false));
@@ -360,6 +379,14 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           const itemRes = await api.get(`/generic/${modelName}/${id}`);
           setFormData(itemRes.data);
 
+          // Registra os valores iniciais para não disparar consultas desnecessárias no mount
+          if (itemRes.data?.cpf_cnpj) {
+            lastQueriedCnpjRef.current = String(itemRes.data.cpf_cnpj).replace(/\D/g, '');
+          }
+          if (itemRes.data?.cep) {
+            lastQueriedCepRef.current = String(itemRes.data.cep).replace(/\D/g, '');
+          }
+
           // 🎯 CORREÇÃO: Evita que o preenchimento automático de endereço 
           // sobreponha o endereço já salvo no pedido ao carregar o formulário.
           if (modelName === 'pedidos' && itemRes.data.id_cliente) {
@@ -384,7 +411,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
   // --- INTEGRAÇÃO BRASIL API ---
   const fetchAddressFromCep = useCallback(async (cepValue, isDeliveryAddress = false) => {
     const cep = String(cepValue).replace(/\D/g, '');
-    if (cep.length !== 8) return;
+    if (!isValidCepFormat(cep)) return;
 
     try {
       // 1. Busca dados do CEP (Rua, Bairro, Cidade, Estado)
@@ -407,10 +434,8 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           const resIbge = await fetch(`https://brasilapi.com.br/api/ibge/municipios/v1/${data.state}`);
           if (resIbge.ok) {
             const cities = await resIbge.json();
-            // Normalização para comparação segura (remove acentos e uppercase)
             const normalize = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/-/g, " ").toUpperCase();
             const targetCity = normalize(data.city);
-
             const found = cities.find(c => normalize(c.nome) === targetCity);
 
             if (found) {
@@ -423,16 +448,15 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
         } catch (errIbge) {
         }
       }
-
     } catch (err) {
-      toast.error("Erro ao buscar CEP.");
+      // Falha silenciosa para evitar ruído de console quando a API estiver indisponível
     }
   }, []);
 
   // --- INTEGRAÇÃO BRASIL API (CNPJ) ---
   const fetchCnpjData = useCallback(async (cnpjValue) => {
-    const cnpj = String(cnpjValue).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (cnpj.length !== 14) return;
+    const cnpj = String(cnpjValue).replace(/\D/g, '');
+    if (!isValidCnpjFormat(cnpj)) return;
 
     try {
       const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
@@ -471,7 +495,9 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           }
         } catch (errIbge) { }
       }
-    } catch (err) { toast.error("Erro ao buscar CNPJ."); }
+    } catch (err) {
+      // Falha silenciosa para evitar ruído de console quando a API estiver indisponível
+    }
   }, []);
 
   // Handler genérico para atualizar o estado do formulário
@@ -521,20 +547,24 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
       return newData;
     });
 
-    // Dispara busca de CEP se for o campo 'cep' ou 'endereco_cep' e tiver 8 dígitos
+    // Dispara busca de CEP se for o campo 'cep' ou 'endereco_cep' e tiver 8 dígitos válidos e novos
     if (name === 'cep' || name === 'endereco_cep') {
       const cleanCep = String(val).replace(/\D/g, '');
-      if (cleanCep.length === 8) {
-        fetchAddressFromCep(val, name === 'endereco_cep');
+      if (isValidCepFormat(cleanCep) && cleanCep !== lastQueriedCepRef.current) {
+        lastQueriedCepRef.current = cleanCep;
+        fetchAddressFromCep(cleanCep, name === 'endereco_cep');
       }
     }
 
-    // Dispara busca de CNPJ se for o campo 'cpf_cnpj' e tiver 14 dígitos
+    // Dispara busca de CNPJ se for o campo 'cpf_cnpj' e tiver 14 dígitos válidos e novos
     if (name === 'cpf_cnpj') {
-      const cleanVal = String(val).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      if (cleanVal.length === 14) {
+      const cleanCnpj = String(val).replace(/\D/g, '');
+      if (cleanCnpj.length === 14) {
         setFormData(prev => ({ ...prev, tipo_pessoa: 'juridica' }));
-        fetchCnpjData(val);
+      }
+      if (isValidCnpjFormat(cleanCnpj) && cleanCnpj !== lastQueriedCnpjRef.current) {
+        lastQueriedCnpjRef.current = cleanCnpj;
+        fetchCnpjData(cleanCnpj);
       }
     }
   };

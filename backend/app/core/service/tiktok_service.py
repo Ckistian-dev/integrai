@@ -132,19 +132,28 @@ class TiktokService:
         
         # Mocking data for the example, replace with actual requests
         # resp = requests.post(url, headers=self._get_headers(), json={"page_size": 200})
-        # data = resp.json()
         orders = []
 
-        # --- PRE-PROCESSAMENTO: Verificar status de importação ---
-        for order in orders:
-            order_id = order.get('order_id')
-            search_str = f"ID Tiktok: {order_id}"
-            exists = self.db.query(models.Pedido.id).filter(
-                models.Pedido.observacao.contains(search_str),
+        # --- PRE-PROCESSAMENTO: Verificar status de importação em LOTE (Batch Query) ---
+        tiktok_ids = [str(order.get('order_id')) for order in orders if order.get('order_id')]
+        imported_set = set()
+        if tiktok_ids:
+            from sqlalchemy import or_
+            obs_conditions = [models.Pedido.observacao.contains(f"ID Tiktok: {tid}") for tid in tiktok_ids]
+            existing_pedidos = self.db.query(models.Pedido.observacao).filter(
                 models.Pedido.id_empresa == self.id_empresa,
-                models.Pedido.situacao != 'cancelado'
-            ).first()
-            order['ja_importado'] = True if exists else False
+                models.Pedido.situacao != 'cancelado',
+                or_(*obs_conditions)
+            ).all()
+            for p in existing_pedidos:
+                if p.observacao:
+                    for tid in tiktok_ids:
+                        if f"ID Tiktok: {tid}" in p.observacao:
+                            imported_set.add(tid)
+
+        for order in orders:
+            tid = str(order.get('order_id'))
+            order['ja_importado'] = tid in imported_set
 
         # --- FILTRAGEM LOCAL (Semelhante ao Magento) ---
         active_filters = []

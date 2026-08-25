@@ -1,5 +1,6 @@
 import logging
 import json
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from typing import Any
@@ -204,6 +205,9 @@ async def meli_notification_callback(
         service = MeliService(db, id_empresa)
         result = await service.process_meli_webhook(topic=str(topic or ""), resource=str(resource), user_id_ml=user_id_ml)
         return result
+    except (httpx.TimeoutException, httpx.NetworkError) as e:
+        logger.warning(f"Timeout/falha de rede transitória ao processar webhook ML ({topic}, {resource}): {e}")
+        return {"status": "timeout_warning", "message": str(e)}
     except Exception as e:
         logger.exception(f"Erro ao processar webhook do Mercado Livre: {e}")
         return {"status": "error", "message": str(e)}

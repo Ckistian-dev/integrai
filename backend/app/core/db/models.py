@@ -2,7 +2,7 @@ import enum
 from sqlalchemy import (
     Boolean, Column, ForeignKey, ForeignKeyConstraint, Integer, String, Enum as SQLAlchemyEnum,
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
-    UniqueConstraint, event, text
+    UniqueConstraint, event, text, Index
 )
 from sqlalchemy.orm import relationship, Mapper
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -489,9 +489,9 @@ class Empresa(Base):
         'options': [{'label': 'Produção', 'value': 1}, {'label': 'Homologação', 'value': 2}]
     })
     
-    id_classificacao_contabil_padrao = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=True, 
+    id_classificacao_contabil_padrao = Column(Integer, nullable=True, 
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas Padrão (Vendas)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
-    id_classificacao_contabil_cancelamento = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=True, 
+    id_classificacao_contabil_cancelamento = Column(Integer, nullable=True, 
                                               info={'tab': 'Fiscal', 'label': 'Plano de Contas (Cancelamento de Venda)', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
     validade_orcamento = Column(Integer, default=7, 
                                 info={'tab': 'Fiscal', 'label': 'Validade do Orçamento (Dias)', 'placeholder': '7'})
@@ -520,8 +520,8 @@ class Empresa(Base):
     regras_tributarias = relationship("Tributacao", back_populates="empresa")
     classificacoes_contabeis = relationship("ClassificacaoContabil", back_populates="empresa", foreign_keys="ClassificacaoContabil.id_empresa")
     perfil = relationship("Perfil", back_populates="empresa")
-    classificacao_contabil_padrao_rel = relationship("ClassificacaoContabil", foreign_keys=[id_classificacao_contabil_padrao])
-    classificacao_contabil_cancelamento_rel = relationship("ClassificacaoContabil", foreign_keys=[id_classificacao_contabil_cancelamento])
+    classificacao_contabil_padrao_rel = relationship("ClassificacaoContabil", primaryjoin="and_(Empresa.id==ClassificacaoContabil.id_empresa, Empresa.id_classificacao_contabil_padrao==ClassificacaoContabil.id_sequencial)", foreign_keys=[id_classificacao_contabil_padrao])
+    classificacao_contabil_cancelamento_rel = relationship("ClassificacaoContabil", primaryjoin="and_(Empresa.id==ClassificacaoContabil.id_empresa, Empresa.id_classificacao_contabil_cancelamento==ClassificacaoContabil.id_sequencial)", foreign_keys=[id_classificacao_contabil_cancelamento])
 
 
 class Perfil(Base):
@@ -571,7 +571,10 @@ class Usuario(Base):
     __tablename__ = "usuarios"
     __label__ = "Usuário"
     __label_plural__ = "Usuários"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_usuarios_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_usuarios_empresa_sequencial"),
+        ForeignKeyConstraint(["id_empresa", "id_perfil"], ["perfil.id_empresa", "perfil.id_sequencial"], name="fk_usuarios_perfil_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
@@ -596,7 +599,7 @@ class Usuario(Base):
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     # Novo campo para vínculo com a tabela de Perfis
-    id_perfil = Column(Integer, ForeignKey("perfil.id_sequencial"), nullable=True, 
+    id_perfil = Column(Integer, nullable=True, 
                        info={'tab': 'Dados Gerais', 'label': 'Perfil de Acesso', 'placeholder': 'Selecione...', 'foreign_key_model': 'perfil', 'foreign_key_label_field': 'nome'})
     
     # Relacionamento (Many-to-One)
@@ -612,7 +615,12 @@ class Cadastro(Base):
     __tablename__ = "cadastros"
     __label__ = "Cadastro"
     __label_plural__ = "Clientes e Fornecedores"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_cadastros_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_cadastros_empresa_sequencial"),
+        Index("idx_cadastros_empresa_tipo", "id_empresa", "tipo_cadastro"),
+        Index("idx_cadastros_empresa_seq", "id_empresa", "id_sequencial"),
+        Index("idx_cadastros_empresa_nome", "id_empresa", "nome_razao"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
@@ -735,7 +743,14 @@ class Produto(Base):
     __tablename__ = "produtos"
     __label__ = "Produto"
     __label_plural__ = "Produtos"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_produtos_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_produtos_empresa_sequencial"),
+        ForeignKeyConstraint(["id_empresa", "id_embalagem"], ["embalagens.id_empresa", "embalagens.id_sequencial"], name="fk_produtos_embalagem_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+        ForeignKeyConstraint(["id_empresa", "id_fornecedor"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_produtos_fornecedor_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+        Index("idx_produtos_empresa_seq", "id_empresa", "id_sequencial"),
+        Index("idx_produtos_empresa_desc", "id_empresa", "descricao"),
+        Index("idx_produtos_empresa_sku", "id_empresa", "sku"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
@@ -756,10 +771,10 @@ class Produto(Base):
                         info={'tab': 'Dados Gerais', 'label': 'URL da Imagem', 'placeholder': 'https://...'})
     situacao = Column(Boolean, nullable=False, default=True, 
                       info={'tab': 'Dados Gerais', 'label': 'Ativo?', 'placeholder': ''})
-    id_embalagem = Column(Integer, ForeignKey("embalagens.id_sequencial"), nullable=True, 
-                          info={'tab': 'Dados Gerais', 'label': 'Embalagem Padrão', 'placeholder': 'Selecione...'})
-    id_fornecedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=True, 
-                           info={'tab': 'Dados Gerais', 'label': 'Fornecedor Principal', 'placeholder': 'Selecione...'}) # Referencia Cadastro (tipo_cadastro=fornecedor)
+    id_embalagem = Column(Integer, nullable=True, 
+                          info={'tab': 'Dados Gerais', 'label': 'Embalagem Padrão', 'placeholder': 'Selecione...', 'foreign_key_model': 'embalagens', 'foreign_key_label_field': 'descricao'})
+    id_fornecedor = Column(Integer, nullable=True, 
+                           info={'tab': 'Dados Gerais', 'label': 'Fornecedor Principal', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'}) # Referencia Cadastro (tipo_cadastro=fornecedor)
 
     # --- Aba: Categorização ---
     grupo = Column(String, 
@@ -828,7 +843,15 @@ class Conta(Base):
     __tablename__ = "contas"
     __label__ = "Lançamento Financeiro"
     __label_plural__ = "Contas a Pagar e Receber"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_contas_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_contas_empresa_sequencial"),
+        ForeignKeyConstraint(["id_empresa", "id_fornecedor"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_contas_fornecedor_empresa_seq", ondelete="RESTRICT", onupdate="CASCADE"),
+        ForeignKeyConstraint(["id_empresa", "id_classificacao_contabil"], ["classificacao_contabil.id_empresa", "classificacao_contabil.id_sequencial"], name="fk_contas_classificacao_empresa_seq", ondelete="RESTRICT", onupdate="CASCADE"),
+        Index("idx_contas_empresa_situacao", "id_empresa", "situacao"),
+        Index("idx_contas_empresa_tipo", "id_empresa", "tipo_conta"),
+        Index("idx_contas_empresa_venc", "id_empresa", "data_vencimento"),
+        Index("idx_contas_empresa_seq", "id_empresa", "id_sequencial"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
@@ -842,16 +865,16 @@ class Conta(Base):
                        info={'tab': 'Principal', 'label': 'Descrição', 'placeholder': 'Ex: Conta de Luz Referente Mês 05'})
     numero_conta = Column(String, 
                           info={'tab': 'Principal', 'label': 'Número do Documento', 'placeholder': ''})
-    id_fornecedor = Column(Integer, ForeignKey("cadastros.id_sequencial"), nullable=False, 
-                           info={'tab': 'Principal', 'label': 'Fornecedor / Cliente', 'placeholder': 'Selecione...'}) # Ref. Cadastro (tipo_cadastro=fornecedor)
+    id_fornecedor = Column(Integer, nullable=False, 
+                           info={'tab': 'Principal', 'label': 'Fornecedor / Cliente', 'placeholder': 'Selecione...', 'foreign_key_model': 'cadastros', 'foreign_key_label_field': 'nome_razao'}) # Ref. Cadastro (tipo_cadastro=fornecedor)
 
     # --- Aba: Financeiro ---
     pagamento = Column(SQLAlchemyEnum(FiscalPagamentoEnum, native_enum=False), 
                  info={'tab': 'Financeiro', 'label': 'Forma de Pagamento', 'placeholder': 'Selecione...'})
     valor = Column(Currency(), nullable=False, 
                    info={'tab': 'Financeiro', 'label': 'Valor Total', 'placeholder': '0,00'})
-    id_classificacao_contabil = Column(Integer, ForeignKey("classificacao_contabil.id_sequencial"), nullable=False,
-                                       info={'tab': 'Financeiro', 'label': 'Plano de Contas', 'placeholder': 'Selecione...'})
+    id_classificacao_contabil = Column(Integer, nullable=False,
+                                       info={'tab': 'Financeiro', 'label': 'Plano de Contas', 'placeholder': 'Selecione...', 'foreign_key_model': 'classificacao_contabil', 'foreign_key_label_field': 'descricao'})
     caixa_destino_origem = Column(String, 
                  info={'tab': 'Financeiro', 'component': 'creatable_select', 'label': 'Conta Bancária / Caixa', 'placeholder': 'Ex: Caixa Geral ou Banco Itaú'})
     
@@ -888,14 +911,19 @@ class Estoque(Base):
     __tablename__ = "estoque"
     __label__ = "Movimentação de Estoque"
     __label_plural__ = "Movimentações de Estoque"
-    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_estoque_empresa_sequencial"),)
+    __table_args__ = (
+        UniqueConstraint("id_empresa", "id_sequencial", name="uq_estoque_empresa_sequencial"),
+        ForeignKeyConstraint(["id_empresa", "id_produto"], ["produtos.id_empresa", "produtos.id_sequencial"], name="fk_estoque_produto_empresa_seq", ondelete="RESTRICT", onupdate="CASCADE"),
+        Index("idx_estoque_empresa_produto", "id_empresa", "id_produto", "situacao"),
+        Index("idx_estoque_empresa_criado", "id_empresa", "criado_em"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Principal', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Principal ---
-    id_produto = Column(Integer, ForeignKey("produtos.id_sequencial"), nullable=False, 
-                        info={'tab': 'Principal', 'label': 'Produto', 'placeholder': 'Selecione...'})
+    id_produto = Column(Integer, nullable=False, 
+                        info={'tab': 'Principal', 'label': 'Produto', 'placeholder': 'Selecione...', 'foreign_key_model': 'produtos', 'foreign_key_label_field': 'descricao'})
     lote = Column(String, 
                   info={'tab': 'Principal', 'label': 'Lote / Série', 'placeholder': ''})
     quantidade = Column(Integer, nullable=False, 
@@ -949,6 +977,12 @@ class Pedido(Base):
         ForeignKeyConstraint(["id_empresa", "id_cliente"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_cliente_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
         ForeignKeyConstraint(["id_empresa", "id_vendedor"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_vendedor_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
         ForeignKeyConstraint(["id_empresa", "id_transportadora"], ["cadastros.id_empresa", "cadastros.id_sequencial"], name="fk_pedidos_transportadora_empresa_seq", ondelete="SET NULL", onupdate="CASCADE"),
+        Index("idx_pedidos_empresa_situacao", "id_empresa", "situacao"),
+        Index("idx_pedidos_empresa_seq", "id_empresa", "id_sequencial"),
+        Index("idx_pedidos_empresa_data_ped", "id_empresa", "data_pedido"),
+        Index("idx_pedidos_empresa_data_orc", "id_empresa", "data_orcamento"),
+        Index("idx_pedidos_empresa_criado", "id_empresa", "criado_em"),
+        Index("idx_pedidos_empresa_cliente", "id_empresa", "id_cliente"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -1664,13 +1698,15 @@ class UsuarioPreferencia(Base):
     __tablename__ = "usuario_preferencias"
 
     id = Column(Integer, primary_key=True, index=True)
-    id_usuario = Column(Integer, ForeignKey("usuarios.id_sequencial"), nullable=False)
+    id_usuario = Column(Integer, nullable=False, index=True)
+    id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     model_name = Column(String, nullable=False, index=True) # Ex: 'pedidos', 'produtos'
     
     # Armazena JSON com: { visible_columns: [], sort_by: str, sort_order: str, filters: [] }
     config = Column(JSON, nullable=False, default={})
 
-    usuario = relationship("Usuario", backref="preferencias")
+    empresa = relationship("Empresa", backref="preferencias_usuarios")
+    usuario = relationship("Usuario", backref="preferencias", primaryjoin="and_(UsuarioPreferencia.id_empresa==Usuario.id_empresa, UsuarioPreferencia.id_usuario==Usuario.id_sequencial)", foreign_keys=[id_empresa, id_usuario], overlaps="empresa,preferencias_usuarios")
 
 class DashboardPreferencia(Base):
     """
@@ -1679,7 +1715,7 @@ class DashboardPreferencia(Base):
     __tablename__ = "dashboard_preferencias"
 
     id = Column(Integer, primary_key=True, index=True)
-    id_usuario = Column(Integer, ForeignKey("usuarios.id_sequencial"), nullable=False)
+    id_usuario = Column(Integer, nullable=False)
     id_empresa = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     # O layout exato exigido pelo react-grid-layout (x, y, w, h, i)

@@ -74,16 +74,17 @@ def update_dashboard_preferences(
         models.DashboardPreferencia.id_empresa == current_user.id_empresa
     ).first()
 
+    user_seq = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
     if not prefs:
-        user_id_seq = current_user.id_sequencial if getattr(current_user, 'id_sequencial', None) is not None else current_user.id
         prefs = models.DashboardPreferencia(
-            id_usuario=user_id_seq,
+            id_usuario=user_seq,
             id_empresa=current_user.id_empresa,
             layout=data.layout,
             cards_config=data.cards_config
         )
         db.add(prefs)
     else:
+        prefs.id_usuario = user_seq
         prefs.layout = data.layout
         prefs.cards_config = data.cards_config
     

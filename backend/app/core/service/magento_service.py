@@ -2,6 +2,8 @@ import requests
 import logging
 import json
 import re
+import time
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -15,6 +17,10 @@ from app.core.db.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cache em memória para os pedidos do Magento por empresa: { id_empresa: { "timestamp": float, "raw_orders": list } }
+_MAGENTO_ORDERS_CACHE: Dict[int, Dict[str, Any]] = {}
+_MAGENTO_CACHE_TTL = 60.0  # 60 segundos de cache para navegação instantânea entre páginas, filtros e ordenações
 
 class MagentoService:
     def __init__(self, db: Session, id_empresa: int):
@@ -35,6 +41,16 @@ class MagentoService:
             self.base_url = f"https://{self.base_url}"
             
         self.api_base = f"{self.base_url}/rest/{self.config.store_view_code}/V1"
+
+    @classmethod
+    def clear_cache(cls, id_empresa: Optional[int] = None):
+        """Limpa o cache em memória para uma empresa específica ou para todas."""
+        if id_empresa is not None:
+            _MAGENTO_ORDERS_CACHE.pop(id_empresa, None)
+            logger.info(f"Cache de pedidos Magento limpo para empresa {id_empresa}")
+        else:
+            _MAGENTO_ORDERS_CACHE.clear()
+            logger.info("Todo o cache de pedidos Magento foi limpo.")
 
     def _get_auth(self):
         """
@@ -73,61 +89,85 @@ class MagentoService:
             return str(order.get('ja_importado', False)).lower()
         return order.get(field)
 
-    def list_orders(self, limit=10, offset=0, filters=None):
+    def list_orders(self, limit=10, offset=0, filters=None, force_refresh=False):
         """
-        Lista pedidos do Magento usando SearchCriteria.
-        Converte offset/limit para currentPage/pageSize.
+        Lista pedidos do Magento usando SearchCriteria com cache inteligente.
         """
-        logger.info(f"Listando pedidos Magento para empresa {self.id_empresa} (limit={limit}, offset={offset})")
-        # Aumentamos o limite para buscar um lote maior e filtrar localmente, evitando erro 500 no Magento
-        page_size = 200 
-        current_page = 1 # Buscamos sempre os mais recentes para o processo de importação
+        logger.info(f"Listando pedidos Magento para empresa {self.id_empresa} (limit={limit}, offset={offset}, force_refresh={force_refresh})")
+        
+        cached_entry = _MAGENTO_ORDERS_CACHE.get(self.id_empresa)
+        now_ts = time.time()
+        
+        # Se temos cache fresco e não foi solicitado force_refresh, usa o cache
+        if not force_refresh and cached_entry and (now_ts - cached_entry.get("timestamp", 0)) < _MAGENTO_CACHE_TTL:
+            logger.debug(f"Utilizando cache em memória para pedidos Magento da empresa {self.id_empresa}")
+            raw_orders = cached_entry.get("raw_orders", [])
+        else:
+            # Busca do servidor Magento
+            page_size = 100
+            current_page = 1
 
-        # Monta a URL com SearchCriteria
-        # Filtra apenas pedidos recentes ou todos (aqui configurado para buscar os mais recentes primeiro)
-        url = f"{self.api_base}/orders"
-        params = {
-            "searchCriteria[pageSize]": page_size,
-            "searchCriteria[currentPage]": current_page,
-            "searchCriteria[sortOrders][0][field]": "created_at",
-            "searchCriteria[sortOrders][0][direction]": "DESC",
-            "searchCriteria[filter_groups][0][filters][0][field]": "status",
-            "searchCriteria[filter_groups][0][filters][0][value]": "processing,complete,em_producao",
-            "searchCriteria[filter_groups][0][filters][0][condition_type]": "in"
-        }
+            url = f"{self.api_base}/orders"
+            params = {
+                "searchCriteria[pageSize]": page_size,
+                "searchCriteria[currentPage]": current_page,
+                "searchCriteria[sortOrders][0][field]": "created_at",
+                "searchCriteria[sortOrders][0][direction]": "DESC",
+                "searchCriteria[filter_groups][0][filters][0][field]": "status",
+                "searchCriteria[filter_groups][0][filters][0][value]": "processing,complete,em_producao",
+                "searchCriteria[filter_groups][0][filters][0][condition_type]": "in"
+            }
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
 
-        try:
-            logger.debug(f"Enviando requisição GET para {url} com params: {params}")
-            resp = requests.get(url, auth=self._get_auth(), params=params, headers=headers, timeout=60.0)
-            logger.debug(f"Resposta Magento (list_orders): Status {resp.status_code} - Body: {resp.text}")
-            if resp.status_code == 401:
-                logger.error(f"Erro de autenticação no Magento para empresa {self.id_empresa}: Token inválido.")
-                raise HTTPException(status_code=401, detail="Token de acesso Magento inválido.")
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as e:
-            logger.error(f"Erro de conexão Magento para empresa {self.id_empresa}: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Erro na comunicação com Magento: {str(e)}")
+            session = requests.Session()
+            try:
+                logger.debug(f"Enviando requisição GET para {url} com params: {params}")
+                resp = session.get(url, auth=self._get_auth(), params=params, headers=headers, timeout=25.0)
+                if resp.status_code == 401:
+                    logger.error(f"Erro de autenticação no Magento para empresa {self.id_empresa}: Token inválido.")
+                    raise HTTPException(status_code=401, detail="Token de acesso Magento inválido.")
+                resp.raise_for_status()
+                data = resp.json()
+            except requests.RequestException as e:
+                logger.error(f"Erro de conexão Magento para empresa {self.id_empresa}: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Erro na comunicação com Magento: {str(e)}")
+            finally:
+                session.close()
 
-        orders = data.get('items', [])
+            raw_orders = data.get('items', [])
+            _MAGENTO_ORDERS_CACHE[self.id_empresa] = {
+                "timestamp": now_ts,
+                "raw_orders": raw_orders
+            }
 
-        # --- PRE-PROCESSAMENTO: Verificar status de importação ---
-        # Verifica quais pedidos já estão no banco para permitir filtragem
-        for order in orders:
-            magento_id = order.get('entity_id')
-            search_str = f"ID Magento: {magento_id}"
-            exists = self.db.query(models.Pedido.id).filter(
-                models.Pedido.observacao.contains(search_str),
+        # Cria cópia para processamento de filtros sem alterar o cache bruto
+        orders = [dict(o) for o in raw_orders]
+
+        # --- PRE-PROCESSAMENTO: Verificar status de importação em LOTE (Batch Query) ---
+        magento_ids = [str(order.get('entity_id')) for order in orders if order.get('entity_id')]
+        imported_set = set()
+        if magento_ids:
+            from sqlalchemy import or_
+            obs_conditions = [models.Pedido.observacao.contains(f"ID Magento: {mid}") for mid in magento_ids]
+            existing_pedidos = self.db.query(models.Pedido.observacao).filter(
                 models.Pedido.id_empresa == self.id_empresa,
-                models.Pedido.situacao != 'cancelado'
-            ).first()
-            order['ja_importado'] = True if exists else False
+                models.Pedido.situacao != 'cancelado',
+                or_(*obs_conditions)
+            ).all()
+            for p in existing_pedidos:
+                if p.observacao:
+                    for mid in magento_ids:
+                        if f"ID Magento: {mid}" in p.observacao:
+                            imported_set.add(mid)
+
+        for order in orders:
+            mid = str(order.get('entity_id'))
+            order['ja_importado'] = mid in imported_set
 
         # --- FILTRAGEM GLOBAL POR CONFIGURAÇÃO (NOVO) ---
         if self.config.payment_method_contains:
