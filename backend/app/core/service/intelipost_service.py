@@ -291,6 +291,22 @@ class IntelipostService:
         if not empresa:
             raise HTTPException(status_code=404, detail="Empresa não encontrada.")
 
+        # Verifica se a transportadora vinculada ao pedido está desativada para Intelipost
+        transp_check = pedido.transportadora
+        if not transp_check and pedido.id_transportadora:
+            transp_check = self.db.query(models.Cadastro).filter(
+                models.Cadastro.id_empresa == self.id_empresa,
+                or_(
+                    models.Cadastro.id_sequencial == pedido.id_transportadora,
+                    models.Cadastro.id == pedido.id_transportadora
+                )
+            ).first()
+        if transp_check and getattr(transp_check, 'criar_pedido_intelipost', True) is False:
+            return {
+                "status": "warning",
+                "message": f"Transportadora '{transp_check.nome_razao}' está configurada para não criar ordem de envio na Intelipost."
+            }
+
         # 2. Recalcula volumes (para garantir consistência com o que foi cotado)
         lista_itens = pedido.itens if isinstance(pedido.itens, list) else []
         tasks = [self._calculate_volumes_for_item(item) for item in lista_itens]
@@ -513,10 +529,16 @@ class IntelipostService:
             ids_limpos = [i.strip() for i in delivery_method_id.split(';') if i.strip()]
             delivery_method_id = ids_limpos[0] if ids_limpos else None
 
+        if not delivery_method_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ID do método de entrega (delivery_method_id) não encontrado para o pedido #{numero_pedido_intelipost}. Configure o método na transportadora ou realize uma cotação na Intelipost."
+            )
+
         payload = {
             "order_number": numero_pedido_intelipost,
             "sales_order_number": numero_pedido_intelipost,
-            "delivery_method_id": int(delivery_method_id) if delivery_method_id else None,
+            "delivery_method_id": int(delivery_method_id),
             "final_shipping_cost": float(dados_frete.get('final_shipping_cost', 0)),
             "provider_shipping_costs": float(dados_frete.get('final_shipping_cost', 0)),
             

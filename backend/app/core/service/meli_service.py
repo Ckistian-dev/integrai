@@ -533,6 +533,7 @@ class MeliService:
             tipo_cadastro=CadastroTipoCadastroEnum.transportadora,
             tipo_pessoa=CadastroTipoPessoaEnum.juridica,
             situacao=True,
+            criar_pedido_intelipost=False,
             cep="00000-000",
             logradouro="Endereço Virtual Logística ML",
             numero="S/N",
@@ -908,6 +909,26 @@ class MeliService:
                     obs += f" | ID: {order_id_ml}"
                 existing_pedido.observacao = obs
 
+                # Atualiza campos dedicados de integração
+                if existing_pedido.meli_order_id:
+                    existing_ids = [x.strip() for x in str(existing_pedido.meli_order_id).split(',')]
+                    if str(order_id_ml) not in existing_ids:
+                        existing_pedido.meli_order_id = f"{existing_pedido.meli_order_id}, {order_id_ml}"
+                else:
+                    existing_pedido.meli_order_id = str(order_id_ml)
+                if not existing_pedido.meli_pack_id and pack_id:
+                    existing_pedido.meli_pack_id = str(pack_id)
+                if not existing_pedido.meli_shipment_id and ship_id:
+                    existing_pedido.meli_shipment_id = str(ship_id)
+                if not existing_pedido.meli_tracking_number and tracking_number:
+                    existing_pedido.meli_tracking_number = tracking_number
+                if not existing_pedido.meli_logistic_type and shipment_details.get('logistic_type'):
+                    existing_pedido.meli_logistic_type = shipment_details.get('logistic_type')
+                if not existing_pedido.meli_shipping_service and shipping_option.get('name'):
+                    existing_pedido.meli_shipping_service = shipping_option.get('name')
+                if shipment_details.get('status'):
+                    existing_pedido.meli_status_envio = str(shipment_details.get('status'))
+
                 self.db.add(existing_pedido)
                 self.db.commit()
                 self.db.refresh(existing_pedido)
@@ -930,6 +951,16 @@ class MeliService:
             data_entrega=data_entrega,
             origem_venda="Mercado Livre",
             
+            # --- CAMPOS DEDICADOS MERCADO LIVRE ---
+            meli_order_id=str(ml_order['id']),
+            meli_pack_id=str(pack_id) if pack_id else None,
+            meli_shipment_id=str(ship_id) if ship_id else None,
+            meli_buyer_nickname=ml_order.get('buyer', {}).get('nickname'),
+            meli_tracking_number=tracking_number,
+            meli_logistic_type=shipment_details.get('logistic_type'),
+            meli_shipping_service=shipping_option.get('name'),
+            meli_status_envio=str(shipment_details.get('status')) if shipment_details.get('status') else None,
+
             # --- DADOS FINANCEIROS E TOTAIS ---
             total=total_pedido,
             pagamento=forma_pagamento,
@@ -1246,25 +1277,93 @@ class MeliService:
         logger.error(f"❌ Todas as tentativas de upload de XML para o pedido ML {order_id_ml} falharam. Detalhes: {all_details}")
         return {"status": "error", "message": f"Erro na API do Mercado Livre ao anexar XML da NF-e: {main_error}"}
 
-    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None, target_ml_status: str = None):
+    def _extract_ml_ids_from_pedido(self, pedido):
+        """
+        Extrai os IDs do Mercado Livre do pedido (order_id, pack_id, shipment_id),
+        com fallback inteligente para extração a partir do campo 'observacao'
+        caso as colunas dedicadas ainda não tenham sido preenchidas.
+        """
+        ids = set()
+        if getattr(pedido, 'meli_order_id', None):
+            for part in str(pedido.meli_order_id).split(','):
+                clean = part.strip()
+                if clean:
+                    ids.add(clean)
+        if getattr(pedido, 'meli_pack_id', None):
+            for part in str(pedido.meli_pack_id).split(','):
+                clean = part.strip()
+                if clean:
+                    ids.add(clean)
+        if getattr(pedido, 'meli_shipment_id', None):
+            ids.add(str(pedido.meli_shipment_id).strip())
+
+        # Fallback para parsing de observacao
+        if not ids and getattr(pedido, 'observacao', None):
+            obs = pedido.observacao
+            m_pack_and_id = re.search(r"Pedido ML:\s*(\d+)\s*\|\s*ID:\s*([\d,\s]+)", obs)
+            if m_pack_and_id:
+                pack_id = m_pack_and_id.group(1).strip()
+                order_id = m_pack_and_id.group(2).strip()
+                ids.add(pack_id)
+                for o_id in order_id.split(','):
+                    if o_id.strip():
+                        ids.add(o_id.strip())
+                if not pedido.meli_pack_id:
+                    pedido.meli_pack_id = pack_id
+                if not pedido.meli_order_id:
+                    pedido.meli_order_id = order_id
+            else:
+                m_single_id = re.search(r"Pedido ML:\s*([\d,\s]+)", obs)
+                if m_single_id:
+                    order_id = m_single_id.group(1).strip()
+                    for o_id in order_id.split(','):
+                        if o_id.strip():
+                            ids.add(o_id.strip())
+                    if not pedido.meli_order_id:
+                        pedido.meli_order_id = order_id
+                else:
+                    m_generic_id = re.search(r"(?:Pedido|ID ML:?)\s*(\d{15,})", obs)
+                    if m_generic_id:
+                        order_id = m_generic_id.group(1).strip()
+                        ids.add(order_id)
+                        if not pedido.meli_order_id:
+                            pedido.meli_order_id = order_id
+
+            m_buyer = re.search(r"Comprador:\s*([^|]+)", obs)
+            if m_buyer and not pedido.meli_buyer_nickname:
+                pedido.meli_buyer_nickname = m_buyer.group(1).strip()
+
+            m_service = re.search(r"Servi[çc]o:\s*([^|]+)", obs)
+            if m_service and not pedido.meli_shipping_service:
+                pedido.meli_shipping_service = m_service.group(1).strip()
+
+            m_log = re.search(r"Log[íi]stica:\s*([^|]+)", obs)
+            if m_log and not pedido.meli_logistic_type:
+                pedido.meli_logistic_type = m_log.group(1).strip()
+
+            if ids:
+                try:
+                    self.db.add(pedido)
+                    self.db.commit()
+                except Exception:
+                    pass
+
+        return list(ids)
+
+    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None, target_ml_status: str = None, pedido = None):
         """
         Busca a shipment associada ao pedido no ML e atualiza seu status.
+        Utiliza _resolve_all_ml_ids para tratar tanto order_id quanto pack_id e shipment_id.
         """
         try:
             client = await self.get_client()
             
-            # 1. Busca dados do pedido no ML para obter o shipment_id
-            order_resp = await client.get(f"{self.base_url}/orders/{order_id_ml}")
-            if order_resp.status_code != 200:
-                logger.error(f"Erro ao buscar pedido {order_id_ml} no ML: {order_resp.status_code} - {order_resp.text}")
-                return False
-                
-            order_data = order_resp.json()
-            shipping_data = order_data.get('shipping', {})
-            shipment_id = shipping_data.get('id')
+            # 1. Resolve o shipment_id a partir do ID fornecido (suporta order_id, pack_id e shipment_id)
+            resolved = await self._resolve_all_ml_ids(client, order_id_ml)
+            shipment_id = resolved.get("shipment_id")
             
             if not shipment_id:
-                logger.warning(f"Pedido {order_id_ml} não possui shipment_id associado.")
+                logger.warning(f"ID Mercado Livre {order_id_ml} não possui shipment_id associado.")
                 return False
                 
             # 2. Busca dados do envio para verificar a modalidade logística
@@ -1274,39 +1373,58 @@ class MeliService:
                 return False
                 
             shipment_details = ship_resp.json()
-            logistic_mode = shipment_details.get('logistic_type') or shipment_details.get('mode')
+            mode = shipment_details.get('mode') or ''
+            logistic_type = shipment_details.get('logistic_type') or ''
             current_status = shipment_details.get('status')
             
-            logger.info(f"Envio {shipment_id} - Modalidade: {logistic_mode} | Status ML Atual: {current_status}")
+            logger.info(f"Envio {shipment_id} - Mode: '{mode}' | Logistic Type: '{logistic_type}' | Status ML Atual: '{current_status}'")
             
-            # Se for Mercado Envios 2 (me2, fulfillment, etc.), o status é gerenciado automaticamente e não pode ser alterado manualmente.
-            is_manual_mode = logistic_mode in ['custom', 'not_specified', 'me1'] or not logistic_mode
+            # Atualiza no pedido local o status e dados do ML
+            if pedido:
+                pedido.meli_shipment_id = str(shipment_id)
+                if current_status:
+                    pedido.meli_status_envio = str(current_status)
+                if logistic_type and not pedido.meli_logistic_type:
+                    pedido.meli_logistic_type = str(logistic_type)
+                try:
+                    self.db.add(pedido)
+                    self.db.commit()
+                except Exception:
+                    pass
+
+            # Verificação de modalidade manual (ME1 / Custom Shipping / Frete Próprio)
+            # ME1 tem mode='me1' e logistic_type='default'
+            is_manual_mode = (
+                mode in ['me1', 'custom', 'not_specified'] or 
+                logistic_type in ['custom', 'not_specified'] or 
+                not mode
+            )
             
             if not is_manual_mode:
-                logger.info(f"Envio {shipment_id} utiliza logística automatizada ({logistic_mode}). Status é controlado pelo Mercado Livre.")
-                return False
+                logger.info(f"Envio {shipment_id} utiliza Mercado Envios 2 ({logistic_type}/{mode}). A mudança para 'a caminho' e 'entregue' ocorre via leitura/bip da agência/coleta do ML e baixa da transportadora.")
+                return True
                 
-            # Mapeamento e atualização
+            # Mapeamento e atualização para envios manuais / ME1
             new_ml_status = target_ml_status
             if not new_ml_status:
                 erp_status_lower = (erp_status or "").lower()
-                if erp_status_lower == 'despachado':
+                if erp_status_lower in ['despachado', 'em transito', 'em trânsito', 'shipped']:
                     new_ml_status = 'shipped'
-                elif erp_status_lower in ['faturamento', 'expedicao', 'embalagem', 'produção', 'producao']:
+                elif erp_status_lower in ['faturamento', 'expedicao', 'expedição', 'embalagem', 'produção', 'producao']:
                     if current_status in ['pending', 'handling']:
                         new_ml_status = 'handling'
-                elif erp_status_lower in ['finalizado', 'entregue']:
+                elif erp_status_lower in ['finalizado', 'entregue', 'delivered']:
                     new_ml_status = 'delivered'
                         
             if not new_ml_status:
                 logger.debug(f"Nenhum status correspondente para atualizar no ML para o status ERP {erp_status}.")
                 return False
                 
-            if current_status == new_ml_status:
+            if current_status == new_ml_status and not tracking_number:
                 logger.info(f"Envio {shipment_id} já está no status {new_ml_status}.")
                 return True
                 
-            # 3. Executa a atualização do status do envio
+            # 3. Executa a atualização do status e rastreio do envio (ME1 / Custom)
             payload = {"status": new_ml_status}
             if tracking_number:
                 payload["tracking_number"] = tracking_number
@@ -1317,6 +1435,13 @@ class MeliService:
             
             if resp.status_code in [200, 201]:
                 logger.info(f"Status do envio {shipment_id} atualizado com sucesso para {new_ml_status}!")
+                if pedido:
+                    pedido.meli_status_envio = new_ml_status
+                    try:
+                        self.db.add(pedido)
+                        self.db.commit()
+                    except Exception:
+                        pass
                 return True
             else:
                 logger.error(f"Erro ao atualizar status do envio {shipment_id}: {resp.status_code} - {resp.text}")
@@ -1329,43 +1454,27 @@ class MeliService:
     async def update_meli_order_status(self, pedido):
         """
         Atualiza o status dos envios no Mercado Livre associados a um pedido do ERP.
+        Utiliza os campos dedicados com fallback para parsing da observação.
         """
-        # 1. Prioridade: novos campos dedicados
-        ids = set()
-        if pedido.meli_order_id:
-            ids.add(str(pedido.meli_order_id).strip())
-        if pedido.meli_pack_id:
-            ids.add(str(pedido.meli_pack_id).strip())
+        import unicodedata
+        
+        def normalize_str(val):
+            if not val:
+                return ""
+            val_str = str(val).strip().lower()
+            return ''.join(c for c in unicodedata.normalize('NFD', val_str) if unicodedata.category(c) != 'Mn')
 
-        # 2. Fallback: extração da observação
-        observacao = pedido.observacao or ""
-        if not ids:
-            match_pack = re.search(r"Pedido ML:\s*(\d+)", observacao)
-            if match_pack:
-                ids.add(match_pack.group(1))
-                
-            match_id = re.search(r"ID:\s*([\d,\s]+)", observacao)
-            if match_id:
-                raw_ids = match_id.group(1)
-                for part in raw_ids.split(','):
-                    clean_part = part.strip()
-                    if clean_part.isdigit():
-                        ids.add(clean_part)
-                        
-        ml_order_ids = list(ids)
+        ml_order_ids = self._extract_ml_ids_from_pedido(pedido)
         if not ml_order_ids:
-            logger.info(f"Nenhum ID do Mercado Livre encontrado para o pedido {pedido.id}")
+            logger.debug(f"Nenhum ID do Mercado Livre configurado ou localizado no pedido {pedido.id}")
             return False
             
         situacao_para_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
-        
-        # 1. Prioridade: novo campo de rastreio
-        tracking_number = pedido.meli_tracking_number
-        # 2. Fallback: regex na observação
-        if not tracking_number:
-            match_track = re.search(r"Rastreio:\s*(\w+)", observacao)
-            if match_track:
-                tracking_number = match_track.group(1)
+        tracking_number = (
+            getattr(pedido, 'meli_tracking_number', None) or 
+            getattr(pedido, 'intelipost_tracking_code', None) or
+            getattr(pedido, 'numero_nf', None)
+        )
 
         # Avaliação de Regras da MeliConfiguracao (se houver)
         target_ml_status = None
@@ -1373,27 +1482,134 @@ class MeliService:
         if isinstance(regras, list):
             for regra in regras:
                 coluna = regra.get('coluna_pedido')
-                valor_esperado = str(regra.get('valor_coluna', '')).strip().lower()
+                valor_esperado_norm = normalize_str(regra.get('valor_coluna', ''))
                 status_alvo_ml = regra.get('status_meli')
                 
-                if coluna and valor_esperado and status_alvo_ml:
+                if coluna and valor_esperado_norm and status_alvo_ml:
                     val_atual = getattr(pedido, coluna, None)
                     if hasattr(val_atual, 'value'):
                         val_atual = val_atual.value
                     elif hasattr(val_atual, 'name'):
                         val_atual = val_atual.name
-                    val_atual_str = str(val_atual or '').strip().lower()
+                    val_atual_norm = normalize_str(val_atual)
                     
-                    if val_atual_str == valor_esperado:
+                    # Match exato ou equivalências semânticas
+                    matched = False
+                    if val_atual_norm == valor_esperado_norm:
+                        matched = True
+                    elif valor_esperado_norm in ["entregue", "delivered"] and val_atual_norm in ["entregue", "delivered"]:
+                        matched = True
+                    elif valor_esperado_norm in ["em transito", "shipped", "despachado", "a caminho"] and val_atual_norm in ["em transito", "shipped", "despachado", "a caminho"]:
+                        matched = True
+                    elif valor_esperado_norm in ["faturamento", "handling"] and val_atual_norm in ["faturamento", "handling"]:
+                        matched = True
+
+                    if matched:
                         target_ml_status = status_alvo_ml
-                        logger.info(f"Regra ML casou! Coluna '{coluna}' = '{val_atual_str}' -> Status ML: '{target_ml_status}'")
+                        logger.info(f"Regra ML casou! Coluna '{coluna}' = '{val_atual}' -> Status ML: '{target_ml_status}'")
                         break
             
         logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str}) -> IDs ML: {ml_order_ids} | Status ML Alvo: {target_ml_status or 'Auto/Padrão'}")
         
         success = True
         for ml_order_id in ml_order_ids:
-            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number, target_ml_status=target_ml_status)
+            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number, target_ml_status=target_ml_status, pedido=pedido)
             if not res:
                 success = False
         return success
+
+    async def process_meli_webhook(self, topic: str, resource: str, user_id_ml: int = None):
+        """
+        Processa notificações (Webhooks) do Mercado Livre para manter os pedidos atualizados no ERP.
+        Suporta tópicos: 'shipments', 'orders_v2', 'orders', 'packs'.
+        """
+        from sqlalchemy import or_
+        logger.info(f"Processando Webhook ML: topic={topic}, resource={resource}, user_id={user_id_ml} para empresa {self.id_empresa}")
+        client = await self.get_client()
+
+        if topic == "shipments" or "/shipments/" in resource:
+            shipment_id = resource.strip().split('/')[-1]
+            if not shipment_id.isdigit():
+                return {"status": "ignored", "reason": "invalid_shipment_id"}
+
+            ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
+            if ship_resp.status_code != 200:
+                logger.error(f"Erro ao consultar shipment {shipment_id} no webhook: {ship_resp.status_code}")
+                return {"status": "error", "message": ship_resp.text}
+
+            ship_data = ship_resp.json()
+            order_id = str(ship_data.get('order_id') or '')
+            ml_status = ship_data.get('status')
+            ml_substatus = ship_data.get('substatus')
+            tracking_number = ship_data.get('tracking_number')
+            logistic_type = ship_data.get('logistic_type')
+            
+            logger.info(f"Webhook ML Shipment {shipment_id}: Status={ml_status}, Substatus={ml_substatus}, OrderID={order_id}")
+
+            # Localiza o pedido no ERP
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                or_(
+                    models.Pedido.meli_shipment_id == str(shipment_id),
+                    models.Pedido.meli_order_id.contains(str(order_id)) if order_id else False,
+                    models.Pedido.observacao.contains(str(order_id)) if order_id else False,
+                    models.Pedido.observacao.contains(str(shipment_id))
+                )
+            ).first()
+
+            if not pedido:
+                logger.info(f"Pedido correspondente ao shipment {shipment_id} / order {order_id} não encontrado no banco local.")
+                return {"status": "not_found", "shipment_id": shipment_id}
+
+            # Atualiza campos dedicados
+            pedido.meli_shipment_id = str(shipment_id)
+            if ml_status:
+                pedido.meli_status_envio = str(ml_status)
+            if tracking_number and not pedido.meli_tracking_number:
+                pedido.meli_tracking_number = str(tracking_number)
+            if logistic_type and not pedido.meli_logistic_type:
+                pedido.meli_logistic_type = str(logistic_type)
+
+            # Atualiza datas de despacho / entrega
+            if ml_status in ['shipped', 'in_transit']:
+                if not pedido.data_despacho:
+                    pedido.data_despacho = datetime.now(timezone.utc).date()
+            elif ml_status in ['delivered']:
+                if not pedido.data_finalizacao:
+                    pedido.data_finalizacao = datetime.now(timezone.utc).date()
+                if not pedido.data_entrega:
+                    pedido.data_entrega = datetime.now(timezone.utc).date()
+
+            self.db.commit()
+            self.db.refresh(pedido)
+            logger.info(f"Pedido ERP #{pedido.id} atualizado via Webhook ML! meli_status_envio={pedido.meli_status_envio}")
+            return {"status": "success", "pedido_id": pedido.id, "meli_status_envio": pedido.meli_status_envio}
+
+        elif topic in ["orders_v2", "orders"] or "/orders/" in resource:
+            order_id = resource.strip().split('/')[-1]
+            if not order_id.isdigit():
+                return {"status": "ignored", "reason": "invalid_order_id"}
+
+            order_resp = await client.get(f"{self.base_url}/orders/{order_id}")
+            if order_resp.status_code != 200:
+                return {"status": "error", "message": order_resp.text}
+
+            order_data = order_resp.json()
+            shipping_id = order_data.get('shipping', {}).get('id')
+            
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                or_(
+                    models.Pedido.meli_order_id.contains(str(order_id)),
+                    models.Pedido.observacao.contains(str(order_id)),
+                    models.Pedido.meli_shipment_id == str(shipping_id) if shipping_id else False
+                )
+            ).first()
+
+            if pedido:
+                if shipping_id and not pedido.meli_shipment_id:
+                    pedido.meli_shipment_id = str(shipping_id)
+                self.db.commit()
+                return {"status": "success", "pedido_id": pedido.id}
+
+        return {"status": "ok"}

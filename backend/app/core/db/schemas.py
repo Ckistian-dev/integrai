@@ -243,6 +243,7 @@ class CadastroBase(BaseModel):
     numero: Optional[str] = None
     complemento: Optional[str] = None
     situacao: bool = True
+    criar_pedido_intelipost: Optional[bool] = True
     delivery_method_id_intelipost: Optional[str] = None
 
 class CadastroCreate(CadastroBase):
@@ -268,6 +269,7 @@ class CadastroUpdate(BaseModel):
     numero: Optional[str] = None
     complemento: Optional[str] = None
     situacao: Optional[bool] = None
+    criar_pedido_intelipost: Optional[bool] = None
     delivery_method_id_intelipost: Optional[str] = None
 
 class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
@@ -539,6 +541,8 @@ class PedidoBase(BaseModel):
     meli_tracking_number: Optional[str] = None
     meli_logistic_type: Optional[str] = None
     meli_shipping_service: Optional[str] = None
+    meli_status_envio: Optional[str] = None
+    meli_xml_enviado: Optional[bool] = False
 
     shopee_order_sn: Optional[str] = None
     shopee_order_status: Optional[str] = None
@@ -638,6 +642,8 @@ class PedidoUpdate(BaseModel):
     meli_tracking_number: Optional[str] = None
     meli_logistic_type: Optional[str] = None
     meli_shipping_service: Optional[str] = None
+    meli_status_envio: Optional[str] = None
+    meli_xml_enviado: Optional[bool] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None

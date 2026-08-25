@@ -3307,13 +3307,15 @@ class NFeService:
             # --- PAGAMENTO (Grupo Pag - NFe 4.0) ---
             # Adiciona o grupo de pagamento usando o método correto
             
-            if fin_nfe not in [3, 4]:
+            if fin_nfe not in [2, 3, 4]:
                 # Venda Normal
+                total_nota_calc = nota_fiscal.totais_icms_total_nota or Decimal('0.00')
                 lista_pags = pedido.pagamentos if isinstance(pedido.pagamentos, list) else []
                 pags_validos = [p for p in lista_pags if isinstance(p, dict) and (safe_decimal(p.get('valor')) > 0)]
 
                 if len(pags_validos) > 0:
-                    for item_p in pags_validos:
+                    if len(pags_validos) == 1:
+                        item_p = pags_validos[0]
                         t_p = '99'
                         pag_val_raw = item_p.get('pagamento')
                         if pag_val_raw:
@@ -3327,10 +3329,19 @@ class NFeService:
                                         t_p = FiscalPagamentoEnum(pag_val_raw).value
                                     except Exception:
                                         t_p = '99'
+                        elif pedido.pagamento:
+                            t_p = pedido.pagamento.value
 
-                        v_p = safe_decimal(item_p.get('valor'))
                         ind_p = 1 if t_p in ['03', '05', '14', '15'] else 0
-                        desc_p = (item_p.get('pagamento_descricao') or "Outros") if t_p == '99' else ""
+                        desc_p = (item_p.get('pagamento_descricao') or pedido.pagamento_descricao or "Outros") if t_p == '99' else ""
+
+                        # Para pagamento único, o valor do pagamento informado na SEFAZ deve bater exatamente com o total da nota (vNF),
+                        # evitando rejeição 866 (ausência de troco) ou 767 (soma divergente do total) causadas por diferenças de centavos.
+                        v_p = total_nota_calc
+                        troco_val = safe_decimal(item_p.get('troco'))
+                        if t_p == '01' and troco_val > 0:
+                            v_p = total_nota_calc + troco_val
+                            nota_fiscal.valor_troco = troco_val
 
                         nota_fiscal.adicionar_pagamento(
                             t_pag=t_p,
@@ -3338,9 +3349,49 @@ class NFeService:
                             ind_pag=ind_p,
                             x_pag=desc_p[:60].strip() if t_p == '99' else ""
                         )
+                    else:
+                        soma_pags = sum(safe_decimal(p.get('valor')) for p in pags_validos)
+                        diff = total_nota_calc - soma_pags
+                        ajustar_na_ultima = abs(diff) <= Decimal('0.10')
+
+                        for idx, item_p in enumerate(pags_validos):
+                            t_p = '99'
+                            pag_val_raw = item_p.get('pagamento')
+                            if pag_val_raw:
+                                if hasattr(pag_val_raw, 'value'):
+                                    t_p = pag_val_raw.value
+                                elif isinstance(pag_val_raw, str):
+                                    if pag_val_raw.isdigit():
+                                        t_p = pag_val_raw
+                                    else:
+                                        try:
+                                            t_p = FiscalPagamentoEnum(pag_val_raw).value
+                                        except Exception:
+                                            t_p = '99'
+
+                            v_p = safe_decimal(item_p.get('valor'))
+                            if idx == len(pags_validos) - 1 and ajustar_na_ultima:
+                                v_p = v_p + diff
+                                if v_p < Decimal('0.01'):
+                                    v_p = Decimal('0.01')
+
+                            ind_p = 1 if t_p in ['03', '05', '14', '15'] else 0
+                            desc_p = (item_p.get('pagamento_descricao') or "Outros") if t_p == '99' else ""
+
+                            nota_fiscal.adicionar_pagamento(
+                                t_pag=t_p,
+                                v_pag=v_p,
+                                ind_pag=ind_p,
+                                x_pag=desc_p[:60].strip() if t_p == '99' else ""
+                            )
+
+                        # Se a soma dos pagamentos for maior que o total da nota, define valor_troco para evitar erro 866
+                        soma_final_pags = sum(p.v_pag for p in nota_fiscal.pagamentos)
+                        if soma_final_pags > total_nota_calc:
+                            nota_fiscal.valor_troco = (soma_final_pags - total_nota_calc).quantize(Decimal('0.01'))
                 else:
                     # Ajuste: Usa o totalizador da nota (vNF) calculado pela lib para bater centavos (inclui IPI, ST, Frete etc)
-                    valor_pagamento = nota_fiscal.totais_icms_total_nota
+                    valor_pagamento = total_nota_calc
 
                     if t_pag == '90' or not valor_pagamento:
                         valor_pagamento = Decimal('0.00000001')
@@ -3355,9 +3406,7 @@ class NFeService:
                         x_pag=desc_pagamento[:60].strip() if t_pag == '99' else ""
                     )
             else:
-                # Devolução (Fin=4): A lib gera o XML <pag> sozinha e corretamente.
-                # Apenas para garantir que o objeto Python tenha o dado em memória (opcional),
-                # podemos adicionar, mas sabendo que o serializador vai ignorar esta lista e usar o hardcoded.
+                # Devolução / Ajuste / Complementar (Fin in [2, 3, 4]): A lib gera o XML <pag> com 90=Sem Pagamento
                 nota_fiscal.adicionar_pagamento(
                     t_pag='90',
                     v_pag=Decimal('0.00'),
@@ -4405,22 +4454,15 @@ class NFeService:
         email_res = None
 
         # 1. Integração Mercado Livre
-        if pedido.origem_venda == "Mercado Livre" or "Pedido ML:" in (pedido.observacao or "") or "ID:" in (pedido.observacao or ""):
+        is_ml_nfe = (pedido.origem_venda == "Mercado Livre") or bool(getattr(pedido, 'meli_order_id', None) or getattr(pedido, 'meli_pack_id', None) or getattr(pedido, 'meli_shipment_id', None))
+        if is_ml_nfe:
             if settings.ENVIRONMENT != "production":
                 meli_res = {"success": True, "message": "Simulado: XML enviado para o Mercado Livre (Ambiente de Testes)"}
                 pedido.meli_xml_enviado = True
             else:
                 try:
-                    # IMPORTANTE: O campo "Pedido ML:" é o pack_id (nível de pacote), que é o
-                    # identificador correto para o endpoint /packs/{id}/fiscal_documents do ML.
-                    # O campo "ID:" é o sub-order ID individual e NÃO funciona no endpoint de fiscal_documents.
-                    match_pack = re.search(r"Pedido ML:\s*(\d+)", pedido.observacao or "")
-                    if match_pack:
-                        order_id_ml = match_pack.group(1)
-                    else:
-                        # Fallback: se não tem "Pedido ML:", usa "ID:" (pedido simples sem pack)
-                        match_id = re.search(r"ID:\s*(\d+)", pedido.observacao or "")
-                        order_id_ml = match_id.group(1) if match_id else None
+                    # Usa os campos dedicados do pedido (prioriza pack_id se houver pacote)
+                    order_id_ml = getattr(pedido, 'meli_pack_id', None) or getattr(pedido, 'meli_order_id', None) or getattr(pedido, 'meli_shipment_id', None)
 
                     if order_id_ml:
                         chave_acesso = pedido.chave_acesso
@@ -4468,35 +4510,74 @@ class NFeService:
                 except Exception as e:
                     meli_res = {"success": False, "message": f"Erro ao enviar para ML: {str(e)}"}
 
-            # --- Transmissão de XML NFe para a Shopee ---
-            if getattr(pedido, 'shopee_order_sn', None):
+        # 2. Integração Shopee (Transmissão de XML NFe)
+        shopee_sn = getattr(pedido, 'shopee_order_sn', None)
+        if not shopee_sn and pedido.observacao:
+            match_shopee = re.search(r"Pedido Shopee\s*([A-Za-z0-9]+)", pedido.observacao or "")
+            if match_shopee:
+                shopee_sn = match_shopee.group(1)
+
+        if shopee_sn or (pedido.origem_venda and pedido.origem_venda.lower() == "shopee"):
+            if shopee_sn:
                 try:
                     from app.core.service.shopee_service import ShopeeService
                     shopee_service = ShopeeService(self.db, self.id_empresa)
                     shopee_service.upload_xml(
-                        order_sn=pedido.shopee_order_sn,
+                        order_sn=shopee_sn,
                         xml_content=xml_str,
-                        chave_acesso=chave_acesso,
-                        numero_nf=numero_nf
+                        chave_acesso=pedido.chave_acesso,
+                        numero_nf=pedido.numero_nf
                     )
                 except Exception as e:
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao transmitir XML para a Shopee no pedido #{pedido.id}: {e}")
 
-        # 2. Integração Intelipost (Shipment Order)
-        # O pedido na intelipost deve ser sempre criado se houver configuração da integração
-        # mesmo se não tiver o id da cotação.
+        # 3. Integração Intelipost (Shipment Order)
+        # O envio na Intelipost é disparado se a integração estiver configurada, exceto
+        # se a transportadora estiver configurada para não criar na Intelipost (criar_pedido_intelipost=False)
+        # ou para pedidos com logística do próprio marketplace sem método Intelipost explicitamente configurado.
         intelipost_config = self.db.query(models.IntelipostConfiguracao).filter(
             models.IntelipostConfiguracao.id_empresa == self.id_empresa
         ).first()
 
-        is_mercado_envios = False
-        if pedido.transportadora and pedido.transportadora.nome_razao:
-            nome_transp = pedido.transportadora.nome_razao.lower()
-            if "mercado" in nome_transp and ("env" in nome_transp or "livre" in nome_transp):
-                is_mercado_envios = True
+        transp_obj = pedido.transportadora
+        if not transp_obj and pedido.id_transportadora:
+            transp_obj = self.db.query(models.Cadastro).filter(
+                models.Cadastro.id_empresa == self.id_empresa,
+                or_(
+                    models.Cadastro.id_sequencial == pedido.id_transportadora,
+                    models.Cadastro.id == pedido.id_transportadora
+                )
+            ).first()
 
-        if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
+        criar_intelipost_transp = getattr(transp_obj, 'criar_pedido_intelipost', True)
+        if criar_intelipost_transp is False:
+            is_mkt_logistics = True
+        else:
+            is_mkt_logistics = False
+            has_explicit_intelipost_method = bool(
+                pedido.delivery_method_id_intelipost or 
+                (transp_obj and transp_obj.delivery_method_id_intelipost)
+            )
+
+            if not has_explicit_intelipost_method:
+                origem = (pedido.origem_venda or "").strip().lower()
+                obs = (pedido.observacao or "").lower()
+                transp_nome = (transp_obj.nome_razao or "").lower() if transp_obj else ""
+                transp_fant = (transp_obj.fantasia or "").lower() if transp_obj else ""
+
+                if (
+                    "mercado livre" in origem or "mercado" in origem or "pedido ml:" in obs or 
+                    getattr(pedido, 'meli_order_id', None) or getattr(pedido, 'meli_pack_id', None) or
+                    ("mercado" in transp_nome and ("env" in transp_nome or "livre" in transp_nome))
+                ):
+                    is_mkt_logistics = True
+                elif "tiktok" in origem or "tiktok" in obs or "tik tok" in transp_nome or "tiktok" in transp_nome or "tik tok" in transp_fant or "tiktok" in transp_fant:
+                    is_mkt_logistics = True
+                elif "shopee" in origem or "shopee" in obs or getattr(pedido, 'shopee_order_sn', None) or "shopee" in transp_nome or "shopee" in transp_fant:
+                    is_mkt_logistics = True
+
+        if intelipost_config and intelipost_config.api_key and not is_mkt_logistics:
             if pedido.intelipost_criado:
                 intelipost_res = {"success": True, "message": "Ordem de envio já criada na Intelipost."}
             elif settings.ENVIRONMENT != "production":

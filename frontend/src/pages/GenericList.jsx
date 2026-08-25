@@ -735,9 +735,9 @@ const GenericList = () => {
     fetchPreferences();
   }, [modelName, !!metadata]); // Depende apenas da existência do metadata para evitar re-execuções desnecessárias
 
-  // --- SALVAMENTO AUTOMÁTICO DE FILTROS RÁPIDOS ---
+  // --- SALVAMENTO AUTOMÁTICO DE FILTROS RÁPIDOS (APENAS EM MODO CONFIGURAR) ---
   useEffect(() => {
-    if (!metadata || loadingMetadata) return;
+    if (!isEditMode || !metadata || loadingMetadata || loadingPreferences) return;
 
     const timeoutId = setTimeout(async () => {
       const currentValues = userPreferences.quickFilterValues || {};
@@ -755,6 +755,7 @@ const GenericList = () => {
 
         try {
           await api.post(`/preferences/${modelName}`, configToSave);
+          setUserPreferences(configToSave);
         } catch (err) {
           console.error("Erro ao salvar filtros rápidos:", err);
         }
@@ -762,7 +763,7 @@ const GenericList = () => {
     }, 1000); // Debounce de 1 segundo
 
     return () => clearTimeout(timeoutId);
-  }, [userPreferences, modelName, metadata, loadingMetadata, quickFilterValues]);
+  }, [isEditMode, userPreferences, modelName, metadata, loadingMetadata, loadingPreferences, quickFilterValues]);
 
   // --- RESET DA PAGINAÇÃO EM ATUALIZAÇÕES ---
   // Garante que a página volte para 1 sempre que filtros, status, ordenação ou dados forem atualizados
@@ -2637,12 +2638,33 @@ const GenericList = () => {
   };
 
   const handleSavePreferences = async (newConfig) => {
-    setUserPreferences(newConfig);
+    const configToSave = {
+      ...newConfig,
+      ...(isEditMode ? { quickFilterValues } : {})
+    };
+    setUserPreferences(configToSave);
     try {
-      await api.post(`/preferences/${modelName}`, newConfig);
+      await api.post(`/preferences/${modelName}`, configToSave);
     } catch (err) {
       toast.error("Erro ao salvar configurações.");
     }
+  };
+
+  const handleToggleEditMode = async () => {
+    if (isEditMode) {
+      // Ao sair do modo configurar, garante que os filtros rápidos e preferências atuais sejam salvos
+      const configToSave = {
+        ...userPreferences,
+        quickFilterValues: quickFilterValues
+      };
+      setUserPreferences(configToSave);
+      try {
+        await api.post(`/preferences/${modelName}`, configToSave);
+      } catch (err) {
+        console.error("Erro ao salvar preferências ao sair do modo configurar:", err);
+      }
+    }
+    setIsEditMode(!isEditMode);
   };
 
   const toggleSort = (field) => {
@@ -2761,24 +2783,43 @@ const GenericList = () => {
     }
     else if (type === '__dropdown__') defaultValue = { column: dropdownColumns[0]?.name || "", value: "" };
 
-    setQuickFilterValues(prev => ({ ...prev, [uniqueKey]: defaultValue }));
+    const newQuickFilterValues = { ...quickFilterValues, [uniqueKey]: defaultValue };
+    const newQuickFilterFields = [...currentFields, uniqueKey];
 
-    setUserPreferences(prev => ({
-      ...prev,
-      quickFilterFields: [...currentFields, uniqueKey]
-    }));
+    setQuickFilterValues(newQuickFilterValues);
+
+    const newPreferences = {
+      ...userPreferences,
+      quickFilterFields: newQuickFilterFields
+    };
+    setUserPreferences(newPreferences);
+
+    if (isEditMode) {
+      handleSavePreferences({
+        ...newPreferences,
+        quickFilterValues: newQuickFilterValues
+      });
+    }
   };
 
   const removeQuickFilterField = (uniqueKey) => {
-    setUserPreferences(prev => ({
-      ...prev,
-      quickFilterFields: (prev.quickFilterFields || []).filter(k => k !== uniqueKey)
-    }));
-    setQuickFilterValues(prev => {
-      const next = { ...prev };
-      delete next[uniqueKey];
-      return next;
-    });
+    const newQuickFilterFields = (userPreferences.quickFilterFields || []).filter(k => k !== uniqueKey);
+    const newQuickFilterValues = { ...quickFilterValues };
+    delete newQuickFilterValues[uniqueKey];
+
+    const newPreferences = {
+      ...userPreferences,
+      quickFilterFields: newQuickFilterFields
+    };
+    setUserPreferences(newPreferences);
+    setQuickFilterValues(newQuickFilterValues);
+
+    if (isEditMode) {
+      handleSavePreferences({
+        ...newPreferences,
+        quickFilterValues: newQuickFilterValues
+      });
+    }
   };
 
   const handleQuickFilterChange = (fieldName, value) => {
@@ -3287,7 +3328,7 @@ const GenericList = () => {
               </button>
             )}
             <button
-              onClick={() => setIsEditMode(!isEditMode)}
+              onClick={handleToggleEditMode}
               className={`flex items-center px-4 py-2 rounded-md shadow-sm text-sm font-medium transition-colors ${isEditMode ? 'bg-blue-800 text-white' : 'bg-blue-600 text-white hover:bg-blue-800'
                 }`}
             >

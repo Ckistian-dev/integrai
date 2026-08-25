@@ -330,7 +330,7 @@ class TiktokService:
             subtotal = round(qtd * preco, 2)
 
             itens_erp.append({
-                "id_produto": produto.id,
+                "id_produto": produto.id_sequencial if produto.id_sequencial is not None else produto.id,
                 "sku": produto.sku,
                 "descricao": produto.descricao,
                 "quantidade": qtd,

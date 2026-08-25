@@ -2842,18 +2842,49 @@ def update_item(
         
         # 🎯 LÓGICA ESPECÍFICA: Bloquear Expedição se não tiver Intelipost
         if new_situacao_from_payload == models.PedidoSituacaoEnum.expedicao:
-            # Só valida se houver configuração da Intelipost ativa e não for Mercado Envios
+            # Só valida se houver configuração da Intelipost ativa e não for logística gerenciada por Marketplace
             intelipost_config = db.query(models.IntelipostConfiguracao).filter(
                 models.IntelipostConfiguracao.id_empresa == current_user.id_empresa
             ).first()
             
-            is_mercado_envios = False
-            if db_obj.transportadora and db_obj.transportadora.nome_razao:
-                nome_transp = db_obj.transportadora.nome_razao.lower()
-                if "mercado" in nome_transp and ("env" in nome_transp or "livre" in nome_transp):
-                    is_mercado_envios = True
+            transp_obj = db_obj.transportadora
+            if not transp_obj and db_obj.id_transportadora:
+                transp_obj = db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == current_user.id_empresa,
+                    or_(
+                        models.Cadastro.id_sequencial == db_obj.id_transportadora,
+                        models.Cadastro.id == db_obj.id_transportadora
+                    )
+                ).first()
+
+            criar_intelipost_transp = getattr(transp_obj, 'criar_pedido_intelipost', True)
+            if criar_intelipost_transp is False:
+                is_mkt_logistics = True
+            else:
+                is_mkt_logistics = False
+                has_explicit_intelipost_method = bool(
+                    db_obj.delivery_method_id_intelipost or 
+                    (transp_obj and transp_obj.delivery_method_id_intelipost)
+                )
+                
+                if not has_explicit_intelipost_method:
+                    origem = (db_obj.origem_venda or "").strip().lower()
+                    obs = (db_obj.observacao or "").lower()
+                    transp_nome = (transp_obj.nome_razao or "").lower() if transp_obj else ""
+                    transp_fant = (transp_obj.fantasia or "").lower() if transp_obj else ""
+
+                    if (
+                        "mercado livre" in origem or "mercado" in origem or "pedido ml:" in obs or 
+                        getattr(db_obj, 'meli_order_id', None) or getattr(db_obj, 'meli_pack_id', None) or
+                        ("mercado" in transp_nome and ("env" in transp_nome or "livre" in transp_nome))
+                    ):
+                        is_mkt_logistics = True
+                    elif "tiktok" in origem or "tiktok" in obs or "tik tok" in transp_nome or "tiktok" in transp_nome or "tik tok" in transp_fant or "tiktok" in transp_fant:
+                        is_mkt_logistics = True
+                    elif "shopee" in origem or "shopee" in obs or getattr(db_obj, 'shopee_order_sn', None) or "shopee" in transp_nome or "shopee" in transp_fant:
+                        is_mkt_logistics = True
             
-            if intelipost_config and intelipost_config.api_key and not is_mercado_envios:
+            if intelipost_config and intelipost_config.api_key and not is_mkt_logistics:
                 if not db_obj.intelipost_criado:
                     raise HTTPException(
                         status_code=400, 
@@ -2985,39 +3016,62 @@ def update_item(
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
 
-            # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
-            status_ml_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
-            is_ml_order = bool(getattr(item, 'meli_order_id', None) or getattr(item, 'meli_pack_id', None) or "Pedido ML:" in (item.observacao or ""))
-            if is_ml_order and status_ml_mudou:
+            # Helper seguro para rodar corotina assíncrona em endpoint síncrono
+            def _exec_async(coro):
                 try:
                     import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            return pool.submit(asyncio.run, coro).result()
+                    else:
+                        return asyncio.run(coro)
+                except Exception as exc:
+                    import logging as _l
+                    _l.getLogger(__name__).error(f"Erro ao executar tarefa assíncrona: {exc}")
+
+            # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
+            status_ml_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
+            is_ml_order = bool(
+                getattr(item, 'meli_order_id', None) or 
+                getattr(item, 'meli_pack_id', None) or 
+                getattr(item, 'meli_shipment_id', None) or
+                "mercado livre" in (item.origem_venda or "").lower() or
+                "pedido ml:" in (item.observacao or "").lower() or
+                "id ml:" in (item.observacao or "").lower()
+            )
+            if is_ml_order and status_ml_mudou:
+                try:
                     from app.core.service.meli_service import MeliService
-                    
                     meli_svc = MeliService(db, current_user.id_empresa)
-                    asyncio.run(meli_svc.update_meli_order_status(item))
+                    _exec_async(meli_svc.update_meli_order_status(item))
                 except Exception as e:
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}")
 
-                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Magento
-                if "ID Magento:" in (item.observacao or ""):
-                    try:
-                        from app.core.service.magento_service import MagentoService
-                        magento_svc = MagentoService(db, current_user.id_empresa)
-                        magento_svc.update_magento_order_status(item)
-                    except Exception as e:
-                        import logging as _logging
-                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
+            # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Magento
+            if "ID Magento:" in (item.observacao or "") and (old_situacao != item.situacao):
+                try:
+                    from app.core.service.magento_service import MagentoService
+                    magento_svc = MagentoService(db, current_user.id_empresa)
+                    magento_svc.update_magento_order_status(item)
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
 
-                # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
-                if getattr(item, 'shopee_order_sn', None):
-                    try:
-                        from app.core.service.shopee_service import ShopeeService
-                        shopee_svc = ShopeeService(db, current_user.id_empresa)
-                        shopee_svc.update_shopee_order_status(item)
-                    except Exception as e:
-                        import logging as _logging
-                        _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")
+            # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
+            if getattr(item, 'shopee_order_sn', None) and (old_situacao != item.situacao):
+                try:
+                    from app.core.service.shopee_service import ShopeeService
+                    shopee_svc = ShopeeService(db, current_user.id_empresa)
+                    shopee_svc.update_shopee_order_status(item)
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")
 
         # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI em qualquer alteração de pedido
         if model_name == "pedidos":

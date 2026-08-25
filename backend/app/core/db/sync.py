@@ -434,10 +434,93 @@ def fix_legacy_foreign_keys(engine: Engine):
         logger.error(f"[MIGRAÇÃO] Falha ao corrigir FKs legadas: {e}")
 
 
+def backfill_meli_fields_from_observacao(engine: Engine):
+    """
+    Extrai e preenche meli_order_id, meli_pack_id, meli_buyer_nickname, 
+    meli_logistic_type e meli_shipping_service a partir do campo observacao
+    para pedidos onde meli_order_id ainda é NULL.
+    """
+    import re
+    try:
+        with engine.begin() as conn:
+            query = text("""
+                SELECT id, observacao 
+                FROM pedidos 
+                WHERE meli_order_id IS NULL 
+                  AND observacao IS NOT NULL
+                  AND (origem_venda ILIKE '%mercado%' OR observacao ILIKE '%pedido ml%' OR observacao ILIKE '%id ml%')
+            """)
+            rows = conn.execute(query).fetchall()
+            if not rows:
+                return
+
+            logger.info(f"[BACKFILL MELI] Encontrados {len(rows)} pedidos para extração de dados do Mercado Livre...")
+            updated_count = 0
+
+            for r in rows:
+                ped_id, obs = r[0], r[1] or ""
+                pack_id = None
+                order_id = None
+                buyer = None
+                service = None
+                log_type = None
+
+                # Padrão 1: "Pedido ML: 2000014461847753 | ID: 2000017861967786"
+                m_pack_and_id = re.search(r"Pedido ML:\s*(\d+)\s*\|\s*ID:\s*([\d,\s]+)", obs)
+                if m_pack_and_id:
+                    pack_id = m_pack_and_id.group(1).strip()
+                    order_id = m_pack_and_id.group(2).strip()
+                else:
+                    # Padrão 2: "Pedido ML: 2000018090551354"
+                    m_single_id = re.search(r"Pedido ML:\s*([\d,\s]+)", obs)
+                    if m_single_id:
+                        order_id = m_single_id.group(1).strip()
+                    else:
+                        # Padrão 3: "Pedido 2000014548984385" ou "ID ML: 2000015002796874"
+                        m_generic_id = re.search(r"(?:Pedido|ID ML:?)\s*(\d{15,})", obs)
+                        if m_generic_id:
+                            order_id = m_generic_id.group(1).strip()
+
+                m_buyer = re.search(r"Comprador:\s*([^|]+)", obs)
+                if m_buyer:
+                    buyer = m_buyer.group(1).strip()
+
+                m_service = re.search(r"Servi[çc]o:\s*([^|]+)", obs)
+                if m_service:
+                    service = m_service.group(1).strip()
+
+                m_log = re.search(r"Log[íi]stica:\s*([^|]+)", obs)
+                if m_log:
+                    log_type = m_log.group(1).strip()
+
+                if order_id or pack_id:
+                    conn.execute(text("""
+                        UPDATE pedidos
+                        SET meli_order_id = COALESCE(meli_order_id, :order_id),
+                            meli_pack_id = COALESCE(meli_pack_id, :pack_id),
+                            meli_buyer_nickname = COALESCE(meli_buyer_nickname, :buyer),
+                            meli_shipping_service = COALESCE(meli_shipping_service, :service),
+                            meli_logistic_type = COALESCE(meli_logistic_type, :log_type)
+                        WHERE id = :ped_id
+                    """), {
+                        "order_id": str(order_id) if order_id else None,
+                        "pack_id": str(pack_id) if pack_id else None,
+                        "buyer": str(buyer) if buyer else None,
+                        "service": str(service) if service else None,
+                        "log_type": str(log_type) if log_type else None,
+                        "ped_id": ped_id
+                    })
+                    updated_count += 1
+
+            logger.info(f"[BACKFILL MELI] {updated_count} pedidos atualizados com dados estruturados do Mercado Livre!")
+    except Exception as e:
+        logger.error(f"[BACKFILL MELI] Erro durante backfill de campos do ML: {e}")
+
+
 def sync_database_schema(engine: Engine, base):
     """
     Inspeciona todas as tabelas registradas no SQLAlchemy Base.metadata.
-    Adiciona colunas faltantes automaticamente.
+    Adiciona colunas faltantes automaticamente e executa backfills necessários.
     """
     logger.info("[SYNC] Iniciando sincronização do banco de dados...")
 
@@ -478,6 +561,12 @@ def sync_database_schema(engine: Engine, base):
                         logger.info(f"[SYNC] '{table_name}.{col_name}' ({compiled_type}) adicionada.")
                     except Exception as col_err:
                         logger.error(f"[SYNC] Erro em '{table_name}.{col_name}': {col_err}")
+
+        # 4. Backfill de campos Mercado Livre estruturados
+        try:
+            backfill_meli_fields_from_observacao(engine)
+        except Exception as bf_err:
+            logger.error(f"[SYNC] Backfill Mercado Livre falhou: {bf_err}")
 
         logger.info("[SYNC] Sincronização concluída com sucesso.")
     except Exception as e:

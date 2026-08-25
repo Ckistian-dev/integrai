@@ -158,6 +158,56 @@ async def meli_auth_callback(
     
     return {"message": "Por favor, configure o Redirect URI para o Frontend ou use o endpoint POST /auth com o code."}
 
+@router.post("/mercadolivre/callback")
+async def meli_notification_callback(
+    payload: dict = Body(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Recebe notificações (Webhooks) do Mercado Livre e atualiza os pedidos locais.
+    """
+    logger.info(f"Notificação (Webhook) recebida do Mercado Livre: {payload}")
+    if not payload or not isinstance(payload, dict):
+        return {"status": "ok", "message": "Payload vazio"}
+
+    topic = payload.get("topic")
+    resource = payload.get("resource")
+    user_id_ml = payload.get("user_id")
+    app_id = payload.get("application_id")
+
+    if not resource:
+        return {"status": "ok", "message": "Sem resource"}
+
+    # Identifica a empresa correspondente às credenciais / app_id
+    id_empresa = None
+    if user_id_ml:
+        cred = db.query(models.MeliCredentials).filter(models.MeliCredentials.user_id_ml == int(user_id_ml)).first()
+        if cred:
+            id_empresa = cred.id_empresa
+
+    if not id_empresa and app_id:
+        cfg = db.query(models.MeliConfiguracao).filter(models.MeliConfiguracao.app_id == str(app_id)).first()
+        if cfg:
+            id_empresa = cfg.id_empresa
+
+    if not id_empresa:
+        # Fallback: primeira empresa com credenciais válidas
+        first_cred = db.query(models.MeliCredentials).first()
+        if first_cred:
+            id_empresa = first_cred.id_empresa
+
+    if not id_empresa:
+        logger.warning(f"Webhook ML recebido mas nenhuma empresa correspondente foi encontrada para user_id={user_id_ml}, app_id={app_id}")
+        return {"status": "warning", "message": "Empresa não identificada"}
+
+    try:
+        service = MeliService(db, id_empresa)
+        result = await service.process_meli_webhook(topic=str(topic or ""), resource=str(resource), user_id_ml=user_id_ml)
+        return result
+    except Exception as e:
+        logger.exception(f"Erro ao processar webhook do Mercado Livre: {e}")
+        return {"status": "error", "message": str(e)}
+
 @router.post("/mercadolivre/auth")
 async def exchange_code(
     payload: dict = Body(...),
@@ -208,21 +258,11 @@ async def reenviar_xml_ml(
     if not pedido.xml_autorizado:
         raise HTTPException(status_code=400, detail="Este pedido não possui XML da NFe autorizado no ERP.")
 
-    # 1. Prioridade: novos campos dedicados
-    order_id_ml = pedido.meli_order_id or pedido.meli_pack_id
-
-    # 2. Fallback: regex na observação
-    if not order_id_ml:
-        obs = pedido.observacao or ""
-        match_pack = re.search(r"Pedido ML:\s*(\d+)", obs)
-        if match_pack:
-            order_id_ml = match_pack.group(1)
-        else:
-            match_id = re.search(r"ID:\s*(\d+)", obs)
-            order_id_ml = match_id.group(1) if match_id else None
+    # 1. Campos dedicados do pedido
+    order_id_ml = pedido.meli_pack_id or pedido.meli_order_id or pedido.meli_shipment_id
 
     if not order_id_ml:
-        raise HTTPException(status_code=400, detail="Não foi localizado um ID do Mercado Livre na observação nem nos campos do pedido.")
+        raise HTTPException(status_code=400, detail="Não foi localizado um ID do Mercado Livre (meli_order_id / meli_pack_id) nos campos do pedido.")
 
     service = MeliService(db, current_user.id_empresa)
     res = await service.upload_xml(

@@ -621,6 +621,11 @@ class ShopeeService:
             ).first()
 
         if cliente_existente:
+            if cliente_existente.id_sequencial is None:
+                from sqlalchemy import text
+                stmt = text('SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "cadastros" WHERE id_empresa = :emp_id')
+                next_seq = self.db.execute(stmt, {"emp_id": self.id_empresa}).scalar() or 1
+                cliente_existente.id_sequencial = next_seq
             if cpf_cnpj != '00000000000' and cliente_existente.cpf_cnpj == '00000000000':
                 cliente_existente.cpf_cnpj = cpf_cnpj
                 cliente_existente.tipo_pessoa = tipo_pessoa
@@ -668,9 +673,57 @@ class ShopeeService:
         self.db.refresh(novo_cliente)
         return novo_cliente
 
+    def _find_or_create_carrier(self, carrier_name: str) -> Optional[models.Cadastro]:
+        """Busca ou cria transportadora da Shopee associando id_sequencial no ERP."""
+        if not carrier_name:
+            return None
+
+        carrier_name_clean = str(carrier_name).strip()
+        from sqlalchemy import or_
+        carrier = self.db.query(models.Cadastro).filter(
+            models.Cadastro.tipo_cadastro == CadastroTipoCadastroEnum.transportadora,
+            models.Cadastro.id_empresa == self.id_empresa,
+            models.Cadastro.situacao == True,
+            or_(
+                models.Cadastro.nome_razao.ilike(f"%{carrier_name_clean}%"),
+                models.Cadastro.fantasia.ilike(f"%{carrier_name_clean}%")
+            )
+        ).first()
+
+        if carrier:
+            if carrier.id_sequencial is None:
+                from sqlalchemy import text
+                stmt = text('SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "cadastros" WHERE id_empresa = :emp_id')
+                next_seq = self.db.execute(stmt, {"emp_id": self.id_empresa}).scalar() or 1
+                carrier.id_sequencial = next_seq
+                self.db.commit()
+                self.db.refresh(carrier)
+            return carrier
+
+        new_carrier = models.Cadastro(
+            id_empresa=self.id_empresa,
+            cpf_cnpj='00000000000000',
+            nome_razao=carrier_name_clean.upper()[:100],
+            fantasia=carrier_name_clean.upper()[:100],
+            tipo_cadastro=CadastroTipoCadastroEnum.transportadora,
+            tipo_pessoa=CadastroTipoPessoaEnum.juridica,
+            indicador_ie=CadastroIndicadorIEEnum.nao_contribuinte,
+            situacao=True,
+            criar_pedido_intelipost=False,
+            cep="00000-000",
+            logradouro="Endereço Shopee Envio",
+            numero="S/N",
+            cidade="Indefinida",
+            estado=models.EstadoEnum.SP
+        )
+        self.db.add(new_carrier)
+        self.db.commit()
+        self.db.refresh(new_carrier)
+        return new_carrier
+
     def import_order(self, order_sn: str) -> Tuple[models.Pedido, List[str]]:
         """
-        Importa um pedido específico da Shopee utilizando a coluna dedicada shopee_order_sn.
+        Importa um pedido específico da Shopee utilizando id_sequencial para amarração dos produtos.
         """
         logger.info(f"Iniciando importação do pedido Shopee {order_sn} para a empresa {self.id_empresa}")
 
@@ -682,8 +735,8 @@ class ShopeeService:
         ).first()
 
         if exists:
-            logger.info(f"Pedido Shopee {order_sn} já foi importado anteriormente (ERP ID: {exists.id})")
-            raise HTTPException(status_code=409, detail=f"Pedido {order_sn} já foi importado anteriormente (ID ERP: {exists.id}).")
+            logger.info(f"Pedido Shopee {order_sn} já foi importado anteriormente (ERP ID: {exists.id_sequencial or exists.id})")
+            raise HTTPException(status_code=409, detail=f"Pedido {order_sn} já foi importado anteriormente (ID ERP: {exists.id_sequencial or exists.id}).")
 
         # 2. Tenta buscar os dados detalhados do pedido na API da Shopee
         order_data = {}
@@ -759,10 +812,27 @@ class ShopeeService:
             else:
                 desc_completa = item_name
 
+            # 1. Busca por SKU direto
             produto = self.db.query(models.Produto).filter(
                 models.Produto.sku == sku,
                 models.Produto.id_empresa == self.id_empresa
             ).first()
+
+            # 2. Se não achar e tiver GTIN/EAN, busca por GTIN
+            gtin = item.get('gtin') or item.get('ean')
+            if not produto and gtin:
+                produto = self.db.query(models.Produto).filter(
+                    models.Produto.gtin == gtin,
+                    models.Produto.id_empresa == self.id_empresa
+                ).first()
+
+            # 3. Se não achar, busca se alguma variação do ERP contém o SKU
+            if not produto and sku:
+                from sqlalchemy import cast, String
+                produto = self.db.query(models.Produto).filter(
+                    models.Produto.id_empresa == self.id_empresa,
+                    cast(models.Produto.variacoes, String).contains(f'"{sku}"')
+                ).first()
 
             preco = float(item.get('model_discounted_price') or item.get('model_original_price') or 0.0)
             peso_item = float(item.get('weight', 0.0))
@@ -771,7 +841,7 @@ class ShopeeService:
                 produto = models.Produto(
                     id_empresa=self.id_empresa,
                     sku=sku,
-                    gtin=item.get('gtin') or item.get('ean'),
+                    gtin=gtin,
                     descricao=desc_completa[:255],
                     unidade=models.ProdutoUnidadeEnum.un,
                     tipo_produto=models.ProdutoTipoEnum.mercadoria_revenda,
@@ -786,6 +856,15 @@ class ShopeeService:
                 self.db.refresh(produto)
                 produtos_criados.append(sku)
 
+            # Garante que id_sequencial existe no produto
+            if produto.id_sequencial is None:
+                from sqlalchemy import text
+                stmt = text('SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "produtos" WHERE id_empresa = :emp_id')
+                next_seq = self.db.execute(stmt, {"emp_id": self.id_empresa}).scalar() or 1
+                produto.id_sequencial = next_seq
+                self.db.commit()
+                self.db.refresh(produto)
+
             qtd = int(float(item.get('model_quantity_purchased', 1)))
             subtotal = round(qtd * preco, 2)
 
@@ -794,19 +873,25 @@ class ShopeeService:
             valor_ipi = round(subtotal * (ipi_aliquota / 100.0), 2)
             total_com_ipi = round(subtotal + valor_ipi, 2)
 
+            peso_unitario = peso_item if peso_item > 0 else float(getattr(produto, 'peso', 0.0) or 0.0)
+
             itens_erp.append({
-                "id_produto": produto.id,
+                "id_produto": produto.id_sequencial if produto.id_sequencial is not None else produto.id,
                 "sku": produto.sku,
                 "descricao": produto.descricao,
+                "gtin": produto.gtin or "SEM GTIN",
+                "ncm": produto.ncm,
+                "unidade": produto.unidade.value if hasattr(produto.unidade, 'value') else str(produto.unidade or 'un'),
                 "quantidade": qtd,
                 "valor_unitario": preco,
                 "subtotal": subtotal,
+                "peso_unitario": peso_unitario,
                 "ipi_aliquota": ipi_aliquota,
                 "valor_ipi": valor_ipi,
                 "total_com_ipi": total_com_ipi,
             })
             total_calculado += subtotal
-            total_peso += (peso_item * qtd)
+            total_peso += (peso_unitario * qtd)
 
         address = order_data.get('recipient_address', {})
         shipping_fee = float(order_data.get('shipping_fee', 0.0))
@@ -839,11 +924,16 @@ class ShopeeService:
         # Endereço Formatado Inteligente
         parsed_addr = self._parse_shopee_address(address)
 
+        # Busca ou Cria Transportadora
+        carrier_name = order_data.get('shipping_carrier')
+        carrier_erp = self._find_or_create_carrier(carrier_name) if carrier_name else None
+
         # 5. Cria Pedido com preenchimento COMPLETO nas colunas ERP
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
             id_cliente=cliente_erp.id_sequencial if cliente_erp else None,
             id_vendedor=self.config.vendedor_padrao_id,
+            id_transportadora=carrier_erp.id_sequencial if carrier_erp else None,
             situacao=situacao_erp,
             caixa_destino_origem=self.config.caixa_padrao,
             data_orcamento=dt_pedido.date(),
@@ -900,8 +990,193 @@ class ShopeeService:
         self.db.commit()
         self.db.refresh(novo_pedido)
 
-        logger.info(f"Pedido Shopee {order_sn} importado com sucesso. ID ERP: {novo_pedido.id}")
+        logger.info(f"Pedido Shopee {order_sn} importado com sucesso. ID ERP: {novo_pedido.id_sequencial or novo_pedido.id}")
         return novo_pedido, produtos_criados
+
+    def import_products_from_shopee(self, page_size: int = 50, update_existing: bool = True) -> Dict[str, Any]:
+        """
+        Importa ou sincroniza catálogo de produtos da Shopee para a tabela de produtos do ERP com id_sequencial.
+        """
+        logger.info(f"Iniciando importação de catálogo da Shopee para a empresa {self.id_empresa}")
+        access_token = self._get_valid_access_token()
+        shop_id = str(self.config.shop_id)
+        
+        offset = 0
+        has_next_page = True
+        total_processados = 0
+        produtos_criados = 0
+        produtos_atualizados = 0
+        erros = []
+
+        path_list = "/api/v2/product/get_item_list"
+        path_base_info = "/api/v2/product/get_item_base_info"
+        path_model_list = "/api/v2/product/get_model_list"
+
+        while has_next_page:
+            timestamp = int(time.time())
+            sign = self._generate_sign(path_list, timestamp, access_token, shop_id)
+            params = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign,
+                "offset": offset,
+                "page_size": min(page_size, 100),
+                "item_status": "NORMAL"
+            }
+
+            try:
+                resp = requests.get(f"{self.api_base}{path_list}", params=params, timeout=15.0)
+                data = resp.json()
+                if resp.status_code != 200 or data.get("error"):
+                    err_msg = data.get("message") or data.get("error") or resp.text
+                    logger.error(f"Erro ao listar produtos da Shopee: {err_msg}")
+                    break
+
+                response_data = data.get("response", {})
+                item_list = response_data.get("item", [])
+                if not item_list:
+                    break
+
+                item_ids = [str(it.get("item_id")) for it in item_list if it.get("item_id")]
+                has_next_page = response_data.get("has_next_page", False)
+                offset = response_data.get("next_offset", offset + len(item_ids))
+
+                # Busca detalhes dos itens (até 50 por chamada)
+                for i in range(0, len(item_ids), 50):
+                    chunk = item_ids[i:i+50]
+                    detail_timestamp = int(time.time())
+                    detail_sign = self._generate_sign(path_base_info, detail_timestamp, access_token, shop_id)
+                    detail_params = {
+                        "partner_id": int(self.config.partner_id),
+                        "timestamp": detail_timestamp,
+                        "access_token": access_token,
+                        "shop_id": int(shop_id),
+                        "sign": detail_sign,
+                        "item_id_list": ",".join(chunk)
+                    }
+
+                    detail_resp = requests.get(f"{self.api_base}{path_base_info}", params=detail_params, timeout=15.0)
+                    detail_data = detail_resp.json()
+
+                    if detail_resp.status_code == 200 and not detail_data.get("error"):
+                        items_info = detail_data.get("response", {}).get("item_list", [])
+                        for item_info in items_info:
+                            total_processados += 1
+                            item_id = str(item_info.get("item_id"))
+                            has_model = item_info.get("has_model", False)
+
+                            # Se tiver variações (models), consulta a lista de models
+                            if has_model:
+                                try:
+                                    model_timestamp = int(time.time())
+                                    model_sign = self._generate_sign(path_model_list, model_timestamp, access_token, shop_id)
+                                    model_params = {
+                                        "partner_id": int(self.config.partner_id),
+                                        "timestamp": model_timestamp,
+                                        "access_token": access_token,
+                                        "shop_id": int(shop_id),
+                                        "sign": model_sign,
+                                        "item_id": int(item_id)
+                                    }
+                                    model_resp = requests.get(f"{self.api_base}{path_model_list}", params=model_params, timeout=10.0)
+                                    model_data = model_resp.json()
+                                    models_list = model_data.get("response", {}).get("model", []) if model_resp.status_code == 200 else []
+                                except Exception as e:
+                                    logger.warning(f"Erro ao buscar variações do produto {item_id}: {e}")
+                                    models_list = []
+
+                                if models_list:
+                                    for m in models_list:
+                                        m_sku = m.get("model_sku") or f"SHOPEE-{item_id}-{m.get('model_id')}"
+                                        m_name = f"{item_info.get('item_name', '')} - {m.get('model_name', '')}".strip()
+                                        price_info = m.get("price_info", [{}])[0] if isinstance(m.get("price_info"), list) else {}
+                                        m_price = float(price_info.get("current_price") or price_info.get("original_price") or 0.0)
+                                        
+                                        criado = self._upsert_product(
+                                            sku=m_sku,
+                                            descricao=m_name,
+                                            preco=m_price,
+                                            peso=float(item_info.get("weight", 0.0)),
+                                            update_existing=update_existing
+                                        )
+                                        if criado:
+                                            produtos_criados += 1
+                                        else:
+                                            produtos_atualizados += 1
+                                    continue
+
+                            # Produto simples sem variações
+                            sku = item_info.get("item_sku") or f"SHOPEE-{item_id}"
+                            desc = str(item_info.get("item_name") or f"Produto Shopee {item_id}").strip()
+                            price_info = item_info.get("price_info", [{}])[0] if isinstance(item_info.get("price_info"), list) else {}
+                            price = float(price_info.get("current_price") or price_info.get("original_price") or 0.0)
+                            weight = float(item_info.get("weight", 0.0))
+
+                            criado = self._upsert_product(
+                                sku=sku,
+                                descricao=desc,
+                                preco=price,
+                                peso=weight,
+                                update_existing=update_existing
+                            )
+                            if criado:
+                                produtos_criados += 1
+                            else:
+                                produtos_atualizados += 1
+
+            except Exception as e:
+                logger.exception(f"Erro ao processar página de produtos Shopee (offset={offset}): {e}")
+                erros.append(str(e))
+                break
+
+        return {
+            "total_processados": total_processados,
+            "produtos_criados": produtos_criados,
+            "produtos_atualizados": produtos_atualizados,
+            "erros": erros
+        }
+
+    def _upsert_product(self, sku: str, descricao: str, preco: float, peso: float = 0.0, update_existing: bool = True) -> bool:
+        """Cria ou atualiza um produto garantindo id_sequencial."""
+        produto = self.db.query(models.Produto).filter(
+            models.Produto.sku == sku,
+            models.Produto.id_empresa == self.id_empresa
+        ).first()
+
+        if not produto:
+            novo_produto = models.Produto(
+                id_empresa=self.id_empresa,
+                sku=sku,
+                descricao=descricao[:255],
+                unidade=models.ProdutoUnidadeEnum.un,
+                tipo_produto=models.ProdutoTipoEnum.mercadoria_revenda,
+                origem=models.ProdutoOrigemEnum.nacional,
+                preco=preco,
+                custo=0,
+                peso=peso,
+                situacao=True
+            )
+            self.db.add(novo_produto)
+            self.db.commit()
+            self.db.refresh(novo_produto)
+            return True
+        elif update_existing:
+            if preco > 0:
+                produto.preco = preco
+            if peso > 0:
+                produto.peso = peso
+            if descricao:
+                produto.descricao = descricao[:255]
+            if produto.id_sequencial is None:
+                from sqlalchemy import text
+                stmt = text('SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "produtos" WHERE id_empresa = :emp_id')
+                next_seq = self.db.execute(stmt, {"emp_id": self.id_empresa}).scalar() or 1
+                produto.id_sequencial = next_seq
+            self.db.commit()
+            return False
+        return False
 
     def update_shopee_order_status(self, pedido: models.Pedido) -> Dict[str, Any]:
         """
@@ -909,10 +1184,10 @@ class ShopeeService:
         """
         order_sn = pedido.shopee_order_sn
         if not order_sn:
-            logger.info(f"Pedido #{pedido.id} não possui shopee_order_sn. Atualização ignorada.")
+            logger.info(f"Pedido #{pedido.id_sequencial or pedido.id} não possui shopee_order_sn. Atualização ignorada.")
             return {"status": "skipped", "message": "Pedido não é da Shopee."}
 
-        logger.info(f"Sincronizando status do pedido ERP #{pedido.id} (Shopee Order SN: {order_sn}) com a Shopee.")
+        logger.info(f"Sincronizando status do pedido ERP #{pedido.id_sequencial or pedido.id} (Shopee Order SN: {order_sn}) com a Shopee.")
         return {"status": "success", "message": "Status verificado na Shopee com sucesso!"}
 
     def upload_xml(self, order_sn: str, xml_content: str, chave_acesso: str, numero_nf: str) -> Dict[str, Any]:

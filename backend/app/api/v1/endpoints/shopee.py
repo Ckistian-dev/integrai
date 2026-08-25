@@ -48,12 +48,40 @@ def import_shopee_order(
         if produtos_criados:
             msg += f" Produtos criados: {', '.join(produtos_criados)}"
             
-        response = {"message": msg, "id": pedido.id}
+        response = {
+            "message": msg,
+            "id": pedido.id_sequencial if pedido.id_sequencial is not None else pedido.id,
+            "id_sequencial": pedido.id_sequencial,
+            "order_sn": order_sn
+        }
         return response
     except HTTPException as he:
         raise he
     except Exception as e:
         logger.exception(f"Erro ao importar pedido Shopee: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/shopee/produtos/importar")
+def import_shopee_products(
+    page_size: int = Query(50, ge=1, le=100),
+    update_existing: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Importa ou sincroniza o catálogo de produtos da Shopee diretamente no ERP.
+    """
+    try:
+        service = ShopeeService(db, current_user.id_empresa)
+        result = service.import_products_from_shopee(page_size=page_size, update_existing=update_existing)
+        return {
+            "message": f"Catálogo sincronizado: {result['produtos_criados']} produtos criados, {result['produtos_atualizados']} atualizados de {result['total_processados']} processados.",
+            "data": result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Erro ao importar produtos da Shopee: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/shopee/teste-conexao")

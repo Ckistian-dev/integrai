@@ -664,7 +664,8 @@ class Cadastro(Base):
     complemento = Column(String, 
                          info={'tab': 'Endereço', 'label': 'Complemento', 'placeholder': 'Apto 101, Bloco B'})
     
-    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'label': 'ID Método Entrega (Intelipost)'})
+    criar_pedido_intelipost = Column(Boolean, default=True, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Criar Pedido na Intelipost?'})
+    delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Método Entrega (Intelipost)', 'placeholder': 'Ex: 15707'})
     
     # --- Campos Internos (sem aba) ---
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1110,6 +1111,7 @@ class Pedido(Base):
     meli_tracking_number = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Código Rastreio ML'})
     meli_logistic_type = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Tipo Logística ML'})
     meli_shipping_service = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Serviço Frete ML'})
+    meli_status_envio = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Status Envio ML'})
     meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'XML enviado ML?'})
 
     # Campos Integração Shopee (Aba Integrações)
