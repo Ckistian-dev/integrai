@@ -101,14 +101,16 @@ class IntelipostService:
         if quantidade <= 0:
             return []
 
-        # Busca produto no banco (suporta id_sequencial ou id primário)
+        # Busca produto no banco (prioriza id_sequencial)
         produto = self.db.query(models.Produto).filter(
             models.Produto.id_empresa == self.id_empresa,
-            or_(
-                models.Produto.id_sequencial == produto_id,
-                models.Produto.id == produto_id
-            )
+            models.Produto.id_sequencial == produto_id
         ).first()
+        if not produto:
+            produto = self.db.query(models.Produto).filter(
+                models.Produto.id_empresa == self.id_empresa,
+                models.Produto.id == produto_id
+            ).first()
 
         if not produto:
             return []
@@ -142,11 +144,13 @@ class IntelipostService:
         if produto.id_embalagem:
             embalagem = self.db.query(models.Embalagem).filter(
                 models.Embalagem.id_empresa == self.id_empresa,
-                or_(
-                    models.Embalagem.id_sequencial == produto.id_embalagem,
-                    models.Embalagem.id == produto.id_embalagem
-                )
+                models.Embalagem.id_sequencial == produto.id_embalagem
             ).first()
+            if not embalagem:
+                embalagem = self.db.query(models.Embalagem).filter(
+                    models.Embalagem.id_empresa == self.id_empresa,
+                    models.Embalagem.id == produto.id_embalagem
+                ).first()
 
             if embalagem and embalagem.regras:
                 rules_data = embalagem.regras
@@ -261,14 +265,16 @@ class IntelipostService:
         if settings.ENVIRONMENT != "production":
             return {"status": "success", "message": "Simulado: Ordem de envio criada na Intelipost (Ambiente de Testes)"}
 
-        # 1. Busca Pedido e Relacionamentos (suporta id_sequencial ou id primário)
+        # 1. Busca Pedido e Relacionamentos (prioriza id_sequencial, fallback para id primário)
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id_empresa == self.id_empresa,
-            or_(
-                models.Pedido.id_sequencial == pedido_id,
-                models.Pedido.id == pedido_id
-            )
+            models.Pedido.id_sequencial == pedido_id
         ).first()
+        if not pedido:
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.id == pedido_id
+            ).first()
 
         if not pedido:
             raise HTTPException(status_code=404, detail=f"Pedido #{pedido_id} não encontrado.")
@@ -278,11 +284,13 @@ class IntelipostService:
         if not cliente and pedido.id_cliente:
             cliente = self.db.query(models.Cadastro).filter(
                 models.Cadastro.id_empresa == self.id_empresa,
-                or_(
-                    models.Cadastro.id_sequencial == pedido.id_cliente,
-                    models.Cadastro.id == pedido.id_cliente
-                )
+                models.Cadastro.id_sequencial == pedido.id_cliente
             ).first()
+            if not cliente:
+                cliente = self.db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == self.id_empresa,
+                    models.Cadastro.id == pedido.id_cliente
+                ).first()
 
         if not cliente:
             raise HTTPException(status_code=404, detail=f"Cliente do Pedido #{pedido_id} não encontrado ou não vinculado.")
@@ -296,11 +304,13 @@ class IntelipostService:
         if not transp_check and pedido.id_transportadora:
             transp_check = self.db.query(models.Cadastro).filter(
                 models.Cadastro.id_empresa == self.id_empresa,
-                or_(
-                    models.Cadastro.id_sequencial == pedido.id_transportadora,
-                    models.Cadastro.id == pedido.id_transportadora
-                )
+                models.Cadastro.id_sequencial == pedido.id_transportadora
             ).first()
+            if not transp_check:
+                transp_check = self.db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == self.id_empresa,
+                    models.Cadastro.id == pedido.id_transportadora
+                ).first()
         if transp_check and getattr(transp_check, 'criar_pedido_intelipost', True) is False:
             return {
                 "status": "warning",
@@ -323,11 +333,13 @@ class IntelipostService:
                 if prod_id:
                     prod = self.db.query(models.Produto).filter(
                         models.Produto.id_empresa == self.id_empresa,
-                        or_(
-                            models.Produto.id_sequencial == prod_id,
-                            models.Produto.id == prod_id
-                        )
+                        models.Produto.id_sequencial == prod_id
                     ).first()
+                    if not prod:
+                        prod = self.db.query(models.Produto).filter(
+                            models.Produto.id_empresa == self.id_empresa,
+                            models.Produto.id == prod_id
+                        ).first()
                     if prod:
                         w = float(prod.largura or 10.0)
                         h = float(prod.altura or 10.0)
@@ -516,11 +528,13 @@ class IntelipostService:
             if not transp:
                 transp = self.db.query(models.Cadastro).filter(
                     models.Cadastro.id_empresa == self.id_empresa,
-                    or_(
-                        models.Cadastro.id_sequencial == pedido.id_transportadora,
-                        models.Cadastro.id == pedido.id_transportadora
-                    )
+                    models.Cadastro.id_sequencial == pedido.id_transportadora
                 ).first()
+                if not transp:
+                    transp = self.db.query(models.Cadastro).filter(
+                        models.Cadastro.id_empresa == self.id_empresa,
+                        models.Cadastro.id == pedido.id_transportadora
+                    ).first()
             if transp and transp.delivery_method_id_intelipost:
                 delivery_method_id = transp.delivery_method_id_intelipost
 
@@ -675,14 +689,16 @@ class IntelipostService:
         """
         Busca o pedido, cliente e itens via ORM e realiza a cotação.
         """
-        # 1. Busca Pedido (suporta id_sequencial ou id primário)
+        # 1. Busca Pedido (prioriza id_sequencial, fallback para id primário)
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.id_empresa == self.id_empresa,
-            or_(
-                models.Pedido.id_sequencial == pedido_id,
-                models.Pedido.id == pedido_id
-            )
+            models.Pedido.id_sequencial == pedido_id
         ).first()
+        if not pedido:
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.id == pedido_id
+            ).first()
 
         if not pedido:
             raise HTTPException(status_code=404, detail="Pedido não encontrado.")
@@ -692,11 +708,13 @@ class IntelipostService:
         if not cliente and pedido.id_cliente:
             cliente = self.db.query(models.Cadastro).filter(
                 models.Cadastro.id_empresa == self.id_empresa,
-                or_(
-                    models.Cadastro.id_sequencial == pedido.id_cliente,
-                    models.Cadastro.id == pedido.id_cliente
-                )
+                models.Cadastro.id_sequencial == pedido.id_cliente
             ).first()
+            if not cliente:
+                cliente = self.db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == self.id_empresa,
+                    models.Cadastro.id == pedido.id_cliente
+                ).first()
 
         if not cliente and not pedido.endereco_cep:
             raise HTTPException(status_code=400, detail="Pedido sem cliente vinculado e sem CEP de entrega.")

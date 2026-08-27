@@ -4544,11 +4544,13 @@ class NFeService:
         if not transp_obj and pedido.id_transportadora:
             transp_obj = self.db.query(models.Cadastro).filter(
                 models.Cadastro.id_empresa == self.id_empresa,
-                or_(
-                    models.Cadastro.id_sequencial == pedido.id_transportadora,
-                    models.Cadastro.id == pedido.id_transportadora
-                )
+                models.Cadastro.id_sequencial == pedido.id_transportadora
             ).first()
+            if not transp_obj:
+                transp_obj = self.db.query(models.Cadastro).filter(
+                    models.Cadastro.id_empresa == self.id_empresa,
+                    models.Cadastro.id == pedido.id_transportadora
+                ).first()
 
         criar_intelipost_transp = getattr(transp_obj, 'criar_pedido_intelipost', True)
         if criar_intelipost_transp is False:

@@ -2981,11 +2981,13 @@ def update_item(
             if not transp_obj and db_obj.id_transportadora:
                 transp_obj = db.query(models.Cadastro).filter(
                     models.Cadastro.id_empresa == current_user.id_empresa,
-                    or_(
-                        models.Cadastro.id_sequencial == db_obj.id_transportadora,
-                        models.Cadastro.id == db_obj.id_transportadora
-                    )
+                    models.Cadastro.id_sequencial == db_obj.id_transportadora
                 ).first()
+                if not transp_obj:
+                    transp_obj = db.query(models.Cadastro).filter(
+                        models.Cadastro.id_empresa == current_user.id_empresa,
+                        models.Cadastro.id == db_obj.id_transportadora
+                    ).first()
 
             criar_intelipost_transp = getattr(transp_obj, 'criar_pedido_intelipost', True)
             if criar_intelipost_transp is False:

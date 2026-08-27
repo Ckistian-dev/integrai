@@ -829,6 +829,8 @@ const GenericList = () => {
   const prevColumnsLength = React.useRef(0);
   const scrollAnimationFrameRef = useRef(null);
   const scrollVelocityRef = useRef(0);
+  const draggedColRef = useRef(null);
+  const dragTargetColRef = useRef(null);
 
   // Efeito para rolar a tabela para a direita ao adicionar uma nova coluna
   useEffect(() => {
@@ -867,7 +869,7 @@ const GenericList = () => {
   };
 
   const handleDragOverContainer = (e) => {
-    if (!isEditMode || !draggedColName) return;
+    if (!isEditMode || !draggedColRef.current) return;
     e.preventDefault();
     const container = tableContainerRef.current;
     if (!container) return;
@@ -900,6 +902,8 @@ const GenericList = () => {
   // --- HANDLERS PARA ARRASTE E PRÉ-VISUALIZAÇÃO DE COLUNAS ---
   const handleColumnDragStart = (e, colName) => {
     if (!isEditMode) return;
+    draggedColRef.current = colName;
+    dragTargetColRef.current = colName;
     setDraggedColName(colName);
     setDragTargetColName(colName);
     if (e.dataTransfer) {
@@ -909,25 +913,28 @@ const GenericList = () => {
   };
 
   const handleColumnDragOver = (e, colName) => {
-    if (!isEditMode || !draggedColName) return;
+    if (!isEditMode || !draggedColRef.current) return;
     e.preventDefault();
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'move';
     }
     // PROTEÇÃO ANTI-FLICKERING: Ignora dragOver se for a própria coluna que está sendo arrastada
-    if (colName !== draggedColName && dragTargetColName !== colName) {
+    if (colName !== draggedColRef.current && dragTargetColRef.current !== colName) {
+      dragTargetColRef.current = colName;
       setDragTargetColName(colName);
     }
   };
 
   const handleColumnDrop = (e, targetColName) => {
-    if (!isEditMode || !draggedColName) return;
+    if (!isEditMode || !draggedColRef.current) return;
     e.preventDefault();
     e.stopPropagation();
 
-    const fromCol = draggedColName;
-    const toCol = (dragTargetColName && dragTargetColName !== draggedColName) ? dragTargetColName : targetColName;
+    const fromCol = draggedColRef.current;
+    const toCol = (dragTargetColRef.current && dragTargetColRef.current !== fromCol) ? dragTargetColRef.current : targetColName;
 
+    draggedColRef.current = null;
+    dragTargetColRef.current = null;
     setDraggedColName(null);
     setDragTargetColName(null);
     stopAutoScroll();
@@ -938,12 +945,18 @@ const GenericList = () => {
   };
 
   const handleColumnDragEnd = () => {
-    if (draggedColName && dragTargetColName && draggedColName !== dragTargetColName) {
-      moveColumn(draggedColName, dragTargetColName);
-    }
+    const fromCol = draggedColRef.current;
+    const toCol = dragTargetColRef.current;
+
+    draggedColRef.current = null;
+    dragTargetColRef.current = null;
     setDraggedColName(null);
     setDragTargetColName(null);
     stopAutoScroll();
+
+    if (fromCol && toCol && fromCol !== toCol) {
+      moveColumn(fromCol, toCol);
+    }
   };
 
   const handleResizeStart = (e, colName) => {
@@ -2678,7 +2691,11 @@ const GenericList = () => {
   };
 
   const removeColumn = (colName) => {
-    const newCols = (userPreferences.visibleColumns || []).filter(c => c !== colName);
+    const baseCols = (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared))
+      ? [...userPreferences.visibleColumns]
+      : [...columnsToDisplay];
+
+    const newCols = baseCols.filter(c => c !== colName);
     handleSavePreferences({
       ...userPreferences,
       visibleColumns: newCols,
@@ -2687,8 +2704,12 @@ const GenericList = () => {
   };
 
   const addColumn = (colName) => {
-    if ((userPreferences.visibleColumns || []).includes(colName)) return;
-    const newCols = [...(userPreferences.visibleColumns || []), colName];
+    const baseCols = (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared))
+      ? [...userPreferences.visibleColumns]
+      : [...columnsToDisplay];
+
+    if (baseCols.includes(colName)) return;
+    const newCols = [...baseCols, colName];
     handleSavePreferences({
       ...userPreferences,
       visibleColumns: newCols,
@@ -2702,36 +2723,23 @@ const GenericList = () => {
 
     if (!fromColName || !toColName || fromColName === toColName) return;
 
-    const currentDisplay = [...columnsToDisplay];
-    const fromIdx = currentDisplay.indexOf(fromColName);
-    const toIdx = currentDisplay.indexOf(toColName);
+    const baseCols = (Array.isArray(userPreferences.visibleColumns) && (userPreferences.visibleColumns.length > 0 || userPreferences.isExplicitlyCleared))
+      ? [...userPreferences.visibleColumns]
+      : [...columnsToDisplay];
+
+    const fromIdx = baseCols.indexOf(fromColName);
+    const toIdx = baseCols.indexOf(toColName);
 
     if (fromIdx === -1 || toIdx === -1) return;
 
-    const [removed] = currentDisplay.splice(fromIdx, 1);
-    currentDisplay.splice(toIdx, 0, removed);
+    const [removed] = baseCols.splice(fromIdx, 1);
+    baseCols.splice(toIdx, 0, removed);
 
-    // Atualiza imediatamente as colunas renderizadas na tela
-    setColumnsToDisplay(currentDisplay);
-
-    // Reordena nas preferências
-    const currentVisible = (userPreferences.visibleColumns && userPreferences.visibleColumns.length > 0)
-      ? userPreferences.visibleColumns
-      : columnsToDisplay;
-
-    const newVisible = [...currentVisible];
-    const visFromIdx = newVisible.indexOf(fromColName);
-    const visToIdx = newVisible.indexOf(toColName);
-
-    if (visFromIdx !== -1 && visToIdx !== -1) {
-      const [visRemoved] = newVisible.splice(visFromIdx, 1);
-      newVisible.splice(visToIdx, 0, visRemoved);
-    } else {
-      newVisible.length = 0;
-      newVisible.push(...currentDisplay);
-    }
-
-    handleSavePreferences({ ...userPreferences, visibleColumns: newVisible });
+    handleSavePreferences({
+      ...userPreferences,
+      visibleColumns: baseCols,
+      isExplicitlyCleared: false
+    });
   };
 
   const addQuickFilterField = (type) => {
