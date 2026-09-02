@@ -213,7 +213,16 @@ def reenviar_xml_shopee(
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
 
-    if not pedido.shopee_order_sn:
+    order_sn = getattr(pedido, 'shopee_order_sn', None)
+    if not order_sn and pedido.observacao:
+        import re
+        m = re.search(r"Pedido Shopee\s*([A-Za-z0-9]+)", pedido.observacao or "")
+        if m:
+            order_sn = m.group(1)
+            pedido.shopee_order_sn = order_sn
+            db.commit()
+
+    if not order_sn:
         raise HTTPException(status_code=400, detail="Este pedido não possui ID da Shopee (shopee_order_sn).")
 
     if not pedido.xml_autorizado:
@@ -221,10 +230,44 @@ def reenviar_xml_shopee(
 
     service = ShopeeService(db, current_user.id_empresa)
     res = service.upload_xml(
-        order_sn=pedido.shopee_order_sn,
+        order_sn=order_sn,
         xml_content=pedido.xml_autorizado,
         chave_acesso=pedido.chave_acesso,
         numero_nf=pedido.numero_nf
     )
 
-    return {"success": True, "message": "XML transmitido para a Shopee com sucesso!", "details": res}
+    if res.get("status") == "success":
+        return {"success": True, "message": res.get("message") or "XML transmitido para a Shopee com sucesso!", "details": res}
+    else:
+        return {"success": False, "message": res.get("message") or "Erro ao transmitir XML para a Shopee.", "details": res}
+
+
+@router.post("/shopee/pedidos/{pedido_id}/atualizar-status")
+def atualizar_status_pedido_shopee(
+    pedido_id: int,
+    target_status: str = Query(None, description="Status alvo opcional (ex: READY_TO_SHIP, PROCESSED, SHIPPED, COMPLETED)"),
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Sincroniza e força a atualização de status/despacho do pedido na Shopee OpenAPI v2.
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    service = ShopeeService(db, current_user.id_empresa)
+    res = service.update_shopee_order_status(pedido=pedido, target_status=target_status)
+
+    is_success = res.get("status") in ["success", "ok"]
+    return {
+        "success": is_success,
+        "message": res.get("message") or ("Status sincronizado com a Shopee com sucesso!" if is_success else "Falha ao sincronizar status na Shopee."),
+        "status_envio": getattr(pedido, 'shopee_order_status', None),
+        "tracking_number": getattr(pedido, 'shopee_tracking_number', None),
+        "details": res
+    }

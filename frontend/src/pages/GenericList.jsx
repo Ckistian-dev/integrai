@@ -23,6 +23,7 @@ import {
   Plus,
   Edit,
   Trash2,
+  Copy,
   FileDown,
   ChevronLeft,
   ChevronDown,
@@ -1286,6 +1287,13 @@ const GenericList = () => {
       toast.error(modelName === 'pedidos' ? 'Não foi possível cancelar o pedido.' : 'Não foi possível excluir o item.');
     } finally {
       setIsModalOpen(false); // Fecha o modal
+    }
+  };
+
+  const handleDuplicateClick = () => {
+    if (selectedRowId) {
+      const targetId = selectedItem?.id_sequencial ?? selectedRowId;
+      navigate(`/${modelName}/new?duplicate_from=${targetId}`);
     }
   };
 
@@ -3519,6 +3527,19 @@ const GenericList = () => {
                   PDF
                 </button>
               </div>
+            )}
+
+            {/* Botão Duplicar */}
+            {['usuarios', 'perfis', 'cadastros', 'produtos', 'embalagens', 'contas', 'classificacao_contabil', 'classificacoes_contabeis', 'tributacoes', 'relatorios'].includes(modelName) && canCreate && (
+              <button
+                onClick={handleDuplicateClick}
+                disabled={!selectedRowId}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium disabled:cursor-not-allowed"
+                title="Duplicar item selecionado"
+              >
+                <Copy size={16} className="mr-2" />
+                Duplicar
+              </button>
             )}
 
             {/* Botão Editar Atualizado */}

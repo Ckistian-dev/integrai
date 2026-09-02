@@ -1299,20 +1299,23 @@ class MeliService:
         Extrai os IDs do Mercado Livre do pedido (order_id, pack_id, shipment_id),
         com fallback inteligente para extração a partir do campo 'observacao'
         caso as colunas dedicadas ainda não tenham sido preenchidas.
+        Retorna uma lista de identificadores únicos com prioridade para shipment_id.
         """
-        ids = set()
-        if getattr(pedido, 'meli_order_id', None):
-            for part in str(pedido.meli_order_id).split(','):
-                clean = part.strip()
-                if clean:
-                    ids.add(clean)
+        ids = []
+        if getattr(pedido, 'meli_shipment_id', None):
+            s_id = str(pedido.meli_shipment_id).strip()
+            if s_id and s_id not in ids:
+                ids.append(s_id)
         if getattr(pedido, 'meli_pack_id', None):
             for part in str(pedido.meli_pack_id).split(','):
                 clean = part.strip()
-                if clean:
-                    ids.add(clean)
-        if getattr(pedido, 'meli_shipment_id', None):
-            ids.add(str(pedido.meli_shipment_id).strip())
+                if clean and clean not in ids:
+                    ids.append(clean)
+        if getattr(pedido, 'meli_order_id', None):
+            for part in str(pedido.meli_order_id).split(','):
+                clean = part.strip()
+                if clean and clean not in ids:
+                    ids.append(clean)
 
         # Fallback para parsing de observacao
         if not ids and getattr(pedido, 'observacao', None):
@@ -1321,10 +1324,12 @@ class MeliService:
             if m_pack_and_id:
                 pack_id = m_pack_and_id.group(1).strip()
                 order_id = m_pack_and_id.group(2).strip()
-                ids.add(pack_id)
+                if pack_id and pack_id not in ids:
+                    ids.append(pack_id)
                 for o_id in order_id.split(','):
-                    if o_id.strip():
-                        ids.add(o_id.strip())
+                    clean = o_id.strip()
+                    if clean and clean not in ids:
+                        ids.append(clean)
                 if not pedido.meli_pack_id:
                     pedido.meli_pack_id = pack_id
                 if not pedido.meli_order_id:
@@ -1334,15 +1339,17 @@ class MeliService:
                 if m_single_id:
                     order_id = m_single_id.group(1).strip()
                     for o_id in order_id.split(','):
-                        if o_id.strip():
-                            ids.add(o_id.strip())
+                        clean = o_id.strip()
+                        if clean and clean not in ids:
+                            ids.append(clean)
                     if not pedido.meli_order_id:
                         pedido.meli_order_id = order_id
                 else:
                     m_generic_id = re.search(r"(?:Pedido|ID ML:?)\s*(\d{15,})", obs)
                     if m_generic_id:
                         order_id = m_generic_id.group(1).strip()
-                        ids.add(order_id)
+                        if order_id not in ids:
+                            ids.append(order_id)
                         if not pedido.meli_order_id:
                             pedido.meli_order_id = order_id
 
@@ -1365,25 +1372,42 @@ class MeliService:
                 except Exception:
                     pass
 
-        return list(ids)
+        return ids
 
-    async def update_shipment_status_by_order(self, order_id_ml: str, erp_status: str, tracking_number: str = None, target_ml_status: str = None, pedido = None):
+    async def update_shipment_status_by_order(
+        self,
+        order_id_ml: str,
+        erp_status: str,
+        tracking_number: str = None,
+        target_ml_status: str = None,
+        pedido = None,
+        processed_shipments: set = None
+    ):
         """
-        Busca a shipment associada ao pedido no ML e atualiza seu status.
+        Busca a shipment associada ao pedido no ML e atualiza seu status (tanto no cabeçalho quanto na timeline do ML).
         Utiliza _resolve_all_ml_ids para tratar tanto order_id quanto pack_id e shipment_id.
+        Implementa estratégias adaptativas de envio (PUT com service_id, tracking_number e status).
         """
+        client = None
         try:
             client = await self.get_client()
             
-            # 1. Resolve o shipment_id a partir do ID fornecido (suporta order_id, pack_id e shipment_id)
+            # 1. Resolve o shipment_id e order_id a partir do ID fornecido (suporta order_id, pack_id e shipment_id)
             resolved = await self._resolve_all_ml_ids(client, order_id_ml)
             shipment_id = resolved.get("shipment_id")
+            resolved_order_id = resolved.get("order_id") or order_id_ml
             
             if not shipment_id:
                 logger.warning(f"ID Mercado Livre {order_id_ml} não possui shipment_id associado.")
                 return False
+
+            if processed_shipments is not None:
+                if str(shipment_id) in processed_shipments:
+                    logger.debug(f"Envio {shipment_id} já foi processado nesta execução. Ignorando chamada redundante.")
+                    return True
+                processed_shipments.add(str(shipment_id))
                 
-            # 2. Busca dados do envio para verificar a modalidade logística
+            # 2. Busca dados do envio para verificar status atual e modalidade
             ship_resp = await client.get(f"{self.base_url}/shipments/{shipment_id}")
             if ship_resp.status_code != 200:
                 logger.error(f"Erro ao buscar envio {shipment_id}: {ship_resp.status_code} - {ship_resp.text}")
@@ -1409,82 +1433,182 @@ class MeliService:
                 except Exception:
                     pass
 
-            # Verificação de modalidade manual (ME1 / Custom Shipping / Frete Próprio)
-            # ME1 tem mode='me1' e logistic_type='default'
-            is_manual_mode = (
-                mode in ['me1', 'custom', 'not_specified'] or 
-                logistic_type in ['custom', 'not_specified'] or 
-                not mode
-            )
-            
-            if not is_manual_mode:
-                logger.info(f"Envio {shipment_id} utiliza Mercado Envios 2 ({logistic_type}/{mode}). A mudança para 'a caminho' e 'entregue' ocorre via leitura/bip da agência/coleta do ML e baixa da transportadora.")
-                return True
-                
-            # Mapeamento e atualização para envios manuais / ME1
+            # Mapeamento do status alvo
             new_ml_status = target_ml_status
             if not new_ml_status:
                 erp_status_lower = (erp_status or "").lower()
-                if erp_status_lower in ['despachado', 'em transito', 'em trânsito', 'shipped']:
+                if any(x in erp_status_lower for x in ['despachado', 'em transito', 'em trânsito', 'shipped', 'a caminho']):
                     new_ml_status = 'shipped'
-                elif erp_status_lower in ['faturamento', 'expedicao', 'expedição', 'embalagem', 'produção', 'producao']:
+                elif any(x in erp_status_lower for x in ['faturamento', 'expedicao', 'expedição', 'embalagem', 'produção', 'producao', 'preparacao']):
                     if current_status in ['pending', 'handling']:
                         new_ml_status = 'handling'
-                elif erp_status_lower in ['finalizado', 'entregue', 'delivered']:
+                elif any(x in erp_status_lower for x in ['finalizado', 'entregue', 'delivered']):
                     new_ml_status = 'delivered'
                         
             if not new_ml_status:
                 logger.debug(f"Nenhum status correspondente para atualizar no ML para o status ERP {erp_status}.")
                 return False
-                
-            if current_status == new_ml_status and not tracking_number:
-                logger.info(f"Envio {shipment_id} já está no status {new_ml_status}.")
+
+            # Validação de transição de status no Mercado Livre
+            if current_status == new_ml_status:
+                logger.info(f"Envio {shipment_id} já está no status '{new_ml_status}'. Nenhuma alteração necessária.")
                 return True
-                
-            # 3. Executa a atualização do status e rastreio do envio (ME1 / Custom)
-            payload = {"status": new_ml_status}
-            if tracking_number:
-                payload["tracking_number"] = tracking_number
 
-            # Se for ME1 / Custom, o Mercado Livre exige obrigatoriamente 'service_id' para marcar como shipped
-            if mode == 'me1' or logistic_type in ['default', 'custom']:
-                existing_service_id = shipment_details.get('service_id')
-                if existing_service_id:
-                    payload["service_id"] = existing_service_id
+            if current_status in ['shipped', 'delivered'] and new_ml_status == 'shipped':
+                logger.info(f"Envio {shipment_id} já se encontra em trânsito/entregue ({current_status}). Ignorando envio redundante de status 'shipped'.")
+                return True
+
+            if current_status == 'delivered' and new_ml_status in ['shipped', 'handling']:
+                logger.info(f"Envio {shipment_id} já está finalizado como 'delivered'. Não é permitido retroceder para '{new_ml_status}'.")
+                return True
+
+            if current_status in ['cancelled', 'not_delivered']:
+                logger.warning(f"Envio {shipment_id} está no status terminal '{current_status}'. Atualização para '{new_ml_status}' não permitida.")
+                return False
+
+            # Resolução robusta de service_id (obrigatório para transição 'shipped' no ML)
+            service_id = shipment_details.get('service_id')
+            if not service_id:
+                shipping_opt_name = str(shipment_details.get('shipping_option', {}).get('name') or '').lower()
+                shipping_method_id = shipment_details.get('shipping_option', {}).get('shipping_method_id')
+                if "expresso" in shipping_opt_name or shipping_method_id == 182:
+                    service_id = 22  # Sedex / Expresso
                 else:
-                    shipping_opt_name = str(shipment_details.get('shipping_option', {}).get('name') or '').lower()
-                    shipping_method_id = shipment_details.get('shipping_option', {}).get('shipping_method_id')
-                    if "expresso" in shipping_opt_name or shipping_method_id == 182:
-                        payload["service_id"] = 22  # Sedex / Expresso
-                    else:
-                        payload["service_id"] = 21  # PAC / Normal (Padrão ME1 MLB)
+                    service_id = 21  # PAC / Normal (Padrão ME1 MLB)
 
-            logger.info(f"Enviando atualização para envio {shipment_id}: {payload}")
-            url = f"{self.base_url}/shipments/{shipment_id}"
-            resp = await client.put(url, json=payload)
+            # Resolução robusta de tracking_number
+            track_code = tracking_number or shipment_details.get('tracking_number')
+            if not track_code and pedido:
+                track_code = (
+                    getattr(pedido, 'meli_tracking_number', None) or 
+                    getattr(pedido, 'intelipost_tracking_code', None) or
+                    getattr(pedido, 'numero_nf', None) or
+                    getattr(pedido, 'chave_acesso', None) or
+                    f"ERP-{getattr(pedido, 'id_sequencial', getattr(pedido, 'id', '0'))}"
+                )
+            if not track_code:
+                track_code = f"ML{order_id_ml}"
+            track_code = str(track_code).strip()
+
+            url_shipment = f"{self.base_url}/shipments/{shipment_id}"
             
-            if resp.status_code in [200, 201]:
-                logger.info(f"Status do envio {shipment_id} atualizado com sucesso para {new_ml_status}!")
+            # Helper para tentar PUT e verificar sucesso
+            async def _try_put_payload(payload_dict: dict, description: str) -> bool:
+                logger.info(f"Tentativa ({description}) para envio {shipment_id}: {payload_dict}")
+                try:
+                    resp = await client.put(url_shipment, json=payload_dict)
+                    if resp.status_code in [200, 201]:
+                        logger.info(f"✅ Sucesso na atualização do envio {shipment_id} ({description})!")
+                        return True
+                    else:
+                        logger.warning(f"Tentativa ({description}) recusada ({resp.status_code}): {resp.text}")
+                        return False
+                except Exception as put_err:
+                    logger.warning(f"Exceção na tentativa ({description}): {put_err}")
+                    return False
+
+            update_success = False
+
+            # --- FLUXO 1: ATUALIZAÇÃO PARA 'shipped' (A caminho / Em trânsito) ---
+            if new_ml_status == 'shipped':
+                # Estratégia 1: status + tracking_number + service_id (Padrão mais completo da API do ML)
+                p1 = {"status": "shipped", "tracking_number": track_code, "service_id": int(service_id)}
+                update_success = await _try_put_payload(p1, "status + tracking + service_id")
+
+                # Estratégia 2: status + tracking_number (sem service_id)
+                if not update_success:
+                    p2 = {"status": "shipped", "tracking_number": track_code}
+                    update_success = await _try_put_payload(p2, "status + tracking")
+
+                # Estratégia 3: tracking_number + service_id (em algumas contas o ML auto-transiciona ao gravar rastreio)
+                if not update_success:
+                    p3 = {"tracking_number": track_code, "service_id": int(service_id)}
+                    update_success = await _try_put_payload(p3, "tracking + service_id")
+
+                # Estratégia 4: status puro
+                if not update_success:
+                    p4 = {"status": "shipped"}
+                    update_success = await _try_put_payload(p4, "status puro")
+
+            # --- FLUXO 2: ATUALIZAÇÃO PARA 'delivered' (Entregue) ---
+            elif new_ml_status == 'delivered':
+                # Se ainda estiver em preparação, transiciona para shipped primeiro se necessário
+                if current_status in ['pending', 'handling', 'ready_to_ship']:
+                    logger.info(f"Envio {shipment_id} está em '{current_status}'. Transicionando para 'shipped' antes de finalizar como 'delivered'.")
+                    await _try_put_payload({"status": "shipped", "tracking_number": track_code, "service_id": int(service_id)}, "pre-delivered: shipped")
+
+                # Estratégia 1: status delivered direto
+                update_success = await _try_put_payload({"status": "delivered"}, "status delivered")
+
+                # Estratégia 2: status delivered com data
+                if not update_success:
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    update_success = await _try_put_payload({"status": "delivered", "date_delivered": now_iso}, "status delivered com data")
+
+                # Estratégia 3: Feedback/Fulfillment na Order (confirma entrega da venda)
+                if resolved_order_id:
+                    try:
+                        url_feedback = f"{self.base_url}/orders/{resolved_order_id}/feedback"
+                        fb_payload = {
+                            "fulfilled": True,
+                            "rating": "positive",
+                            "message": "Pedido entregue com sucesso ao comprador."
+                        }
+                        fb_resp = await client.post(url_feedback, json=fb_payload)
+                        if fb_resp.status_code in [200, 201]:
+                            logger.info(f"✅ Feedback de entrega registrado para a venda {resolved_order_id}!")
+                            update_success = True
+                    except Exception as fb_err:
+                        logger.debug(f"Tentativa de feedback para pedido {resolved_order_id}: {fb_err}")
+
+            # --- FLUXO 3: ATUALIZAÇÃO PARA 'handling' (Em preparação) ---
+            elif new_ml_status == 'handling':
+                if current_status == 'pending':
+                    update_success = await _try_put_payload({"status": "handling"}, "status handling")
+                else:
+                    update_success = True
+
+            # Se atualizou com sucesso, grava dados e datas no banco local
+            if update_success:
+                logger.info(f"Status do envio {shipment_id} atualizado com sucesso para '{new_ml_status}'!")
                 if pedido:
                     pedido.meli_status_envio = new_ml_status
+                    if track_code and not pedido.meli_tracking_number:
+                        pedido.meli_tracking_number = track_code
+                    if new_ml_status == 'shipped':
+                        if not pedido.data_despacho:
+                            pedido.data_despacho = datetime.now(timezone.utc).date()
+                    elif new_ml_status == 'delivered':
+                        if not pedido.data_entrega:
+                            pedido.data_entrega = datetime.now(timezone.utc).date()
+                        if not pedido.data_finalizacao:
+                            pedido.data_finalizacao = datetime.now(timezone.utc).date()
                     try:
                         self.db.add(pedido)
                         self.db.commit()
+                        self.db.refresh(pedido)
                     except Exception:
                         pass
                 return True
             else:
-                logger.error(f"Erro ao atualizar status do envio {shipment_id}: {resp.status_code} - {resp.text}")
+                logger.error(f"Não foi possível atualizar o envio {shipment_id} para '{new_ml_status}' após todas as estratégias.")
                 return False
                 
         except Exception as e:
             logger.exception(f"Erro ao atualizar status de envio no Mercado Livre: {e}")
             return False
+        finally:
+            if client:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
 
     async def update_meli_order_status(self, pedido):
         """
         Atualiza o status dos envios no Mercado Livre associados a um pedido do ERP.
         Utiliza os campos dedicados com fallback para parsing da observação.
+        Mapeia tanto a situacao do pedido quanto o status de rastreio (Intelipost/Transportadora).
         """
         import unicodedata
         
@@ -1500,13 +1624,19 @@ class MeliService:
             return False
             
         situacao_para_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
+        status_intelipost_str = str(getattr(pedido, 'status_intelipost', '') or '')
+        
+        # Resolução multinível do código de rastreamento
         tracking_number = (
             getattr(pedido, 'meli_tracking_number', None) or 
             getattr(pedido, 'intelipost_tracking_code', None) or
-            getattr(pedido, 'numero_nf', None)
+            getattr(pedido, 'numero_nf', None) or
+            getattr(pedido, 'chave_acesso', None)
         )
+        if not tracking_number and getattr(pedido, 'id_sequencial', None):
+            tracking_number = f"ERP-{pedido.id_sequencial}"
 
-        # Avaliação de Regras da MeliConfiguracao (se houver)
+        # 1. Avaliação de Regras Customizadas da MeliConfiguracao (se houver)
         target_ml_status = None
         regras = getattr(self.config, 'regras_atualizacao_status', None) or []
         if isinstance(regras, list):
@@ -1523,7 +1653,6 @@ class MeliService:
                         val_atual = val_atual.name
                     val_atual_norm = normalize_str(val_atual)
                     
-                    # Match exato ou equivalências semânticas
                     matched = False
                     if val_atual_norm == valor_esperado_norm:
                         matched = True
@@ -1531,20 +1660,55 @@ class MeliService:
                         matched = True
                     elif valor_esperado_norm in ["em transito", "shipped", "despachado", "a caminho"] and val_atual_norm in ["em transito", "shipped", "despachado", "a caminho"]:
                         matched = True
-                    elif valor_esperado_norm in ["faturamento", "handling"] and val_atual_norm in ["faturamento", "handling"]:
+                    elif valor_esperado_norm in ["faturamento", "handling", "preparacao", "em preparacao"] and val_atual_norm in ["faturamento", "handling", "preparacao", "em preparacao"]:
                         matched = True
 
                     if matched:
                         target_ml_status = status_alvo_ml
                         logger.info(f"Regra ML casou! Coluna '{coluna}' = '{val_atual}' -> Status ML: '{target_ml_status}'")
                         break
+
+        # 2. Mapeamento Automático Padrão caso nenhuma regra tenha definido target_ml_status
+        if not target_ml_status:
+            sit_norm = normalize_str(situacao_para_str)
+            inteli_norm = normalize_str(status_intelipost_str)
             
-        logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str}) -> IDs ML: {ml_order_ids} | Status ML Alvo: {target_ml_status or 'Auto/Padrão'}")
+            # Prioridade para Entregue / Delivered
+            if sit_norm in ['finalizado', 'entregue', 'delivered'] or inteli_norm in ['delivered', 'entregue']:
+                target_ml_status = 'delivered'
+            # Prioridade para Despachado / Em trânsito / Shipped / A caminho
+            elif sit_norm in ['despachado', 'em transito', 'shipped', 'a caminho'] or inteli_norm in ['shipped', 'in_transit', 'in transit', 'out_for_delivery', 'despachado', 'em transito']:
+                target_ml_status = 'shipped'
+            # Em preparação / handling
+            elif sit_norm in ['faturamento', 'expedicao', 'embalagem', 'producao', 'handling', 'em preparacao'] or inteli_norm in ['created', 'ready_for_shipping', 'label_created']:
+                target_ml_status = 'handling'
+
+        logger.info(f"Atualizando status no Mercado Livre para pedido ERP #{pedido.id} ({situacao_para_str} / Intelipost: {status_intelipost_str}) -> IDs ML: {ml_order_ids} | Status ML Alvo: {target_ml_status or 'Auto/Padrão'}")
         
+        # Se meli_shipment_id já está definido no pedido, atualiza apenas ele diretamente
+        if getattr(pedido, 'meli_shipment_id', None):
+            return await self.update_shipment_status_by_order(
+                str(pedido.meli_shipment_id).strip(),
+                situacao_para_str,
+                tracking_number,
+                target_ml_status=target_ml_status,
+                pedido=pedido
+            )
+
         success = True
+        processed_shipments = set()
         for ml_order_id in ml_order_ids:
-            res = await self.update_shipment_status_by_order(ml_order_id, situacao_para_str, tracking_number, target_ml_status=target_ml_status, pedido=pedido)
-            if not res:
+            res = await self.update_shipment_status_by_order(
+                ml_order_id,
+                situacao_para_str,
+                tracking_number,
+                target_ml_status=target_ml_status,
+                pedido=pedido,
+                processed_shipments=processed_shipments
+            )
+            if res:
+                return True
+            else:
                 success = False
         return success
 

@@ -30,6 +30,13 @@ def run_one_time_id_sequencial_migration(engine: Engine, base):
         "opcoes_campos", "relatorios", "nfe_recebidas"
     ]
 
+    # Inclui dinamicamente qualquer tabela dos modelos que possua id_empresa ou id_sequencial
+    if base and hasattr(base, 'metadata') and hasattr(base.metadata, 'tables'):
+        for tbl_name, tbl_obj in base.metadata.tables.items():
+            if "id_empresa" in tbl_obj.columns or "id_sequencial" in tbl_obj.columns:
+                if tbl_name not in tenant_tables:
+                    tenant_tables.append(tbl_name)
+
     fk_mappings = [
         ("usuarios",             "id_perfil",                          "perfil"),
         ("produtos",             "id_embalagem",                       "embalagens"),
@@ -160,6 +167,9 @@ def run_one_time_id_sequencial_migration(engine: Engine, base):
     except Exception as e:
         logger.error(f"[MIGRAÇÃO] FASE 2 falhou: {e}")
         return
+
+    # Garante que as Unique Constraints estejam criadas antes de qualquer operação de FK
+    ensure_unique_constraints(engine)
 
     # =========================================================================
     # FASE 3: Migra FKs de .id -> .id_sequencial (roda UMA VEZ via schema_migrations)
@@ -375,6 +385,131 @@ def _migrate_fks_with_constraint_drop(engine, inspector, existing_tables, fk_map
         return False
 
 
+def ensure_unique_constraints(engine: Engine, base=None):
+    """
+    Garante que todas as tabelas tenant com id_empresa e id_sequencial
+    possuam uma constraint UNIQUE (id_empresa, id_sequencial).
+    Isso é PRÉ-REQUISITO OBRIGATÓRIO no PostgreSQL para a criação de Foreign Keys compostas.
+    """
+    logger.info("[MIGRAÇÃO] Garantindo constraints UNIQUE (id_empresa, id_sequencial)...")
+
+    unique_tables = [
+        ("perfil", "uq_perfil_empresa_sequencial"),
+        ("usuarios", "uq_usuarios_empresa_sequencial"),
+        ("cadastros", "uq_cadastros_empresa_sequencial"),
+        ("embalagens", "uq_embalagens_empresa_sequencial"),
+        ("produtos", "uq_produtos_empresa_sequencial"),
+        ("contas", "uq_contas_empresa_sequencial"),
+        ("estoque", "uq_estoque_empresa_sequencial"),
+        ("pedidos", "uq_pedidos_empresa_sequencial"),
+        ("regras_tributarias", "uq_regras_tributarias_empresa_sequencial"),
+        ("classificacao_contabil", "uq_classificacao_contabil_empresa_sequencial"),
+        ("intelipost_configuracoes", "uq_intelipost_configuracoes_empresa_sequencial"),
+        ("meli_configuracoes", "uq_meli_configuracoes_empresa_sequencial"),
+        ("magento_configuracoes", "uq_magento_configuracoes_empresa_sequencial"),
+        ("tiktok_configuracoes", "uq_tiktok_configuracoes_empresa_sequencial"),
+        ("shopee_configuracoes", "uq_shopee_configuracoes_empresa_sequencial"),
+        ("elastic_email_configuracoes", "uq_elastic_email_configuracoes_empresa_sequencial"),
+        ("atendai_configuracoes", "uq_atendai_configuracoes_empresa_sequencial"),
+        ("outras_empresas_configuracoes", "uq_outras_empresas_configuracoes_empresa_sequencial"),
+        ("email_regras", "uq_email_regras_empresa_sequencial"),
+        ("opcoes_campos", "uq_opcoes_campos_empresa_sequencial"),
+        ("relatorios", "uq_relatorios_empresa_sequencial"),
+        ("nfe_recebidas", "uq_nfe_recebidas_empresa_sequencial"),
+    ]
+
+    if base and hasattr(base, 'metadata') and hasattr(base.metadata, 'tables'):
+        existing_names = {t[0] for t in unique_tables}
+        for tbl_name, tbl_obj in base.metadata.tables.items():
+            if "id_empresa" in tbl_obj.columns and "id_sequencial" in tbl_obj.columns and tbl_name not in existing_names:
+                unique_tables.append((tbl_name, f"uq_{tbl_name}_empresa_sequencial"))
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for tbl, cname in unique_tables:
+        if tbl not in existing_tables:
+            continue
+
+        try:
+            cols = {c["name"].lower() for c in inspector.get_columns(tbl)}
+            if "id_empresa" not in cols or "id_sequencial" not in cols:
+                continue
+
+            with engine.begin() as conn:
+                # 1. Verifica se já existe constraint UNIQUE ou PRIMARY KEY em (id_empresa, id_sequencial)
+                has_uq = conn.execute(text("""
+                    SELECT c.conname
+                    FROM pg_constraint c
+                    JOIN pg_class conrel ON conrel.oid = c.conrelid
+                    JOIN pg_namespace ns ON ns.oid = conrel.relnamespace
+                    WHERE c.contype IN ('u', 'p')
+                      AND ns.nspname = 'public'
+                      AND conrel.relname = :tbl
+                      AND (
+                          SELECT array_agg(att.attname::text ORDER BY u.attpos)
+                          FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, attpos)
+                          JOIN pg_attribute att ON att.attrelid = conrel.oid AND att.attnum = u.attnum
+                      ) = ARRAY['id_empresa', 'id_sequencial']::text[]
+                """), {"tbl": tbl}).fetchone()
+
+                if has_uq:
+                    continue
+
+                # 2. Preenche eventuais id_sequencial NULL
+                conn.execute(text(f"""
+                    WITH max_seqs AS (
+                        SELECT id_empresa, COALESCE(MAX(id_sequencial), 0) AS max_s
+                        FROM "{tbl}"
+                        GROUP BY id_empresa
+                    ),
+                    null_rows AS (
+                        SELECT id, id_empresa,
+                               ROW_NUMBER() OVER (PARTITION BY id_empresa ORDER BY id) AS rn
+                        FROM "{tbl}"
+                        WHERE id_sequencial IS NULL
+                    )
+                    UPDATE "{tbl}" t
+                    SET id_sequencial = COALESCE(m.max_s, 0) + nr.rn
+                    FROM null_rows nr
+                    LEFT JOIN max_seqs m ON nr.id_empresa = m.id_empresa
+                    WHERE t.id = nr.id
+                """))
+
+                # 3. Verifica e resolve duplicatas se houver
+                dup_check = conn.execute(text(f"""
+                    SELECT id_empresa, id_sequencial
+                    FROM "{tbl}"
+                    WHERE id_sequencial IS NOT NULL
+                    GROUP BY id_empresa, id_sequencial
+                    HAVING COUNT(*) > 1
+                    LIMIT 1
+                """)).fetchone()
+
+                if dup_check:
+                    logger.warning(f"[MIGRAÇÃO] Duplicatas de id_sequencial detectadas em '{tbl}'. Corrigindo sequencial...")
+                    conn.execute(text(f"""
+                        WITH renumbered AS (
+                            SELECT id, ROW_NUMBER() OVER (PARTITION BY id_empresa ORDER BY id) AS rn
+                            FROM "{tbl}"
+                        )
+                        UPDATE "{tbl}" t
+                        SET id_sequencial = r.rn
+                        FROM renumbered r
+                        WHERE t.id = r.id
+                    """))
+
+                # 4. Adiciona a constraint UNIQUE
+                logger.info(f"[MIGRAÇÃO] Criando constraint UNIQUE '{cname}' em '{tbl}' (id_empresa, id_sequencial)...")
+                conn.execute(text(f"""
+                    ALTER TABLE "{tbl}"
+                    ADD CONSTRAINT "{cname}" UNIQUE ("id_empresa", "id_sequencial")
+                """))
+                logger.info(f"[MIGRAÇÃO] Constraint UNIQUE '{cname}' criada com sucesso em '{tbl}'.")
+        except Exception as e:
+            logger.warning(f"[MIGRAÇÃO] Não foi possível criar UNIQUE constraint '{cname}' em '{tbl}': {e}")
+
+
 def fix_legacy_foreign_keys(engine: Engine):
     """
     Inspeciona e remove constraints monocoluna legadas (apontando para cadastros.id, etc.)
@@ -382,6 +517,9 @@ def fix_legacy_foreign_keys(engine: Engine):
     """
     logger.info("[MIGRAÇÃO] Verificando e corrigindo FKs monocoluna legadas...")
     
+    # Garante que as Unique Constraints estejam criadas antes de aplicar as FKs
+    ensure_unique_constraints(engine)
+
     legacy_constraint_names = [
         ("contas", "contas_id_fornecedor_fkey"),
         ("contas", "contas_id_classificacao_contabil_fkey"),
@@ -430,6 +568,38 @@ def fix_legacy_foreign_keys(engine: Engine):
     except Exception as e:
         logger.debug(f"[MIGRAÇÃO] Varredura dinâmica de FKs monocoluna: {e}")
 
+    # 2b. Converte a coluna usuarios.id_perfil de VARCHAR para INTEGER se necessário
+    try:
+        with engine.begin() as conn:
+            col_type_res = conn.execute(text("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name = 'usuarios' AND column_name = 'id_perfil' AND table_schema = 'public'
+            """)).scalar()
+
+            if col_type_res and ('character' in col_type_res.lower() or col_type_res in ['text', 'varchar']):
+                logger.info("[MIGRAÇÃO] Convertendo coluna 'usuarios.id_perfil' de VARCHAR para INTEGER...")
+                
+                # Se houver nomes de perfis (ex: 'admin', 'vendedor'), tenta mapear para o id_sequencial do perfil correspondente
+                conn.execute(text("""
+                    UPDATE "usuarios" u
+                    SET "id_perfil" = p.id_sequencial::VARCHAR
+                    FROM "perfil" p
+                    WHERE u.id_empresa = p.id_empresa
+                      AND LOWER(TRIM(u."id_perfil")) = LOWER(TRIM(p.nome))
+                      AND u."id_perfil" !~ '^[0-9]+$'
+                """))
+
+                # Converte a coluna para INTEGER
+                conn.execute(text("""
+                    ALTER TABLE "usuarios" 
+                    ALTER COLUMN "id_perfil" TYPE INTEGER 
+                    USING (CASE WHEN "id_perfil" ~ '^[0-9]+$' THEN "id_perfil"::INTEGER ELSE NULL END)
+                """))
+                logger.info("[MIGRAÇÃO] Coluna 'usuarios.id_perfil' convertida para INTEGER com sucesso!")
+    except Exception as conv_err:
+        logger.warning(f"[MIGRAÇÃO] Aviso ao converter usuarios.id_perfil para INTEGER: {conv_err}")
+
     # 3. Garante as novas FKs compostas (uma transação isolada por tabela/coluna)
     fk_configs = [
         ("pedidos", "id_transportadora", "cadastros", "fk_pedidos_transportadora_empresa_seq", "SET NULL"),
@@ -455,6 +625,18 @@ def fix_legacy_foreign_keys(engine: Engine):
                 """), {"tbl": tbl, "cname": new_constraint_name}).fetchone()
 
                 if not check_new:
+                    # Limpa referências órfãs se on_delete for SET NULL
+                    if on_delete == "SET NULL":
+                        conn.execute(text(f"""
+                            UPDATE "{tbl}" s
+                            SET "{col_name}" = NULL
+                            WHERE s."{col_name}" IS NOT NULL
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM "{target_tbl}" t
+                                  WHERE t.id_empresa = s.id_empresa AND t.id_sequencial = s."{col_name}"
+                              )
+                        """))
+
                     logger.info(f"[MIGRAÇÃO] Criando FK composta '{new_constraint_name}' em '{tbl}' ({col_name} -> {target_tbl}.id_sequencial)...")
                     conn.execute(text(f"""
                         ALTER TABLE "{tbl}"
@@ -551,60 +733,152 @@ def backfill_meli_fields_from_observacao(engine: Engine):
         logger.error(f"[BACKFILL MELI] Erro durante backfill de campos do ML: {e}")
 
 
+def sync_missing_columns_and_enums(engine: Engine, base):
+    """
+    Sincroniza automaticamente todos os tipos ENUM e todas as novas colunas
+    definidas nos modelos SQLAlchemy (base.metadata) com o PostgreSQL.
+    Executa cada adição de coluna em transação isolada para máxima resiliência.
+    """
+    logger.info("[SYNC] Verificando e sincronizando novas colunas e enums no banco de dados...")
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    # 1. Sincronização de tipos ENUM no PostgreSQL
+    for table_name, table in base.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue
+
+        for column in table.columns:
+            col_type = column.type
+            enum_class = getattr(col_type, 'enum_class', None)
+            enum_name = getattr(col_type, 'name', None)
+            enums_values = getattr(col_type, 'enums', None)
+
+            if enum_class or enums_values:
+                vals = [e.value if hasattr(e, 'value') else str(e) for e in (enum_class or enums_values)]
+                e_name = enum_name or (enum_class.__name__.lower() if enum_class else f"{table_name}_{column.name}_enum")
+                
+                try:
+                    with engine.begin() as conn:
+                        type_exists = conn.execute(
+                            text("SELECT 1 FROM pg_type WHERE typname = :tname"),
+                            {"tname": e_name}
+                        ).scalar()
+                        
+                        if not type_exists:
+                            vals_escaped = ", ".join(f"'{v}'" for v in vals)
+                            conn.execute(text(f'CREATE TYPE "{e_name}" AS ENUM ({vals_escaped})'))
+                            logger.info(f"[SYNC] Novo tipo ENUM '{e_name}' criado no PostgreSQL.")
+                        else:
+                            for v in vals:
+                                try:
+                                    conn.execute(text(f'ALTER TYPE "{e_name}" ADD VALUE IF NOT EXISTS \'{v}\''))
+                                except Exception:
+                                    pass
+                except Exception as enum_err:
+                    logger.debug(f"[SYNC] Aviso na sincronização do enum '{e_name}': {enum_err}")
+
+    # 2. Sincronização de Novas Colunas em todas as tabelas
+    added_count = 0
+    inspector = inspect(engine)
+    for table_name, table in base.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue
+
+        try:
+            existing_columns = {col["name"].lower() for col in inspector.get_columns(table_name)}
+        except Exception as insp_err:
+            logger.warning(f"[SYNC] Falha ao inspecionar colunas de '{table_name}': {insp_err}")
+            continue
+
+        for column in table.columns:
+            col_name = column.name
+            if col_name.lower() not in existing_columns:
+                logger.info(f"[SYNC] Nova coluna detectada: '{table_name}.{col_name}'. Adicionando ao banco...")
+                try:
+                    # Compila o tipo PostgreSQL
+                    try:
+                        compiled_type = column.type.compile(engine.dialect)
+                    except Exception:
+                        compiled_type = "TEXT"
+
+                    # Monta cláusula DEFAULT se houver
+                    default_clause = ""
+                    if column.server_default is not None:
+                        default_clause = f" DEFAULT {column.server_default.arg}"
+                    elif column.default is not None and getattr(column.default, 'is_scalar', False):
+                        val = column.default.arg
+                        if isinstance(val, bool):
+                            default_clause = f" DEFAULT {'true' if val else 'false'}"
+                        elif isinstance(val, (int, float)):
+                            default_clause = f" DEFAULT {val}"
+                        elif isinstance(val, str):
+                            default_clause = f" DEFAULT '{val}'"
+
+                    alter_sql = f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS "{col_name}" {compiled_type}{default_clause}'
+                    
+                    with engine.begin() as conn:
+                        conn.execute(text(alter_sql))
+                    
+                    logger.info(f"[SYNC] ✔ Coluna '{table_name}.{col_name}' ({compiled_type}) adicionada com sucesso!")
+                    added_count += 1
+                except Exception as col_err:
+                    logger.error(f"[SYNC] ✖ Erro ao adicionar '{table_name}.{col_name}': {col_err}. Tentando fallback...")
+                    try:
+                        # Fallback seguro para JSONB ou TEXT
+                        fallback_type = "JSONB" if "json" in str(column.type).lower() else "TEXT"
+                        with engine.begin() as conn:
+                            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS "{col_name}" {fallback_type}'))
+                        logger.info(f"[SYNC] ✔ Coluna '{table_name}.{col_name}' adicionada via fallback ({fallback_type}).")
+                        added_count += 1
+                    except Exception as fb_err:
+                        logger.error(f"[SYNC] Falha no fallback para '{table_name}.{col_name}': {fb_err}")
+
+    if added_count > 0:
+        logger.info(f"[SYNC] Sincronização de colunas concluída: {added_count} nova(s) coluna(s) adicionada(s) ao banco!")
+    else:
+        logger.info("[SYNC] Todas as colunas dos modelos estão sincronizadas no banco de dados.")
+
+
 def sync_database_schema(engine: Engine, base):
     """
     Inspeciona todas as tabelas registradas no SQLAlchemy Base.metadata.
-    Adiciona colunas faltantes automaticamente e executa backfills necessários.
+    Adiciona colunas faltantes e ENUMs automaticamente, garante constraints e executa backfills necessários.
     """
-    logger.info("[SYNC] Iniciando sincronização do banco de dados...")
+    logger.info("[SYNC] Iniciando sincronização do banco de dados no startup...")
 
     try:
-        # 1. Cria tabelas novas
+        # 1. Cria tabelas novas declaradas nos modelos
         base.metadata.create_all(bind=engine)
 
-        # 2. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
+        # 2. Sincroniza todas as novas colunas e ENUMs imediatamente (prioridade máxima)
+        try:
+            sync_missing_columns_and_enums(engine, base)
+        except Exception as col_sync_err:
+            logger.error(f"[SYNC] Erro na sincronização de colunas/enums: {col_sync_err}")
+
+        # 3. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
         try:
             run_one_time_id_sequencial_migration(engine, base)
         except Exception as mig_err:
             logger.error(f"[SYNC] Migração id_sequencial falhou: {mig_err}. Continuando sync...")
 
-        # 2b. Corrige FKs legadas para garantir FKs compostas (id_empresa, id_sequencial)
+        # 4. Corrige FKs legadas para garantir FKs compostas (id_empresa, id_sequencial)
         try:
             fix_legacy_foreign_keys(engine)
         except Exception as fk_err:
             logger.error(f"[SYNC] Correção de FKs legadas falhou: {fk_err}")
 
-        # 3. Sync de colunas faltantes (safety net)
-        inspector = inspect(engine)
-        existing_tables = set(inspector.get_table_names())
-
-        for table_name, table in base.metadata.tables.items():
-            if table_name not in existing_tables:
-                continue
-            existing_columns = {col["name"].lower() for col in inspector.get_columns(table_name)}
-            for column in table.columns:
-                col_name = column.name
-                if col_name.lower() not in existing_columns:
-                    logger.info(f"[SYNC] Coluna faltante: '{table_name}.{col_name}'. Adicionando...")
-                    try:
-                        compiled_type = column.type.compile(engine.dialect)
-                        with engine.begin() as conn:
-                            conn.execute(text(
-                                f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS "{col_name}" {compiled_type}'
-                            ))
-                        logger.info(f"[SYNC] '{table_name}.{col_name}' ({compiled_type}) adicionada.")
-                    except Exception as col_err:
-                        logger.error(f"[SYNC] Erro em '{table_name}.{col_name}': {col_err}")
-
-        # 4. Backfill de campos Mercado Livre estruturados
+        # 5. Backfill de campos Mercado Livre estruturados
         try:
             backfill_meli_fields_from_observacao(engine)
         except Exception as bf_err:
             logger.error(f"[SYNC] Backfill Mercado Livre falhou: {bf_err}")
 
-        # 5. Criação automática de índices declarados nos modelos
+        # 6. Criação automática de índices declarados nos modelos
         try:
             inspector_indexes = inspect(engine)
+            existing_tables = set(inspector_indexes.get_table_names())
             for table_name, table in base.metadata.tables.items():
                 if table_name not in existing_tables:
                     continue
@@ -623,6 +897,6 @@ def sync_database_schema(engine: Engine, base):
         except Exception as idx_sync_err:
             logger.error(f"[SYNC] Erro na sincronização de índices: {idx_sync_err}")
 
-        logger.info("[SYNC] Sincronização concluída com sucesso.")
+        logger.info("[SYNC] Sincronização do banco de dados concluída com sucesso.")
     except Exception as e:
-        logger.error(f"[SYNC] Erro crítico: {e}")
+        logger.error(f"[SYNC] Erro crítico na inicialização do banco: {e}")

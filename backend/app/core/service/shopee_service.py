@@ -286,10 +286,13 @@ class ShopeeService:
 
                     if detail_resp.status_code == 200 and not detail_data.get("error"):
                         for item in detail_data.get("response", {}).get("order_list", []):
+                            status = str(item.get("order_status") or "").upper()
+                            if status == "UNPAID":
+                                continue
                             orders_list.append({
                                 "id": item.get("order_sn"),
                                 "order_sn": item.get("order_sn"),
-                                "order_status": item.get("order_status", "UNPAID"),
+                                "order_status": item.get("order_status", "READY_TO_SHIP"),
                                 "create_time": datetime.fromtimestamp(item.get("create_time", int(time.time()))).isoformat(),
                                 "buyer_username": item.get("buyer_username") or item.get("recipient_address", {}).get("name", "Cliente Shopee"),
                                 "total_amount": float(item.get("total_amount", 0)),
@@ -416,7 +419,6 @@ class ShopeeService:
                 "value": "order_status",
                 "type": "multiselect",
                 "options": [
-                    {"label": "UNPAID", "value": "UNPAID"},
                     {"label": "READY_TO_SHIP", "value": "READY_TO_SHIP"},
                     {"label": "PROCESSED", "value": "PROCESSED"},
                     {"label": "SHIPPED", "value": "SHIPPED"},
@@ -815,6 +817,10 @@ class ShopeeService:
                 }
             }
 
+        # Bloqueia importação se o pedido estiver com status UNPAID na Shopee
+        if str(order_data.get('order_status', '')).upper() == 'UNPAID':
+            raise HTTPException(status_code=400, detail=f"O pedido {order_sn} está com status UNPAID (Não pago) e não pode ser importado.")
+
         # 3. Busca ou Cria Cliente
         cliente_erp = self._find_or_create_customer(order_data)
 
@@ -1199,34 +1205,375 @@ class ShopeeService:
             return False
         return False
 
-    def update_shopee_order_status(self, pedido: models.Pedido) -> Dict[str, Any]:
+    def get_shopee_order_detail(self, order_sn: str) -> Optional[Dict[str, Any]]:
         """
-        Sincroniza a alteração de status de um pedido ERP para a Shopee usando pedido.shopee_order_sn.
+        Consulta os detalhes completos de um pedido na Shopee OpenAPI v2 via /api/v2/order/get_order_detail.
         """
-        order_sn = pedido.shopee_order_sn
+        try:
+            access_token = self._get_valid_access_token()
+            shop_id = str(self.config.shop_id)
+            timestamp = int(time.time())
+            path = "/api/v2/order/get_order_detail"
+            sign = self._generate_sign(path, timestamp, access_token, shop_id)
+
+            url = f"{self.api_base}{path}"
+            params = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign,
+                "order_sn_list": str(order_sn),
+                "response_optional_fields": "order_status,tracking_number,shipping_carrier,package_list,recipient_address"
+            }
+
+            resp = requests.get(url, params=params, timeout=15.0)
+            data = resp.json()
+            if resp.status_code == 200 and not data.get("error"):
+                orders = data.get("response", {}).get("order_list", [])
+                if orders:
+                    return orders[0]
+            else:
+                logger.warning(f"Erro ao consultar get_order_detail Shopee ({order_sn}): {data.get('message') or resp.text}")
+        except Exception as e:
+            logger.exception(f"Exceção ao buscar detalhes do pedido Shopee {order_sn}: {e}")
+        return None
+
+    def arrange_shipment(self, order_sn: str, pedido: models.Pedido = None) -> Dict[str, Any]:
+        """
+        Inicia o processo logístico/despacho de um pedido na Shopee (v2.logistics.ship_order):
+        1. Consulta parâmetros de envio via GET /api/v2/logistics/get_shipping_parameter
+        2. Dispara POST /api/v2/logistics/ship_order com dropoff, pickup ou non_integrated.
+        """
+        try:
+            access_token = self._get_valid_access_token()
+            shop_id = str(self.config.shop_id)
+            timestamp = int(time.time())
+            
+            # 1. Consulta parâmetros disponíveis para o envio
+            path_param = "/api/v2/logistics/get_shipping_parameter"
+            sign_param = self._generate_sign(path_param, timestamp, access_token, shop_id)
+            url_param = f"{self.api_base}{path_param}"
+            params_param = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign_param,
+                "order_sn": str(order_sn)
+            }
+
+            resp_param = requests.get(url_param, params=params_param, timeout=15.0)
+            data_param = resp_param.json()
+            
+            shipping_info = data_param.get("response", {}) if resp_param.status_code == 200 else {}
+            logger.info(f"Parâmetros de envio Shopee para {order_sn}: {shipping_info}")
+
+            # 2. Monta payload do ship_order
+            path_ship = "/api/v2/logistics/ship_order"
+            timestamp_ship = int(time.time())
+            sign_ship = self._generate_sign(path_ship, timestamp_ship, access_token, shop_id)
+            url_ship = f"{self.api_base}{path_ship}"
+            params_ship = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp_ship,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign_ship
+            }
+
+            tracking_code = (
+                getattr(pedido, 'shopee_tracking_number', None) or
+                getattr(pedido, 'intelipost_tracking_code', None) or
+                getattr(pedido, 'numero_nf', None) or
+                str(order_sn)
+            ) if pedido else str(order_sn)
+
+            payload_ship = {"order_sn": str(order_sn)}
+
+            # Avalia tipo de logística retornado pela Shopee
+            has_dropoff = "dropoff" in shipping_info or shipping_info.get("dropoff") is not None
+            has_pickup = "pickup" in shipping_info or shipping_info.get("pickup") is not None
+            has_non_integrated = "non_integrated" in shipping_info
+
+            if has_dropoff:
+                # Modalidade Postagem / Agência (Dropoff)
+                dropoff_payload = {}
+                branch_list = shipping_info.get("dropoff", {}).get("branch_list", [])
+                if branch_list:
+                    dropoff_payload["branch_id"] = branch_list[0].get("branch_id")
+                payload_ship["dropoff"] = dropoff_payload
+            elif has_pickup:
+                # Modalidade Coleta (Pickup)
+                pickup_info = shipping_info.get("pickup", {})
+                address_list = pickup_info.get("address_list", [])
+                pickup_payload = {}
+                if address_list:
+                    pickup_payload["address_id"] = address_list[0].get("address_id")
+                time_slot_list = pickup_info.get("time_slot_list", [])
+                if time_slot_list:
+                    pickup_payload["pickup_time_id"] = time_slot_list[0].get("pickup_time_id")
+                payload_ship["pickup"] = pickup_payload
+            elif has_non_integrated:
+                payload_ship["non_integrated"] = {"tracking_number": str(tracking_code)}
+            else:
+                # Fallback padrão: Dropoff vazio
+                payload_ship["dropoff"] = {}
+
+            logger.info(f"Disparando ship_order na Shopee para pedido {order_sn}: {payload_ship}")
+            resp_ship = requests.post(url_ship, params=params_ship, json=payload_ship, timeout=20.0)
+            data_ship = resp_ship.json()
+            
+            logger.info(f"Resposta ship_order Shopee ({order_sn}): status={resp_ship.status_code}, body={resp_ship.text}")
+            
+            if resp_ship.status_code == 200 and not data_ship.get("error"):
+                return {"status": "success", "message": "Despacho/envio agendado na Shopee com sucesso!", "data": data_ship}
+            else:
+                err_msg = data_ship.get("message") or data_ship.get("error") or resp_ship.text
+                return {"status": "warning", "message": f"Aviso no agendamento de envio Shopee: {err_msg}", "data": data_ship}
+
+        except Exception as e:
+            logger.exception(f"Exceção ao agendar envio na Shopee ({order_sn}): {e}")
+            return {"status": "error", "message": str(e)}
+
+    def update_shopee_order_status(self, pedido: models.Pedido, target_status: str = None) -> Dict[str, Any]:
+        """
+        Sincroniza e atualiza o status do pedido na Shopee OpenAPI v2:
+        1. Avalia regras customizadas (regras_atualizacao_status) ou mapeia por situacao / status_intelipost.
+        2. Se o status alvo exigir despacho (ex: 'PROCESSED', 'SHIPPED', 'despachado'):
+           - Executa GET /api/v2/logistics/get_shipping_parameter
+           - Executa POST /api/v2/logistics/ship_order (dropoff / pickup / non_integrated)
+        3. Consulta detalhes atualizados via GET /api/v2/order/get_order_detail
+        4. Atualiza os campos locais (shopee_order_status, shopee_tracking_number, shopee_shipping_carrier, data_despacho, data_entrega).
+        """
+        import unicodedata
+        
+        def normalize_str(val):
+            if not val:
+                return ""
+            val_str = str(val).strip().lower()
+            return ''.join(c for c in unicodedata.normalize('NFD', val_str) if unicodedata.category(c) != 'Mn')
+
+        order_sn = getattr(pedido, 'shopee_order_sn', None)
+        if not order_sn and pedido.observacao:
+            import re
+            m = re.search(r"Pedido Shopee\s*([A-Za-z0-9]+)", pedido.observacao or "")
+            if m:
+                order_sn = m.group(1)
+                pedido.shopee_order_sn = order_sn
+                try:
+                    self.db.add(pedido)
+                    self.db.commit()
+                except Exception:
+                    pass
+
         if not order_sn:
             logger.info(f"Pedido #{pedido.id_sequencial or pedido.id} não possui shopee_order_sn. Atualização ignorada.")
-            return {"status": "skipped", "message": "Pedido não é da Shopee."}
+            return {"status": "skipped", "message": "Pedido não possui identificador da Shopee (shopee_order_sn)."}
 
-        logger.info(f"Sincronizando status do pedido ERP #{pedido.id_sequencial or pedido.id} (Shopee Order SN: {order_sn}) com a Shopee.")
-        return {"status": "success", "message": "Status verificado na Shopee com sucesso!"}
+        logger.info(f"Iniciando sincronização de status para pedido Shopee {order_sn} (ERP #{pedido.id_sequencial or pedido.id})")
 
-    def upload_xml(self, order_sn: str, xml_content: str, chave_acesso: str, numero_nf: str) -> Dict[str, Any]:
-        """
-        Transmite as informações da NFe / XML para a Shopee.
-        """
-        logger.info(f"Enviando XML da NFe {numero_nf} para o pedido Shopee {order_sn}")
+        situacao_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
+        status_intelipost_str = str(getattr(pedido, 'status_intelipost', '') or '')
         
+        # 1. Avaliação de Regras Customizadas da ShopeeConfiguracao
+        target_shopee_status = target_status
+        regras = getattr(self.config, 'regras_atualizacao_status', None) or []
+        if not target_shopee_status and isinstance(regras, list):
+            for regra in regras:
+                coluna = regra.get('coluna_pedido')
+                valor_esperado_norm = normalize_str(regra.get('valor_coluna', ''))
+                status_alvo_shopee = regra.get('status_shopee') or regra.get('status_meli')
+                
+                if coluna and valor_esperado_norm and status_alvo_shopee:
+                    val_atual = getattr(pedido, coluna, None)
+                    if hasattr(val_atual, 'value'):
+                        val_atual = val_atual.value
+                    elif hasattr(val_atual, 'name'):
+                        val_atual = val_atual.name
+                    val_atual_norm = normalize_str(val_atual)
+                    
+                    matched = False
+                    if val_atual_norm == valor_esperado_norm:
+                        matched = True
+                    elif valor_esperado_norm in ["entregue", "completed", "finalizado", "delivered"] and val_atual_norm in ["entregue", "completed", "finalizado", "delivered"]:
+                        matched = True
+                    elif valor_esperado_norm in ["em transito", "shipped", "despachado", "a caminho", "processed"] and val_atual_norm in ["em transito", "shipped", "despachado", "a caminho", "processed"]:
+                        matched = True
+                    elif valor_esperado_norm in ["faturamento", "expedicao", "ready_to_ship", "handling", "preparacao"] and val_atual_norm in ["faturamento", "expedicao", "ready_to_ship", "handling", "preparacao"]:
+                        matched = True
+
+                    if matched:
+                        target_shopee_status = status_alvo_shopee
+                        logger.info(f"Regra Shopee casou! Coluna '{coluna}' = '{val_atual}' -> Status Shopee: '{target_shopee_status}'")
+                        break
+
+        # 2. Mapeamento Padrão
+        if not target_shopee_status:
+            sit_norm = normalize_str(situacao_str)
+            inteli_norm = normalize_str(status_intelipost_str)
+            
+            if sit_norm in ['finalizado', 'entregue', 'delivered', 'completed'] or inteli_norm in ['delivered', 'entregue']:
+                target_shopee_status = 'COMPLETED'
+            elif sit_norm in ['despachado', 'em transito', 'shipped', 'a caminho'] or inteli_norm in ['shipped', 'in_transit', 'in transit', 'out_for_delivery', 'despachado', 'em transito']:
+                target_shopee_status = 'SHIPPED'
+            elif sit_norm in ['faturamento', 'expedicao', 'embalagem', 'producao', 'ready_to_ship']:
+                target_shopee_status = 'READY_TO_SHIP'
+
+        logger.info(f"Status Shopee alvo determinado: {target_shopee_status} para pedido {order_sn}")
+
+        # 3. Execução de Despacho na Shopee se o status for de envio (PROCESSED / SHIPPED / despachado)
+        ship_result = None
+        if target_shopee_status in ['PROCESSED', 'SHIPPED', 'despachado', 'shipped']:
+            ship_result = self.arrange_shipment(order_sn=order_sn, pedido=pedido)
+
+        # 4. Sincroniza detalhes atuais do pedido via Shopee API (v2.order.get_order_detail)
+        order_detail = self.get_shopee_order_detail(order_sn)
+        if order_detail:
+            current_status = order_detail.get('order_status')
+            if current_status:
+                pedido.shopee_order_status = str(current_status)
+            
+            tracking_code = order_detail.get('tracking_number')
+            if tracking_code:
+                pedido.shopee_tracking_number = str(tracking_code)
+                
+            carrier = order_detail.get('shipping_carrier')
+            if carrier:
+                pedido.shopee_shipping_carrier = str(carrier)
+
+            if current_status in ['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED']:
+                if not pedido.data_despacho:
+                    pedido.data_despacho = datetime.now(timezone.utc).date()
+            if current_status == 'COMPLETED':
+                if not pedido.data_entrega:
+                    pedido.data_entrega = datetime.now(timezone.utc).date()
+                if not pedido.data_finalizacao:
+                    pedido.data_finalizacao = datetime.now(timezone.utc).date()
+
+            self.db.commit()
+            self.db.refresh(pedido)
+
+        return {
+            "status": "success",
+            "message": f"Status sincronizado com a Shopee para o pedido {order_sn}!",
+            "shopee_order_status": getattr(pedido, 'shopee_order_status', None),
+            "tracking_number": getattr(pedido, 'shopee_tracking_number', None),
+            "ship_result": ship_result
+        }
+
+    def upload_xml(self, order_sn: str, xml_content: str, chave_acesso: str = None, numero_nf: str = None) -> Dict[str, Any]:
+        """
+        Transmite o XML da NF-e autorizada para a Shopee OpenAPI v2 via POST /api/v2/order/upload_invoice_doc.
+        Suporta file_type="4" (código oficial da Shopee para XML de NF-e no Brasil).
+        """
+        logger.info(f"Iniciando transmissão de XML da NF-e para o pedido Shopee {order_sn}")
+        
+        # 1. Normaliza conteúdo do XML
+        if isinstance(xml_content, bytes):
+            xml_bytes = xml_content
+            xml_str = xml_content.decode('utf-8', errors='ignore')
+        else:
+            xml_str = str(xml_content or "").strip()
+            if not xml_str.startswith('<?xml'):
+                xml_str = '<?xml version="1.0" encoding="UTF-8"?>' + xml_str
+            xml_bytes = xml_str.encode('utf-8')
+
+        # 2. Localiza pedido no banco de dados local
         pedido = self.db.query(models.Pedido).filter(
             models.Pedido.shopee_order_sn == order_sn,
             models.Pedido.id_empresa == self.id_empresa
         ).first()
 
-        if pedido:
-            pedido.shopee_xml_enviado = True
-            self.db.commit()
+        try:
+            access_token = self._get_valid_access_token()
+            shop_id = str(self.config.shop_id)
+            timestamp = int(time.time())
+            path = "/api/v2/order/upload_invoice_doc"
+            sign = self._generate_sign(path, timestamp, access_token, shop_id)
 
-        return {"status": "success", "message": "XML da NFe registrado para o pedido Shopee."}
+            url = f"{self.api_base}{path}"
+            params = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign
+            }
+
+            # Envia via Multipart Form-Data (file_type="4" para XML NF-e)
+            files = {
+                'file': (f"NFe_{numero_nf or order_sn}.xml", xml_bytes, 'application/xml')
+            }
+            data = {
+                'order_sn': str(order_sn),
+                'file_type': '4'
+            }
+
+            logger.info(f"Enviando POST para {url} (file_type=4, order_sn={order_sn})")
+            resp = requests.post(url, params=params, data=data, files=files, timeout=20.0)
+            res_json = {}
+            try:
+                res_json = resp.json()
+            except Exception:
+                pass
+
+            logger.info(f"Resposta Shopee upload_invoice_doc: status_code={resp.status_code}, body={resp.text}")
+
+            # Valida resposta
+            error_code = res_json.get("error") or ""
+            error_msg = res_json.get("message") or ""
+
+            # Caso de sucesso ou se o XML já constava como enviado
+            is_success = (
+                (resp.status_code == 200 and not error_code) or
+                "already" in error_msg.lower() or
+                "exist" in error_msg.lower() or
+                "duplicate" in error_msg.lower()
+            )
+
+            if is_success:
+                if pedido:
+                    pedido.shopee_xml_enviado = True
+                    self.db.commit()
+                    self.db.refresh(pedido)
+                msg = "XML já constava na Shopee!" if ("already" in error_msg.lower() or "exist" in error_msg.lower()) else "XML da NF-e transmitido com sucesso para a Shopee!"
+                return {"status": "success", "message": msg, "response": res_json}
+            else:
+                # Tenta fallback com text/xml se necessário
+                logger.warning(f"Tentativa 1 falhou ({error_code} - {error_msg}). Tentando fallback...")
+                timestamp2 = int(time.time())
+                sign2 = self._generate_sign(path, timestamp2, access_token, shop_id)
+                params2 = {
+                    "partner_id": int(self.config.partner_id),
+                    "timestamp": timestamp2,
+                    "access_token": access_token,
+                    "shop_id": int(shop_id),
+                    "sign": sign2
+                }
+                files2 = {
+                    'file': (f"NFe_{numero_nf or order_sn}.xml", xml_str, 'text/xml')
+                }
+                resp2 = requests.post(url, params=params2, data=data, files=files2, timeout=20.0)
+                try:
+                    res_json2 = resp2.json()
+                except Exception:
+                    res_json2 = {}
+                
+                if (resp2.status_code == 200 and not res_json2.get("error")) or "already" in str(res_json2).lower():
+                    if pedido:
+                        pedido.shopee_xml_enviado = True
+                        self.db.commit()
+                        self.db.refresh(pedido)
+                    return {"status": "success", "message": "XML transmitido com sucesso para a Shopee!", "response": res_json2}
+
+                err_detail = error_msg or res_json2.get("message") or resp.text
+                logger.error(f"Erro ao transmitir XML para Shopee (Pedido {order_sn}): {err_detail}")
+                return {"status": "error", "message": f"Erro na API da Shopee: {err_detail}", "details": res_json}
+
+        except Exception as e:
+            logger.exception(f"Exceção ao enviar XML para a Shopee ({order_sn}): {e}")
+            return {"status": "error", "message": f"Falha de comunicação ao enviar XML para Shopee: {str(e)}"}
 
     def disconnect(self) -> bool:
         """

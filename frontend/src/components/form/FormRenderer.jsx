@@ -23,6 +23,7 @@ import { PermissionsBuilderInput } from '../ui/PermissionsBuilderInput';
 import { ReportBuilderInput } from '../ui/ReportBuilderInput';
 import { PaymentMethodsInput } from '../ui/PaymentMethodsInput';
 import { MeliStatusRulesInput } from '../ui/MeliStatusRulesInput';
+import { ShopeeStatusRulesInput } from '../ui/ShopeeStatusRulesInput';
 import { PackagingSimulationInput } from '../ui/PackagingSimulationInput';
 
 /**
@@ -294,6 +295,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
 
     case 'meli_status_rules':
       return <MeliStatusRulesInput {...props} value={value} />;
+
+    case 'shopee_status_rules':
+      return <ShopeeStatusRulesInput {...props} value={value} />;
 
     default:
       if (field.component === 'file') {

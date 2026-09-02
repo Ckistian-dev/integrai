@@ -1054,6 +1054,7 @@ class ShopeeConfiguracaoBase(BaseModel):
     situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
     caixa_padrao: Optional[str] = None
     filtros_padrao: Optional[Any] = []
+    regras_atualizacao_status: Optional[List[Dict[str, Any]]] = []
 
 class ShopeeConfiguracaoCreate(ShopeeConfiguracaoBase):
     pass
@@ -1063,6 +1064,7 @@ class ShopeeConfiguracaoUpdate(ShopeeConfiguracaoBase):
     partner_key: Optional[str] = None
     caixa_padrao: Optional[str] = None
     filtros_padrao: Optional[Any] = None
+    regras_atualizacao_status: Optional[List[Dict[str, Any]]] = None
 
 class ShopeeConfiguracao(ShopeeConfiguracaoBase):
     id: int

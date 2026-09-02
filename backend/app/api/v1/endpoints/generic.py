@@ -3196,7 +3196,13 @@ def update_item(
                     _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
-            if getattr(item, 'shopee_order_sn', None) and (old_situacao != item.situacao):
+            status_shopee_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
+            is_shopee_order = bool(
+                getattr(item, 'shopee_order_sn', None) or 
+                "shopee" in (item.origem_venda or "").lower() or
+                "pedido shopee" in (item.observacao or "").lower()
+            )
+            if is_shopee_order and status_shopee_mudou:
                 try:
                     from app.core.service.shopee_service import ShopeeService
                     shopee_svc = ShopeeService(db, current_user.id_empresa)

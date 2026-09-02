@@ -284,3 +284,58 @@ async def reenviar_xml_ml(
     else:
         err_msg = res.get('message') if isinstance(res, dict) and res.get('message') else "Erro ao enviar XML ao Mercado Livre."
         return {"success": False, "message": err_msg, "details": res}
+
+
+@router.post("/mercadolivre/pedidos/{pedido_id}/atualizar-status")
+async def atualizar_status_pedido_ml(
+    pedido_id: int,
+    target_status: str = Query(None, description="Status alvo opcional (ex: shipped, delivered, handling)"),
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Sincroniza e força a atualização de status do envio no Mercado Livre para um pedido do ERP.
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    service = MeliService(db, current_user.id_empresa)
+    if target_status:
+        situacao_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
+        tracking = (
+            getattr(pedido, 'meli_tracking_number', None) or 
+            getattr(pedido, 'intelipost_tracking_code', None) or
+            getattr(pedido, 'numero_nf', None)
+        )
+        ml_order_ids = service._extract_ml_ids_from_pedido(pedido)
+        if not ml_order_ids:
+            raise HTTPException(status_code=400, detail="Nenhum ID do Mercado Livre associado a este pedido.")
+        
+        success = False
+        for m_id in ml_order_ids:
+            res = await service.update_shipment_status_by_order(
+                order_id_ml=m_id,
+                erp_status=situacao_str,
+                tracking_number=tracking,
+                target_ml_status=target_status,
+                pedido=pedido
+            )
+            if res:
+                success = True
+        return {
+            "success": success,
+            "message": f"Status atualizado para '{target_status}' no Mercado Livre com sucesso!" if success else "Não foi possível atualizar o status no Mercado Livre.",
+            "status_envio": pedido.meli_status_envio
+        }
+    else:
+        success = await service.update_meli_order_status(pedido)
+        return {
+            "success": success,
+            "message": "Status sincronizado com o Mercado Livre com sucesso!" if success else "Não foi possível sincronizar o status no Mercado Livre.",
+            "status_envio": pedido.meli_status_envio
+        }

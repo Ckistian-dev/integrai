@@ -1311,6 +1311,7 @@ class IntelipostConfiguracao(Base):
     __tablename__ = "intelipost_configuracoes"
     __label__ = "Configuração Intelipost"
     __label_plural__ = "Configurações Intelipost"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_intelipost_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1336,6 +1337,7 @@ class MeliConfiguracao(Base):
     __tablename__ = "meli_configuracoes"
     __label__ = "Configuração Mercado Livre"
     __label_plural__ = "Configurações Mercado Livre"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_meli_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1389,6 +1391,7 @@ class MagentoConfiguracao(Base):
     __tablename__ = "magento_configuracoes"
     __label__ = "Configuração Magento"
     __label_plural__ = "Configurações Magento"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_magento_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1425,6 +1428,7 @@ class TiktokConfiguracao(Base):
     __tablename__ = "tiktok_configuracoes"
     __label__ = "Configuração Tiktok Shop"
     __label_plural__ = "Configurações Tiktok Shop"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_tiktok_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1463,6 +1467,7 @@ class ShopeeConfiguracao(Base):
     __tablename__ = "shopee_configuracoes"
     __label__ = "Configuração Shopee"
     __label_plural__ = "Configurações Shopee"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_shopee_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1483,6 +1488,10 @@ class ShopeeConfiguracao(Base):
                       info={'tab': 'Preferências', 'label': 'Situação ao Importar', 'placeholder': 'Selecione...'})
     caixa_padrao = Column(String, nullable=True, info={'tab': 'Preferências', 'component': 'creatable_select', 'label': 'Caixa/Banco Padrão', 'placeholder': 'Ex: Banco Itaú'})
     filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
+
+    # Aba: Atualização de Status Shopee
+    regras_atualizacao_status = Column(JSON, nullable=True, default=list, 
+                                       info={'tab': 'Atualização de Status Shopee', 'label': 'Regras para Atualizar Situação na Shopee', 'component': 'shopee_status_rules', 'col_span': 2})
 
     # Controle
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -1506,6 +1515,7 @@ class ElasticEmailConfiguracao(Base):
     __tablename__ = "elastic_email_configuracoes"
     __label__ = "Configuração Elastic Email"
     __label_plural__ = "Configurações Elastic Email"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_elastic_email_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1530,6 +1540,7 @@ class AtendaiConfiguracao(Base):
     __tablename__ = "atendai_configuracoes"
     __label__ = "Configuração AtendAI"
     __label_plural__ = "Configurações AtendAI"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_atendai_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Conexão', 'label': 'Código', 'read_only': True, 'visible': False})
@@ -1554,6 +1565,7 @@ class OutrasEmpresasConfiguracao(Base):
     __label__ = "Outra Empresa"
     __label_plural__ = "Outras Empresas"
     __is_single_record__ = False
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_outras_empresas_configuracoes_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True, 'visible': True})
@@ -1584,6 +1596,7 @@ class EmailRegra(Base):
     __tablename__ = "email_regras"
     __label__ = "Regra de Automação de E-mail"
     __label_plural__ = "Regras de E-mail"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_email_regras_empresa_sequencial"),)
 
     # Transições disponíveis no fluxo de pedidos
     TRIGGERS = [
@@ -1679,6 +1692,7 @@ class OpcaoCampo(Base):
     Tabela para armazenar opções dinâmicas de campos (Selects).
     """
     __tablename__ = "opcoes_campos"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_opcoes_campos_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True)
@@ -1734,6 +1748,7 @@ class Relatorio(Base):
     __tablename__ = "relatorios"
     __label__ = "Relatório Personalizado"
     __label_plural__ = "Relatórios Personalizados"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_relatorios_empresa_sequencial"),)
 
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Geral', 'label': 'Código', 'read_only': True})
@@ -1763,6 +1778,8 @@ class NotaFiscalRecebida(Base):
     __tablename__ = "nfe_recebidas"
     __label__ = "Nota Fiscal Recebida"
     __label_plural__ = "Notas Fiscais Recebidas (DF-e)"
+    __table_args__ = (UniqueConstraint("id_empresa", "id_sequencial", name="uq_nfe_recebidas_empresa_sequencial"),)
+
     id = Column(Integer, primary_key=True, index=True)
     id_sequencial = Column(Integer, nullable=True, index=True, info={'label': 'Código'})
     chave_acesso = Column(String(44), index=True, nullable=True, info={'label': 'Chave de Acesso'})

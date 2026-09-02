@@ -1,7 +1,7 @@
 // src/pages/GenericForm.jsx
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate, Link, useOutletContext } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation, Link, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/axiosConfig';
 import FormRenderer from '../components/form/FormRenderer';
@@ -12,9 +12,12 @@ import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/
 
 const GenericForm = ({ modelName: propModelName, propId }) => {
   const { modelName: paramModelName, id: paramId } = useParams();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
   const { user } = useAuth();
   const modelName = propModelName || paramModelName;
   const id = propId !== undefined ? propId : paramId;
+  const duplicateId = searchParams.get('duplicate_from') || searchParams.get('duplicate') || location.state?.duplicateFrom;
   const navigate = useNavigate();
   const isEditMode = !!id;
 
@@ -367,7 +370,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
     }
   }, [formData.itens, formData.desconto, formData.valor_frete, modelName, formData.total, formData.total_desconto, formData.volumes_peso_bruto, formData.volumes_peso_liquido, formData.ipi_frete, formData.total_frete]);
 
-  // useEffect loadFormContent (MODIFICADO para usar 'tabs' na inicialização)
+  // useEffect loadFormContent (MODIFICADO para usar 'tabs' na inicialização e suportar duplicação)
   useEffect(() => {
     // Agora depende das 'tabs' terem sido processadas (do effect anterior)
     if (tabs.length === 0) return;
@@ -397,6 +400,85 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
         } finally {
           setLoadingData(false);
         }
+      } else if (duplicateId) {
+        setLoadingData(true);
+        try {
+          const itemRes = await api.get(`/generic/${modelName}/${duplicateId}`);
+          const rawItem = itemRes.data || {};
+
+          // Base de valores iniciais do formulário
+          const allFields = tabs.flatMap(tab => tab.fields);
+          const initialBase = initializeFormData(allFields);
+
+          // Mescla os dados do item original sobre a base
+          const clonedData = { ...initialBase, ...rawItem };
+
+          // Remove IDs e campos de auditoria / fiscais específicos do registro original
+          delete clonedData.id;
+          delete clonedData.id_sequencial;
+          delete clonedData.codigo;
+          delete clonedData.criado_em;
+          delete clonedData.created_at;
+          delete clonedData.atualizado_em;
+          delete clonedData.updated_at;
+          delete clonedData.data_despacho;
+          delete clonedData.chave_acesso;
+          delete clonedData.numero_nf;
+          delete clonedData.protocolo_nfe;
+          delete clonedData.recibo_nfe;
+          delete clonedData.xml_nfe;
+          delete clonedData.danfe_url;
+          delete clonedData.data_baixa;
+
+          // Tratamento especial para Usuários: limpa o campo de senha para forçar digitação de nova senha
+          if (modelName === 'usuarios') {
+            clonedData.senha = '';
+          }
+
+          // Tratamento especial para Contas: conta duplicada inicia como "Em Aberto" sem data de baixa
+          if (modelName === 'contas') {
+            clonedData.situacao = 'Em Aberto';
+            delete clonedData.data_baixa;
+          }
+
+          // Tratamento especial para Pedidos: recalcula datas padrão
+          if (modelName === 'pedidos') {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            clonedData.data_emissao = `${year}-${month}-${day}`;
+            clonedData.data_orcamento = `${year}-${month}-${day}`;
+
+            const validadeDias = user?.empresa?.validade_orcamento || 7;
+            const validadeDate = new Date();
+            validadeDate.setDate(validadeDate.getDate() + validadeDias);
+            const vYear = validadeDate.getFullYear();
+            const vMonth = String(validadeDate.getMonth() + 1).padStart(2, '0');
+            const vDay = String(validadeDate.getDate()).padStart(2, '0');
+            clonedData.data_validade = `${vYear}-${vMonth}-${vDay}`;
+
+            if (clonedData.id_cliente) {
+              previousClientIdRef.current = clonedData.id_cliente;
+            }
+          }
+
+          setFormData(clonedData);
+
+          if (clonedData?.cpf_cnpj) {
+            lastQueriedCnpjRef.current = String(clonedData.cpf_cnpj).replace(/\D/g, '');
+          }
+          if (clonedData?.cep) {
+            lastQueriedCepRef.current = String(clonedData.cep).replace(/\D/g, '');
+          }
+
+        } catch (err) {
+          toast.error("Erro ao carregar dados para duplicação.");
+          const allFields = tabs.flatMap(tab => tab.fields);
+          setFormData(initializeFormData(allFields));
+        } finally {
+          setLoadingData(false);
+        }
       } else {
         // Inicializa o form vazio usando os fields de TODAS as abas
         const allFields = tabs.flatMap(tab => tab.fields);
@@ -406,7 +488,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
     loadFormContent();
     // ⚠️ Dependência 'metadata' trocada por 'tabs'
-  }, [tabs, id, isEditMode, modelName, initializeFormData]);
+  }, [tabs, id, isEditMode, duplicateId, modelName, initializeFormData, user?.empresa?.validade_orcamento]);
 
   // --- INTEGRAÇÃO BRASIL API ---
   const fetchAddressFromCep = useCallback(async (cepValue, isDeliveryAddress = false) => {

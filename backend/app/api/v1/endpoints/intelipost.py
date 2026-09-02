@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, BackgroundTasks, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -16,6 +16,38 @@ from app.core.service.intelipost_service import IntelipostService
 router = APIRouter()
 
 security_basic = HTTPBasic(auto_error=False)
+
+async def _sync_meli_status_background(pedido_id: int, id_empresa: int):
+    from app.core.db.database import SessionLocal
+    from app.core.service.meli_service import MeliService
+    from app.core.db import models
+    
+    db_bg = SessionLocal()
+    try:
+        pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
+        if pedido:
+            meli_svc = MeliService(db_bg, id_empresa)
+            await meli_svc.update_meli_order_status(pedido)
+    except Exception as e:
+        print(f"[INTELIPOST BG] Erro ao sincronizar status ML em background para pedido #{pedido_id}: {e}")
+    finally:
+        db_bg.close()
+
+def _sync_shopee_status_background(pedido_id: int, id_empresa: int):
+    from app.core.db.database import SessionLocal
+    from app.core.service.shopee_service import ShopeeService
+    from app.core.db import models
+    
+    db_bg = SessionLocal()
+    try:
+        pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
+        if pedido:
+            shopee_svc = ShopeeService(db_bg, id_empresa)
+            shopee_svc.update_shopee_order_status(pedido)
+    except Exception as e:
+        print(f"[INTELIPOST BG] Erro ao sincronizar status Shopee em background para pedido #{pedido_id}: {e}")
+    finally:
+        db_bg.close()
 
 def verify_intelipost_basic_auth(
     credentials: Optional[HTTPBasicCredentials] = Depends(security_basic),
@@ -44,6 +76,7 @@ class IntelipostFreteSelection(BaseModel):
 @router.post("/intelipost/webhook/{subpath:path}")
 async def receber_webhook_intelipost(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     current_user: Optional[models.Usuario] = Depends(verify_intelipost_basic_auth),
@@ -288,12 +321,18 @@ async def receber_webhook_intelipost(
         "id ml:" in (pedido.observacao or "").lower()
     )
     if is_ml_order:
-        try:
-            from app.core.service.meli_service import MeliService
-            meli_svc = MeliService(db, id_empresa or pedido.id_empresa)
-            await meli_svc.update_meli_order_status(pedido)
-        except Exception as e:
-            print(f"Aviso: Erro ao disparar sincronização ML via Webhook Intelipost: {e}")
+        empresa_id = id_empresa or pedido.id_empresa
+        background_tasks.add_task(_sync_meli_status_background, pedido.id, empresa_id)
+
+    # 🎯 Sincronização automática de status com a Shopee se for pedido Shopee
+    is_shopee_order = bool(
+        getattr(pedido, 'shopee_order_sn', None) or
+        "shopee" in (pedido.origem_venda or "").lower() or
+        "pedido shopee" in (pedido.observacao or "").lower()
+    )
+    if is_shopee_order:
+        empresa_id = id_empresa or pedido.id_empresa
+        background_tasks.add_task(_sync_shopee_status_background, pedido.id, empresa_id)
 
     return {
         "status": "success",
