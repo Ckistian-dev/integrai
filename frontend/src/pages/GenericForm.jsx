@@ -120,9 +120,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
       // Trata APENAS checkboxes puros como booleano
       if (field.type === 'boolean') {
-        if (field.name === 'situacao') {
-          initialData[field.name] = true;
-        } else if (field.name === 'considerar') {
+        if (field.name === 'situacao' || field.name === 'considerar' || field.name === 'incluir_ipi_base_icms') {
           initialData[field.name] = true;
         } else {
           initialData[field.name] = false;

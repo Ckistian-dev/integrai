@@ -1229,6 +1229,7 @@ class Tributacao(Base):
     # IPI / PIS / COFINS
     ipi_cst = Column(SQLAlchemyEnum(FiscalIPICSTEnum, native_enum=False), info={'tab': 'Tributos', 'label': 'CST IPI', 'placeholder': 'Selecione...'})
     ipi_codigo_enquadramento = Column(String(3), default='999', info={'tab': 'Tributos', 'label': 'Cód. Enquadramento IPI', 'placeholder': 'Ex: 999'})
+    incluir_ipi_base_icms = Column(Boolean, default=True, server_default=text('true'), nullable=False, info={'tab': 'Tributos', 'label': 'Incluir IPI na Base do ICMS?', 'placeholder': '', 'default': True})
     pis_cst = Column(SQLAlchemyEnum(FiscalPISCOFINSCSTEnum, native_enum=False), info={'tab': 'Tributos', 'label': 'CST PIS', 'placeholder': 'Selecione...'})
     pis_aliquota = Column(Numeric(5, 2), default=0, nullable=False, info={'tab': 'Tributos', 'format_mask': 'percent:2', 'label': 'Alíquota PIS', 'placeholder': '0,00'})
     cofins_cst = Column(SQLAlchemyEnum(FiscalPISCOFINSCSTEnum, native_enum=False), info={'tab': 'Tributos', 'label': 'CST COFINS', 'placeholder': 'Selecione...'})

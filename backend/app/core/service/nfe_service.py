@@ -2945,6 +2945,9 @@ class NFeService:
                         })
 
                     # --- CÁLCULO ICMS ---
+                    incluir_ipi_bc = getattr(regra, 'incluir_ipi_base_icms', True) if regra else True
+                    val_ipi_na_base = val_ipi if (incluir_ipi_bc and val_ipi) else Decimal('0.00')
+
                     if tipo_op_enum == RegraTipoOperacaoEnum.complemento:
                         total_com_descontos = safe_decimal(pedido.total_desconto)
                         if total_com_descontos == 0:
@@ -2958,9 +2961,9 @@ class NFeService:
                             else:
                                 base_icms = (total_com_descontos / Decimal(len(lista_itens))).quantize(Decimal('0.01'))
                         else:
-                            base_icms = valor_total + valor_frete_item + val_ipi - valor_desconto_item
+                            base_icms = valor_total + valor_frete_item + val_ipi_na_base - valor_desconto_item
                     else:
-                        base_icms = valor_total + valor_frete_item + val_ipi - valor_desconto_item
+                        base_icms = valor_total + valor_frete_item + val_ipi_na_base - valor_desconto_item
 
                     if base_icms < 0: base_icms = Decimal('0.00')
 

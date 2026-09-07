@@ -857,6 +857,19 @@ def sync_database_schema(engine: Engine, base):
         except Exception as col_sync_err:
             logger.error(f"[SYNC] Erro na sincronização de colunas/enums: {col_sync_err}")
 
+        # 2b. Backfill defensivo: garante que regras_tributarias.incluir_ipi_base_icms seja true onde for NULL
+        try:
+            with engine.begin() as conn:
+                inspector_tbls = inspect(engine).get_table_names()
+                if "regras_tributarias" in inspector_tbls:
+                    cols = {c["name"].lower() for c in inspect(engine).get_columns("regras_tributarias")}
+                    if "incluir_ipi_base_icms" in cols:
+                        res = conn.execute(text('UPDATE "regras_tributarias" SET "incluir_ipi_base_icms" = true WHERE "incluir_ipi_base_icms" IS NULL'))
+                        if res.rowcount:
+                            logger.info(f"[SYNC] Backfill: {res.rowcount} regra(s) tributária(s) atualizada(s) com incluir_ipi_base_icms = true.")
+        except Exception as bf_tax_err:
+            logger.debug(f"[SYNC] Backfill incluir_ipi_base_icms: {bf_tax_err}")
+
         # 3. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
         try:
             run_one_time_id_sequencial_migration(engine, base)

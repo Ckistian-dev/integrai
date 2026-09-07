@@ -736,6 +736,7 @@ class TributacaoBase(BaseModel):
     fcp_aliquota: Decimal = Field(0)
     ipi_cst: Optional[FiscalIPICSTEnum] = None
     ipi_codigo_enquadramento: Optional[str] = None
+    incluir_ipi_base_icms: bool = Field(default=True, description="Indica se o valor do IPI compõe a base de cálculo do ICMS")
     pis_cst: Optional[FiscalPISCOFINSCSTEnum] = None
     pis_aliquota: Decimal = Field(0)
     cofins_cst: Optional[FiscalPISCOFINSCSTEnum] = None
@@ -776,6 +777,7 @@ class TributacaoUpdate(BaseModel):
     fcp_aliquota: Optional[Decimal] = Field(None)
     ipi_cst: Optional[FiscalIPICSTEnum] = None
     ipi_codigo_enquadramento: Optional[str] = None
+    incluir_ipi_base_icms: Optional[bool] = Field(None, description="Indica se o valor do IPI compõe a base de cálculo do ICMS")
     pis_cst: Optional[FiscalPISCOFINSCSTEnum] = None
     pis_aliquota: Optional[Decimal] = Field(None)
     cofins_cst: Optional[FiscalPISCOFINSCSTEnum] = None
