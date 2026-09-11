@@ -3,7 +3,7 @@ import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
-from typing import Any
+from typing import Any, Optional, Dict, List
 from app.core.db.database import get_db
 from app.api.dependencies import get_current_active_user
 from app.core.db import models
@@ -339,3 +339,34 @@ async def atualizar_status_pedido_ml(
             "message": "Status sincronizado com o Mercado Livre com sucesso!" if success else "Não foi possível sincronizar o status no Mercado Livre.",
             "status_envio": pedido.meli_status_envio
         }
+
+
+@router.post("/mercadolivre/pedidos/{pedido_id}/enviar-rastreio")
+async def enviar_rastreio_pedido_meli(
+    pedido_id: int,
+    tracking_url: Optional[str] = Query(None, description="Link ou código de rastreio opcional"),
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Envia o link / código de rastreamento do pedido para o Mercado Livre via API de shipments e mensageria pós-venda.
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    val_to_send = tracking_url
+    if not val_to_send:
+        meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
+            models.MeliConfiguracao.id_empresa == current_user.id_empresa
+        ).first()
+        if meli_cfg and meli_cfg[0]:
+            val_to_send = getattr(pedido, meli_cfg[0], None)
+
+    service = MeliService(db, current_user.id_empresa)
+    res = await service.send_meli_tracking_link(pedido, tracking_url=val_to_send)
+    return res

@@ -156,9 +156,15 @@ function DetalhesGerais({ pedido }) {
                     <p className="font-semibold text-gray-800">{prazoExibido}</p>
                 </div>
                 {pedido.transportadora_nome && (
-                    <div className="col-span-4">
+                    <div className={pedido.embalador ? "col-span-2" : "col-span-4"}>
                         <span className="text-gray-500">Transportadora:</span>
                         <p className="font-semibold text-gray-800 break-words">{pedido.transportadora_nome}</p>
+                    </div>
+                )}
+                {pedido.embalador && (
+                    <div className={pedido.transportadora_nome ? "col-span-2" : "col-span-4"}>
+                        <span className="text-gray-500">Responsável pela Embalagem:</span>
+                        <p className="font-semibold text-gray-800 break-words">{pedido.embalador}</p>
                     </div>
                 )}
             </div>

@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, Depends, Body, HTTPException, Query
 from sqlalchemy.orm import Session
+from typing import Any, Optional, Dict, List
 from app.core.db.database import get_db
 from app.api.dependencies import get_current_active_user
 from app.core.db import models
@@ -271,3 +272,34 @@ def atualizar_status_pedido_shopee(
         "tracking_number": getattr(pedido, 'shopee_tracking_number', None),
         "details": res
     }
+
+
+@router.post("/shopee/pedidos/{pedido_id}/enviar-rastreio")
+def enviar_rastreio_pedido_shopee(
+    pedido_id: int,
+    tracking_url: Optional[str] = Query(None, description="Link ou código de rastreio opcional"),
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Envia o link / código de rastreamento do pedido para a Shopee via API oficial update_tracking_status.
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    val_to_send = tracking_url
+    if not val_to_send:
+        shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
+            models.ShopeeConfiguracao.id_empresa == current_user.id_empresa
+        ).first()
+        if shopee_cfg and shopee_cfg[0]:
+            val_to_send = getattr(pedido, shopee_cfg[0], None)
+
+    service = ShopeeService(db, current_user.id_empresa)
+    res = service.send_shopee_tracking_link(pedido=pedido, tracking_url=val_to_send)
+    return res

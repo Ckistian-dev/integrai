@@ -870,6 +870,13 @@ def sync_database_schema(engine: Engine, base):
         except Exception as bf_tax_err:
             logger.debug(f"[SYNC] Backfill incluir_ipi_base_icms: {bf_tax_err}")
 
+        # 2c. Garante coluna embalador na tabela pedidos
+        try:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE "pedidos" ADD COLUMN IF NOT EXISTS "embalador" VARCHAR'))
+        except Exception as emb_sync_err:
+            logger.debug(f"[SYNC] Garantia coluna embalador em pedidos: {emb_sync_err}")
+
         # 3. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
         try:
             run_one_time_id_sequencial_migration(engine, base)

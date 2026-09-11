@@ -49,6 +49,38 @@ def _sync_shopee_status_background(pedido_id: int, id_empresa: int):
     finally:
         db_bg.close()
 
+async def _send_meli_tracking_background(pedido_id: int, id_empresa: int, tracking_url: str):
+    from app.core.db.database import SessionLocal
+    from app.core.service.meli_service import MeliService
+    from app.core.db import models
+    
+    db_bg = SessionLocal()
+    try:
+        pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
+        if pedido:
+            meli_svc = MeliService(db_bg, id_empresa)
+            await meli_svc.send_meli_tracking_link(pedido, tracking_url)
+    except Exception as e:
+        print(f"[INTELIPOST BG] Erro ao enviar link de rastreio ML em background para pedido #{pedido_id}: {e}")
+    finally:
+        db_bg.close()
+
+def _send_shopee_tracking_background(pedido_id: int, id_empresa: int, tracking_url: str):
+    from app.core.db.database import SessionLocal
+    from app.core.service.shopee_service import ShopeeService
+    from app.core.db import models
+    
+    db_bg = SessionLocal()
+    try:
+        pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
+        if pedido:
+            shopee_svc = ShopeeService(db_bg, id_empresa)
+            shopee_svc.send_shopee_tracking_link(pedido, tracking_url)
+    except Exception as e:
+        print(f"[INTELIPOST BG] Erro ao enviar link de rastreio Shopee em background para pedido #{pedido_id}: {e}")
+    finally:
+        db_bg.close()
+
 def verify_intelipost_basic_auth(
     credentials: Optional[HTTPBasicCredentials] = Depends(security_basic),
     db: Session = Depends(get_db)
@@ -333,6 +365,27 @@ async def receber_webhook_intelipost(
     if is_shopee_order:
         empresa_id = id_empresa or pedido.id_empresa
         background_tasks.add_task(_sync_shopee_status_background, pedido.id, empresa_id)
+
+    # 🎯 Envio automático do link de rastreio se houver coluna configurada
+    if tracking_url or tracking_code:
+        empresa_id = id_empresa or pedido.id_empresa
+        if is_ml_order:
+            meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
+                models.MeliConfiguracao.id_empresa == empresa_id
+            ).first()
+            if meli_cfg and meli_cfg[0]:
+                val_to_send = getattr(pedido, meli_cfg[0], None)
+                if val_to_send:
+                    background_tasks.add_task(_send_meli_tracking_background, pedido.id, empresa_id, str(val_to_send).strip())
+
+        if is_shopee_order:
+            shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
+                models.ShopeeConfiguracao.id_empresa == empresa_id
+            ).first()
+            if shopee_cfg and shopee_cfg[0]:
+                val_to_send = getattr(pedido, shopee_cfg[0], None)
+                if val_to_send:
+                    background_tasks.add_task(_send_shopee_tracking_background, pedido.id, empresa_id, str(val_to_send).strip())
 
     return {
         "status": "success",

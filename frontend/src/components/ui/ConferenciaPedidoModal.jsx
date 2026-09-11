@@ -2,6 +2,7 @@ import React, { Fragment, useState, useEffect } from 'react';
 import { Transition, Dialog } from '@headlessui/react';
 import { X, Package } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { CreatableSelectInput } from './CreatableSelectInput';
 
 const ConferenciaPedidoModal = ({
   isOpen,
@@ -11,13 +12,16 @@ const ConferenciaPedidoModal = ({
   title,
   confirmText,
   variant = 'blue',
-  showVolumes = false
+  showVolumes = false,
+  showEmbalador = false
 }) => {
   const [volumes, setVolumes] = useState(0);
+  const [embalador, setEmbalador] = useState('');
 
   useEffect(() => {
     if (pedido) {
       setVolumes(pedido.volumes_quantidade || 0);
+      setEmbalador(pedido.embalador || '');
     }
   }, [pedido]);
 
@@ -41,6 +45,9 @@ const ConferenciaPedidoModal = ({
         return;
       }
       data.volumes_quantidade = Number(volumes);
+    }
+    if (showEmbalador) {
+      data.embalador = embalador ? embalador.trim() : null;
     }
     onConfirm(data);
   };
@@ -100,6 +107,20 @@ const ConferenciaPedidoModal = ({
                           value={volumes}
                           onChange={(e) => setVolumes(e.target.value)}
                           className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                        />
+                      </div>
+                    )}
+                    {showEmbalador && (
+                      <div>
+                        <CreatableSelectInput
+                          field={{
+                            name: 'embalador',
+                            label: 'Responsável pela Embalagem',
+                            placeholder: 'Selecione ou crie o embalador...'
+                          }}
+                          value={embalador}
+                          onChange={(e) => setEmbalador(e.target.value)}
+                          modelName="pedidos"
                         />
                       </div>
                     )}

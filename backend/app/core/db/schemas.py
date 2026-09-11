@@ -561,6 +561,7 @@ class PedidoBase(BaseModel):
     volumes_numeracao: Optional[str] = None
     volumes_peso_bruto: Optional[Decimal] = Field(None)
     volumes_peso_liquido: Optional[Decimal] = Field(None)
+    embalador: Optional[str] = None
     
     # Campos de Endereço de Entrega
     endereco_cep: Optional[str] = Field(None, max_length=9)
@@ -655,6 +656,7 @@ class PedidoUpdate(BaseModel):
     volumes_numeracao: Optional[str] = None
     volumes_peso_bruto: Optional[Decimal] = Field(None)
     volumes_peso_liquido: Optional[Decimal] = Field(None)
+    embalador: Optional[str] = None
     
     total: Optional[Decimal] = Field(None)
     desconto: Optional[Decimal] = Field(None)
@@ -908,13 +910,14 @@ class MeliConfiguracaoBase(BaseModel):
     situacao_pedido_inicial: Optional[str] = "Orçamento"
     caixa_padrao: Optional[str] = None
     filtros_padrao: Optional[Any] = []
+    campo_link_rastreio: Optional[str] = None
     regras_atualizacao_status: Optional[List[Dict[str, Any]]] = []
 
 class MeliConfiguracaoCreate(MeliConfiguracaoBase):
     pass
 
 class MeliConfiguracaoUpdate(MeliConfiguracaoBase):
-    pass
+    campo_link_rastreio: Optional[str] = None
 
 class MeliConfiguracao(MeliConfiguracaoBase):
     id: int
@@ -1056,6 +1059,7 @@ class ShopeeConfiguracaoBase(BaseModel):
     situacao_pedido_inicial: Optional[PedidoSituacaoEnum] = PedidoSituacaoEnum.orcamento
     caixa_padrao: Optional[str] = None
     filtros_padrao: Optional[Any] = []
+    campo_link_rastreio: Optional[str] = None
     regras_atualizacao_status: Optional[List[Dict[str, Any]]] = []
 
 class ShopeeConfiguracaoCreate(ShopeeConfiguracaoBase):
@@ -1066,6 +1070,7 @@ class ShopeeConfiguracaoUpdate(ShopeeConfiguracaoBase):
     partner_key: Optional[str] = None
     caixa_padrao: Optional[str] = None
     filtros_padrao: Optional[Any] = None
+    campo_link_rastreio: Optional[str] = None
     regras_atualizacao_status: Optional[List[Dict[str, Any]]] = None
 
 class ShopeeConfiguracao(ShopeeConfiguracaoBase):

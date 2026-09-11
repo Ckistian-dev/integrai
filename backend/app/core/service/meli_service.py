@@ -7,6 +7,7 @@ import base64
 import logging
 import io
 from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.core.db import models
@@ -1710,7 +1711,143 @@ class MeliService:
                 return True
             else:
                 success = False
-        return success
+            return success
+
+    async def send_meli_tracking_link(self, pedido, tracking_url: str = None) -> Dict[str, Any]:
+        """
+        Envia o link / código de rastreamento do pedido para o Mercado Livre:
+        1. Atualiza o objeto de shipment (PUT /shipments/{shipment_id}) com tracking_url, speed_tracking_url e tracking_number.
+        2. Transmite mensagem pós-venda com o link de rastreio diretamente ao chat da venda (/messages/packs/{pack_id} ou /messages/orders/{order_id}).
+        3. Grava localmente o código de rastreio no pedido.
+        """
+        ml_order_ids = self._extract_ml_ids_from_pedido(pedido)
+        if not ml_order_ids:
+            logger.warning(f"Pedido #{pedido.id_sequencial or pedido.id} não possui IDs do Mercado Livre configurados.")
+            return {"status": "skipped", "message": "Pedido não possui identificador do Mercado Livre."}
+
+        # Resolução do link e código de rastreio
+        raw_val = str(tracking_url or "").strip()
+        if not raw_val:
+            raw_val = (
+                getattr(pedido, 'intelipost_tracking_url', None) or
+                getattr(pedido, 'meli_tracking_number', None) or
+                getattr(pedido, 'intelipost_tracking_code', None) or
+                ""
+            )
+
+        if not raw_val:
+            return {"status": "error", "message": "Nenhum link ou código de rastreio fornecido para envio ao Mercado Livre."}
+
+        is_url = raw_val.startswith("http://") or raw_val.startswith("https://")
+        final_tracking_url = raw_val if is_url else getattr(pedido, 'intelipost_tracking_url', raw_val)
+        final_tracking_number = (
+            getattr(pedido, 'meli_tracking_number', None) or
+            getattr(pedido, 'intelipost_tracking_code', None) or
+            getattr(pedido, 'numero_nf', None) or
+            (raw_val if not is_url else f"ERP-{getattr(pedido, 'id_sequencial', pedido.id)}")
+        )
+
+        logger.info(f"Enviando dados de rastreio para Mercado Livre ({ml_order_ids}): URL='{final_tracking_url}', Código='{final_tracking_number}'")
+
+        client = None
+        results = {}
+        try:
+            client = await self.get_client()
+            seller_id = self.credentials.user_id_ml if self.credentials else None
+            if not seller_id:
+                me_resp = await client.get(f"{self.base_url}/users/me")
+                if me_resp.status_code == 200:
+                    seller_id = me_resp.json().get('id')
+
+            for order_id_ml in ml_order_ids:
+                resolved = await self._resolve_all_ml_ids(client, order_id_ml)
+                shipment_id = resolved.get("shipment_id") or getattr(pedido, 'meli_shipment_id', None)
+                resolved_order_id = resolved.get("order_id") or order_id_ml
+                pack_id = resolved.get("pack_id") or getattr(pedido, 'meli_pack_id', None)
+
+                # 1. Atualização no Recurso de Envio (/shipments/{shipment_id})
+                if shipment_id:
+                    url_ship = f"{self.base_url}/shipments/{shipment_id}"
+                    put_payloads = [
+                        {"tracking_number": str(final_tracking_number), "tracking_url": str(final_tracking_url), "speed_tracking_url": str(final_tracking_url)},
+                        {"tracking_url": str(final_tracking_url)},
+                        {"tracking_number": str(final_tracking_number)}
+                    ]
+                    for p in put_payloads:
+                        try:
+                            put_resp = await client.put(url_ship, json=p)
+                            logger.info(f"Tentativa PUT {url_ship} -> {put_resp.status_code}: {put_resp.text}")
+                            if put_resp.status_code in [200, 201]:
+                                results["shipment_update"] = put_resp.json()
+                                break
+                        except Exception as put_e:
+                            logger.debug(f"Erro tentativa PUT shipment: {put_e}")
+
+                # 2. Envio de Mensagem Pós-Venda ao Comprador com o Link
+                if resolved_order_id and seller_id:
+                    try:
+                        buyer_id = None
+                        ord_resp = await client.get(f"{self.base_url}/orders/{resolved_order_id}")
+                        if ord_resp.status_code == 200:
+                            ord_data = ord_resp.json()
+                            buyer_id = ord_data.get('buyer', {}).get('id')
+
+                        if buyer_id:
+                            msg_text = f"Olá! Segue o link para acompanhar a entrega do seu pedido: {final_tracking_url}"
+                            if pack_id:
+                                url_msg = f"{self.base_url}/messages/packs/{pack_id}/sellers/{seller_id}?tag=post_sale"
+                            else:
+                                url_msg = f"{self.base_url}/messages/orders/{resolved_order_id}?tag=post_sale"
+
+                            payload_msg = {
+                                "from": {"user_id": int(seller_id)},
+                                "to": [{"user_id": int(buyer_id), "resource": "orders", "resource_id": str(resolved_order_id)}],
+                                "text": msg_text
+                            }
+                            resp_msg = await client.post(url_msg, json=payload_msg)
+                            logger.info(f"POST {url_msg} -> {resp_msg.status_code}: {resp_msg.text}")
+                            if resp_msg.status_code not in [200, 201]:
+                                # Formato alternativo
+                                payload_simple = {
+                                    "from": {"user_id": int(seller_id)},
+                                    "to": {"user_id": int(buyer_id)},
+                                    "text": msg_text
+                                }
+                                resp_msg2 = await client.post(url_msg, json=payload_simple)
+                                logger.info(f"POST fallback {url_msg} -> {resp_msg2.status_code}: {resp_msg2.text}")
+                                results["message_result"] = resp_msg2.text
+                            else:
+                                results["message_result"] = resp_msg.json()
+                    except Exception as msg_err:
+                        logger.warning(f"Erro ao enviar mensagem pós-venda no ML: {msg_err}")
+
+            # 3. Atualiza dados locais do pedido
+            if final_tracking_number and not pedido.meli_tracking_number:
+                pedido.meli_tracking_number = str(final_tracking_number)
+            if not pedido.data_despacho:
+                pedido.data_despacho = datetime.now(timezone.utc).date()
+
+            try:
+                self.db.commit()
+                self.db.refresh(pedido)
+            except Exception:
+                pass
+
+            return {
+                "status": "success",
+                "message": "Link de rastreio enviado com sucesso para o Mercado Livre!",
+                "details": results
+            }
+
+        except Exception as e:
+            logger.exception(f"Erro ao enviar link de rastreio para o Mercado Livre: {e}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            if client:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
 
     async def process_meli_webhook(self, topic: str, resource: str, user_id_ml: int = None):
         """

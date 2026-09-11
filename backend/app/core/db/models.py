@@ -1052,6 +1052,7 @@ class Pedido(Base):
     volumes_numeracao = Column(String, info={'tab': 'Frete', 'label': 'Numeração', 'placeholder': '', 'visible': False})
     volumes_peso_bruto = Column(Numeric(10, 3), info={'tab': 'Frete', 'format_mask': 'decimal:3', 'label': 'Peso Bruto (kg)', 'placeholder': '0,000'})
     volumes_peso_liquido = Column(Numeric(10, 3), info={'tab': 'Frete', 'format_mask': 'decimal:3', 'label': 'Peso Líquido (kg)', 'placeholder': '0,000'})
+    embalador = Column(String, nullable=True, info={'tab': 'Frete', 'component': 'creatable_select', 'label': 'Responsável pela Embalagem', 'placeholder': 'Selecione ou adicione o embalador'})
 
     # --- Aba: Valores ---
     total = Column(Currency(), 
@@ -1358,6 +1359,8 @@ class MeliConfiguracao(Base):
     filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
 
     # Aba: Atualização de Status ML
+    campo_link_rastreio = Column(String, nullable=True, 
+                                 info={'tab': 'Atualização de Status ML', 'label': 'Campo do Link de Rastreio (Tabela Pedidos)', 'placeholder': 'Selecione a coluna que contém o link de rastreio...', 'component': 'order_field_select', 'col_span': 2})
     regras_atualizacao_status = Column(JSON, nullable=True, default=list, 
                                        info={'tab': 'Atualização de Status ML', 'label': 'Regras para Atualizar Situação no Mercado Livre', 'component': 'meli_status_rules', 'col_span': 2})
 
@@ -1491,6 +1494,8 @@ class ShopeeConfiguracao(Base):
     filtros_padrao = Column(JSON, nullable=True, default=list, info={'tab': 'Preferências', 'component': 'creatable_select_multi', 'label': 'Filtros Padrão de Importação', 'placeholder': 'Selecione ou digite para criar...'})
 
     # Aba: Atualização de Status Shopee
+    campo_link_rastreio = Column(String, nullable=True, 
+                                 info={'tab': 'Atualização de Status Shopee', 'label': 'Campo do Link de Rastreio (Tabela Pedidos)', 'placeholder': 'Selecione a coluna que contém o link de rastreio...', 'component': 'order_field_select', 'col_span': 2})
     regras_atualizacao_status = Column(JSON, nullable=True, default=list, 
                                        info={'tab': 'Atualização de Status Shopee', 'label': 'Regras para Atualizar Situação na Shopee', 'component': 'shopee_status_rules', 'col_span': 2})
 

@@ -615,6 +615,37 @@ class ShopeeService:
             "cep": cep_formatted
         }
 
+    def _clean_phone(self, raw_phone: Any) -> str:
+        """
+        Limpa e normaliza o número de telefone da Shopee:
+        - Remove pontuações e caracteres não numéricos.
+        - Desconsidera o DDI 55 (Brasil) no início do número telefônico, mantendo DDD e número local.
+        """
+        if not raw_phone:
+            return ""
+
+        raw_str = str(raw_phone).strip()
+        digits = "".join(filter(str.isdigit, raw_str))
+
+        if not digits:
+            return ""
+
+        # 1. Se veio com prefixo explícito internacional +55 (ex: "+55 11 99999-9999")
+        if raw_str.startswith("+55") or raw_str.startswith("+ 55"):
+            digits = digits[2:]
+        # 2. Se veio com prefixo 055 (ex: "055 11 99999-9999")
+        elif digits.startswith("055") and len(digits) > 12:
+            digits = digits[3:]
+        # 3. Se começa com 55 e possui tamanho de DDI + DDD + número (>= 12 dígitos, ex: 5511999998888 ou 551133334444)
+        elif digits.startswith("55") and len(digits) > 11:
+            digits = digits[2:]
+
+        # Remove zero à esquerda do DDD caso tenha restado (ex: "011999998888" -> "11999998888")
+        if digits.startswith("0") and len(digits) in (11, 12):
+            digits = digits[1:]
+
+        return digits[:20]
+
     def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
         address = order_data.get('recipient_address', {})
         buyer_user = order_data.get('buyer_username')
@@ -624,7 +655,8 @@ class ShopeeService:
         fantasia = str(buyer_user).strip()[:100] if buyer_user else None
         
         cpf_cnpj, tipo_pessoa = self._extract_cpf_cnpj(order_data, address)
-        phone = "".join(filter(str.isdigit, str(address.get('phone') or '')))[:20]
+        raw_phone = address.get('phone') or address.get('mobile') or order_data.get('dropshipper_phone') or ''
+        phone = self._clean_phone(raw_phone)
         
         parsed_addr = self._parse_shopee_address(address)
 
@@ -655,6 +687,11 @@ class ShopeeService:
             if phone:
                 cliente_existente.telefone = phone
                 cliente_existente.celular = phone
+            else:
+                if cliente_existente.telefone:
+                    cliente_existente.telefone = self._clean_phone(cliente_existente.telefone)
+                if cliente_existente.celular:
+                    cliente_existente.celular = self._clean_phone(cliente_existente.celular)
             if parsed_addr["cep"]:
                 cliente_existente.cep = parsed_addr["cep"]
             if parsed_addr["estado"]:
@@ -1461,6 +1498,116 @@ class ShopeeService:
             "tracking_number": getattr(pedido, 'shopee_tracking_number', None),
             "ship_result": ship_result
         }
+
+    def send_shopee_tracking_link(self, pedido: models.Pedido, tracking_url: str = None) -> Dict[str, Any]:
+        """
+        Envia o link / código de rastreamento do pedido para a Shopee OpenAPI v2:
+        1. Utiliza POST /api/v2/logistics/update_tracking_status com tracking_url e tracking_number (oficial TMS Brasil).
+        2. Se o pedido for não-integrado / custom e ainda não tiver despacho agendado, executa ship_order.
+        3. Grava localmente o código de rastreio e data de despacho no pedido.
+        """
+        order_sn = getattr(pedido, 'shopee_order_sn', None)
+        if not order_sn and pedido.observacao:
+            import re
+            m = re.search(r"Pedido Shopee\s*([A-Za-z0-9]+)", pedido.observacao or "")
+            if m:
+                order_sn = m.group(1)
+                pedido.shopee_order_sn = order_sn
+
+        if not order_sn:
+            logger.warning(f"Pedido #{pedido.id_sequencial or pedido.id} não possui shopee_order_sn para envio de rastreio.")
+            return {"status": "skipped", "message": "Pedido não possui identificador da Shopee (shopee_order_sn)."}
+
+        # Resolução do link e código de rastreio
+        raw_val = str(tracking_url or "").strip()
+        if not raw_val:
+            raw_val = (
+                getattr(pedido, 'intelipost_tracking_url', None) or
+                getattr(pedido, 'shopee_tracking_number', None) or
+                getattr(pedido, 'intelipost_tracking_code', None) or
+                ""
+            )
+
+        if not raw_val:
+            return {"status": "error", "message": "Nenhum link ou código de rastreio fornecido para envio à Shopee."}
+
+        is_url = raw_val.startswith("http://") or raw_val.startswith("https://")
+        final_tracking_url = raw_val if is_url else getattr(pedido, 'intelipost_tracking_url', raw_val)
+        final_tracking_number = (
+            getattr(pedido, 'shopee_tracking_number', None) or
+            getattr(pedido, 'intelipost_tracking_code', None) or
+            getattr(pedido, 'numero_nf', None) or
+            (raw_val if not is_url else str(order_sn))
+        )
+
+        logger.info(f"Enviando dados de rastreio para Shopee ({order_sn}): URL='{final_tracking_url}', Código='{final_tracking_number}'")
+        results = {}
+
+        try:
+            access_token = self._get_valid_access_token()
+            shop_id = str(self.config.shop_id)
+            timestamp = int(time.time())
+
+            # 1. Determina status de evento do rastreio
+            situacao_str = str(getattr(pedido, 'situacao', '') or '').lower()
+            if any(s in situacao_str for s in ['finalizado', 'entregue', 'completed', 'delivered']):
+                logistics_status = "logistic_delivery_done"
+            else:
+                logistics_status = "logistic_pickup_done"
+
+            # 2. POST /api/v2/logistics/update_tracking_status (Endpoint oficial TMS Brasil)
+            path_track = "/api/v2/logistics/update_tracking_status"
+            sign_track = self._generate_sign(path_track, timestamp, access_token, shop_id)
+            url_track = f"{self.api_base}{path_track}"
+            params_track = {
+                "partner_id": int(self.config.partner_id),
+                "timestamp": timestamp,
+                "access_token": access_token,
+                "shop_id": int(shop_id),
+                "sign": sign_track
+            }
+            payload_track = {
+                "order_sn": str(order_sn),
+                "status": logistics_status,
+                "tracking_number": str(final_tracking_number),
+                "tracking_url": str(final_tracking_url)
+            }
+
+            resp_track = requests.post(url_track, params=params_track, json=payload_track, timeout=20.0)
+            data_track = resp_track.json()
+            logger.info(f"Resposta update_tracking_status Shopee ({order_sn}): status={resp_track.status_code}, body={resp_track.text}")
+            results["update_tracking_status"] = data_track
+
+            # 3. Se o pedido precisar de agendamento/despacho não integrado
+            if not getattr(pedido, 'data_despacho', None):
+                try:
+                    ship_res = self.arrange_shipment(order_sn=order_sn, pedido=pedido)
+                    results["arrange_shipment"] = ship_res
+                except Exception as ship_err:
+                    logger.debug(f"Aviso ao tentar arrange_shipment: {ship_err}")
+
+            # 4. Atualiza localmente o rastreio no pedido se ainda não possuir
+            if final_tracking_number and not pedido.shopee_tracking_number:
+                pedido.shopee_tracking_number = str(final_tracking_number)
+            if not pedido.data_despacho:
+                pedido.data_despacho = datetime.now(timezone.utc).date()
+
+            try:
+                self.db.commit()
+                self.db.refresh(pedido)
+            except Exception:
+                pass
+
+            is_success = resp_track.status_code == 200 and not data_track.get("error")
+            return {
+                "status": "success" if is_success else "warning",
+                "message": "Link de rastreio transmitido para a Shopee com sucesso!" if is_success else f"Aviso no envio de rastreio Shopee: {data_track.get('message', resp_track.text)}",
+                "details": results
+            }
+
+        except Exception as e:
+            logger.exception(f"Erro ao transmitir link de rastreio para a Shopee ({order_sn}): {e}")
+            return {"status": "error", "message": str(e)}
 
     def upload_xml(self, order_sn: str, xml_content: str, chave_acesso: str = None, numero_nf: str = None) -> Dict[str, Any]:
         """

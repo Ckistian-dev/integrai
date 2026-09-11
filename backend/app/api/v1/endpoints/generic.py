@@ -120,7 +120,8 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
         "chave_acesso", "numero_nf", "shopee_order_sn", "meli_order_id",
         "id_pedido_intelipost", "observacao", "observacoes_nf", "titulo",
         "cidade", "bairro", "logradouro", "endereco_cidade", "endereco_logradouro",
-        "caixa_destino_origem", "origem_venda", "lote", "deposito", "increment_id"
+        "caixa_destino_origem", "origem_venda", "lote", "deposito", "increment_id",
+        "embalador"
     ]
 
     for field_name in PRIORITY_TEXT_FIELDS:
@@ -2957,11 +2958,33 @@ def update_item(
     # --- CAPTURA ESTADO ANTERIOR (Para Pedidos) ---
     old_situacao = None
     old_intelipost_status = None
+    old_meli_tracking_val = None
+    old_shopee_tracking_val = None
+    meli_campo_rastreio = None
+    shopee_campo_rastreio = None
+
     if model_name == "pedidos":
         if hasattr(db_obj, "situacao"):
             old_situacao = db_obj.situacao
         if hasattr(db_obj, "status_intelipost"):
             old_intelipost_status = db_obj.status_intelipost
+        
+        try:
+            meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
+                models.MeliConfiguracao.id_empresa == current_user.id_empresa
+            ).first()
+            if meli_cfg and meli_cfg[0]:
+                meli_campo_rastreio = meli_cfg[0]
+                old_meli_tracking_val = getattr(db_obj, meli_campo_rastreio, None)
+
+            shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
+                models.ShopeeConfiguracao.id_empresa == current_user.id_empresa
+            ).first()
+            if shopee_cfg and shopee_cfg[0]:
+                shopee_campo_rastreio = shopee_cfg[0]
+                old_shopee_tracking_val = getattr(db_obj, shopee_campo_rastreio, None)
+        except Exception as _cfg_err:
+            pass
 
     # 🎯 LÓGICA ESPECÍFICA: Preencher data_pedido ao aprovar
     if model_name == "pedidos":
@@ -3210,6 +3233,40 @@ def update_item(
                 except Exception as e:
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")
+
+            # 🎯 LÓGICA ESPECÍFICA: Envio de Link/Código de Rastreio para Mercado Livre
+            if is_ml_order and meli_campo_rastreio:
+                new_meli_tracking_val = getattr(item, meli_campo_rastreio, None)
+                meli_tracking_mudou = (
+                    new_meli_tracking_val is not None and 
+                    str(new_meli_tracking_val).strip() != "" and
+                    str(new_meli_tracking_val).strip() != str(old_meli_tracking_val or "").strip()
+                )
+                if meli_tracking_mudou:
+                    try:
+                        from app.core.service.meli_service import MeliService
+                        meli_svc = MeliService(db, current_user.id_empresa)
+                        _exec_async(meli_svc.send_meli_tracking_link(item, tracking_url=str(new_meli_tracking_val).strip()))
+                    except Exception as e:
+                        import logging as _logging
+                        _logging.getLogger(__name__).error(f"Erro ao enviar link de rastreio ao Mercado Livre para pedido #{item.id}: {e}")
+
+            # 🎯 LÓGICA ESPECÍFICA: Envio de Link/Código de Rastreio para Shopee
+            if is_shopee_order and shopee_campo_rastreio:
+                new_shopee_tracking_val = getattr(item, shopee_campo_rastreio, None)
+                shopee_tracking_mudou = (
+                    new_shopee_tracking_val is not None and 
+                    str(new_shopee_tracking_val).strip() != "" and
+                    str(new_shopee_tracking_val).strip() != str(old_shopee_tracking_val or "").strip()
+                )
+                if shopee_tracking_mudou:
+                    try:
+                        from app.core.service.shopee_service import ShopeeService
+                        shopee_svc = ShopeeService(db, current_user.id_empresa)
+                        shopee_svc.send_shopee_tracking_link(item, tracking_url=str(new_shopee_tracking_val).strip())
+                    except Exception as e:
+                        import logging as _logging
+                        _logging.getLogger(__name__).error(f"Erro ao enviar link de rastreio à Shopee para pedido #{item.id}: {e}")
 
         # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI em qualquer alteração de pedido
         if model_name == "pedidos":

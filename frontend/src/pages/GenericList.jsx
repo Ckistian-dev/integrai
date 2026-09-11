@@ -217,7 +217,8 @@ const statusChangeActions = {
       modalTitle: "Conferência de Embalagem",
       modalConfirmText: "Concluir Embalagem",
       modalVariant: "teal",
-      showVolumes: true
+      showVolumes: true,
+      showEmbalador: true
     },
 
     {
@@ -4596,6 +4597,7 @@ const GenericList = () => {
           confirmText={conferenciaConfig?.modalConfirmText}
           variant={conferenciaConfig?.modalVariant}
           showVolumes={conferenciaConfig?.showVolumes}
+          showEmbalador={conferenciaConfig?.showEmbalador ?? conferenciaConfig?.showVolumes}
         />
 
         {/* MODAL DE FATURAMENTO */}

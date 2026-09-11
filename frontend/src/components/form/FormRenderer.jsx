@@ -24,6 +24,7 @@ import { ReportBuilderInput } from '../ui/ReportBuilderInput';
 import { PaymentMethodsInput } from '../ui/PaymentMethodsInput';
 import { MeliStatusRulesInput } from '../ui/MeliStatusRulesInput';
 import { ShopeeStatusRulesInput } from '../ui/ShopeeStatusRulesInput';
+import { OrderFieldSelectInput } from '../ui/OrderFieldSelectInput';
 import { PackagingSimulationInput } from '../ui/PackagingSimulationInput';
 
 /**
@@ -298,6 +299,9 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
 
     case 'shopee_status_rules':
       return <ShopeeStatusRulesInput {...props} value={value} />;
+
+    case 'order_field_select':
+      return <OrderFieldSelectInput {...props} value={value} />;
 
     default:
       if (field.component === 'file') {
