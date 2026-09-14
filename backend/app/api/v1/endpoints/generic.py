@@ -3242,7 +3242,7 @@ def update_item(
                     str(new_meli_tracking_val).strip() != "" and
                     str(new_meli_tracking_val).strip() != str(old_meli_tracking_val or "").strip()
                 )
-                if meli_tracking_mudou:
+                if meli_tracking_mudou and not getattr(item, 'rastreio_enviado', False):
                     try:
                         from app.core.service.meli_service import MeliService
                         meli_svc = MeliService(db, current_user.id_empresa)
@@ -3259,7 +3259,7 @@ def update_item(
                     str(new_shopee_tracking_val).strip() != "" and
                     str(new_shopee_tracking_val).strip() != str(old_shopee_tracking_val or "").strip()
                 )
-                if shopee_tracking_mudou:
+                if shopee_tracking_mudou and not getattr(item, 'rastreio_enviado', False):
                     try:
                         from app.core.service.shopee_service import ShopeeService
                         shopee_svc = ShopeeService(db, current_user.id_empresa)

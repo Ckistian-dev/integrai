@@ -1499,13 +1499,21 @@ class ShopeeService:
             "ship_result": ship_result
         }
 
-    def send_shopee_tracking_link(self, pedido: models.Pedido, tracking_url: str = None) -> Dict[str, Any]:
+    def send_shopee_tracking_link(self, pedido: models.Pedido, tracking_url: str = None, force: bool = False) -> Dict[str, Any]:
         """
         Envia o link / código de rastreamento do pedido para a Shopee OpenAPI v2:
         1. Utiliza POST /api/v2/logistics/update_tracking_status com tracking_url e tracking_number (oficial TMS Brasil).
         2. Se o pedido for não-integrado / custom e ainda não tiver despacho agendado, executa ship_order.
-        3. Grava localmente o código de rastreio e data de despacho no pedido.
+        3. Grava localmente o código de rastreio e data de despacho no pedido e marca rastreio_enviado = True.
         """
+        if getattr(pedido, 'rastreio_enviado', False) and not force:
+            logger.info(f"Pedido #{pedido.id_sequencial or pedido.id} já possui rastreio_enviado=True. Ignorando envio para Shopee.")
+            return {
+                "status": "skipped",
+                "message": "Link de rastreio já foi transmitido anteriormente para este pedido.",
+                "rastreio_enviado": True
+            }
+
         order_sn = getattr(pedido, 'shopee_order_sn', None)
         if not order_sn and pedido.observacao:
             import re
@@ -1591,6 +1599,10 @@ class ShopeeService:
                 pedido.shopee_tracking_number = str(final_tracking_number)
             if not pedido.data_despacho:
                 pedido.data_despacho = datetime.now(timezone.utc).date()
+
+            is_success = resp_track.status_code == 200 and not data_track.get("error")
+            if is_success:
+                pedido.rastreio_enviado = True
 
             try:
                 self.db.commit()

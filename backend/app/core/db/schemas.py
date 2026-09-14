@@ -606,6 +606,7 @@ class PedidoBase(BaseModel):
     meli_xml_enviado: Optional[bool] = False
     intelipost_criado: Optional[bool] = False
     email_enviado: Optional[bool] = False
+    rastreio_enviado: Optional[bool] = False
 
 class PedidoCreate(PedidoBase):
     pass
@@ -698,8 +699,10 @@ class PedidoUpdate(BaseModel):
     endereco_complemento: Optional[str] = None
     
     meli_xml_enviado: Optional[bool] = None
+    shopee_xml_enviado: Optional[bool] = None
     intelipost_criado: Optional[bool] = None
     email_enviado: Optional[bool] = None
+    rastreio_enviado: Optional[bool] = None
 
 class Pedido(PedidoBase):  # RENOMEADO de PedidoRead para Pedido
     id: int

@@ -57,7 +57,7 @@ async def _send_meli_tracking_background(pedido_id: int, id_empresa: int, tracki
     db_bg = SessionLocal()
     try:
         pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
-        if pedido:
+        if pedido and not getattr(pedido, 'rastreio_enviado', False):
             meli_svc = MeliService(db_bg, id_empresa)
             await meli_svc.send_meli_tracking_link(pedido, tracking_url)
     except Exception as e:
@@ -73,7 +73,7 @@ def _send_shopee_tracking_background(pedido_id: int, id_empresa: int, tracking_u
     db_bg = SessionLocal()
     try:
         pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
-        if pedido:
+        if pedido and not getattr(pedido, 'rastreio_enviado', False):
             shopee_svc = ShopeeService(db_bg, id_empresa)
             shopee_svc.send_shopee_tracking_link(pedido, tracking_url)
     except Exception as e:
@@ -367,7 +367,7 @@ async def receber_webhook_intelipost(
         background_tasks.add_task(_sync_shopee_status_background, pedido.id, empresa_id)
 
     # 🎯 Envio automático do link de rastreio se houver coluna configurada
-    if tracking_url or tracking_code:
+    if (tracking_url or tracking_code) and not getattr(pedido, 'rastreio_enviado', False):
         empresa_id = id_empresa or pedido.id_empresa
         if is_ml_order:
             meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(

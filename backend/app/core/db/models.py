@@ -1053,6 +1053,7 @@ class Pedido(Base):
     volumes_peso_bruto = Column(Numeric(10, 3), info={'tab': 'Frete', 'format_mask': 'decimal:3', 'label': 'Peso Bruto (kg)', 'placeholder': '0,000'})
     volumes_peso_liquido = Column(Numeric(10, 3), info={'tab': 'Frete', 'format_mask': 'decimal:3', 'label': 'Peso Líquido (kg)', 'placeholder': '0,000'})
     embalador = Column(String, nullable=True, info={'tab': 'Frete', 'component': 'creatable_select', 'label': 'Responsável pela Embalagem', 'placeholder': 'Selecione ou adicione o embalador'})
+    rastreio_enviado = Column(Boolean, default=False, info={'tab': 'Frete', 'label': 'Rastreio Enviado?'})
 
     # --- Aba: Valores ---
     total = Column(Currency(), 

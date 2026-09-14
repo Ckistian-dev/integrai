@@ -1713,13 +1713,21 @@ class MeliService:
                 success = False
             return success
 
-    async def send_meli_tracking_link(self, pedido, tracking_url: str = None) -> Dict[str, Any]:
+    async def send_meli_tracking_link(self, pedido, tracking_url: str = None, force: bool = False) -> Dict[str, Any]:
         """
         Envia o link / código de rastreamento do pedido para o Mercado Livre:
         1. Atualiza o objeto de shipment (PUT /shipments/{shipment_id}) com tracking_url, speed_tracking_url e tracking_number.
         2. Transmite mensagem pós-venda com o link de rastreio diretamente ao chat da venda (/messages/packs/{pack_id} ou /messages/orders/{order_id}).
-        3. Grava localmente o código de rastreio no pedido.
+        3. Grava localmente o código de rastreio no pedido e marca rastreio_enviado = True.
         """
+        if getattr(pedido, 'rastreio_enviado', False) and not force:
+            logger.info(f"Pedido #{pedido.id_sequencial or pedido.id} já possui rastreio_enviado=True. Ignorando envio para Mercado Livre.")
+            return {
+                "status": "skipped",
+                "message": "Link de rastreio já foi enviado anteriormente para este pedido.",
+                "rastreio_enviado": True
+            }
+
         ml_order_ids = self._extract_ml_ids_from_pedido(pedido)
         if not ml_order_ids:
             logger.warning(f"Pedido #{pedido.id_sequencial or pedido.id} não possui IDs do Mercado Livre configurados.")
@@ -1826,6 +1834,7 @@ class MeliService:
                 pedido.meli_tracking_number = str(final_tracking_number)
             if not pedido.data_despacho:
                 pedido.data_despacho = datetime.now(timezone.utc).date()
+            pedido.rastreio_enviado = True
 
             try:
                 self.db.commit()

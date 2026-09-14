@@ -345,6 +345,7 @@ async def atualizar_status_pedido_ml(
 async def enviar_rastreio_pedido_meli(
     pedido_id: int,
     tracking_url: Optional[str] = Query(None, description="Link ou código de rastreio opcional"),
+    force: bool = Query(False, description="Forçar reenvio do link de rastreio mesmo se já enviado"),
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
@@ -359,6 +360,13 @@ async def enviar_rastreio_pedido_meli(
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
 
+    if getattr(pedido, 'rastreio_enviado', False) and not force:
+        return {
+            "status": "skipped",
+            "message": "Link de rastreio já foi enviado anteriormente para este pedido.",
+            "rastreio_enviado": True
+        }
+
     val_to_send = tracking_url
     if not val_to_send:
         meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
@@ -368,5 +376,5 @@ async def enviar_rastreio_pedido_meli(
             val_to_send = getattr(pedido, meli_cfg[0], None)
 
     service = MeliService(db, current_user.id_empresa)
-    res = await service.send_meli_tracking_link(pedido, tracking_url=val_to_send)
+    res = await service.send_meli_tracking_link(pedido, tracking_url=val_to_send, force=force)
     return res

@@ -278,6 +278,7 @@ def atualizar_status_pedido_shopee(
 def enviar_rastreio_pedido_shopee(
     pedido_id: int,
     tracking_url: Optional[str] = Query(None, description="Link ou código de rastreio opcional"),
+    force: bool = Query(False, description="Forçar reenvio do link de rastreio mesmo se já enviado"),
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
@@ -292,6 +293,13 @@ def enviar_rastreio_pedido_shopee(
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
 
+    if getattr(pedido, 'rastreio_enviado', False) and not force:
+        return {
+            "status": "skipped",
+            "message": "Link de rastreio já foi transmitido anteriormente para a Shopee.",
+            "rastreio_enviado": True
+        }
+
     val_to_send = tracking_url
     if not val_to_send:
         shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
@@ -301,5 +309,5 @@ def enviar_rastreio_pedido_shopee(
             val_to_send = getattr(pedido, shopee_cfg[0], None)
 
     service = ShopeeService(db, current_user.id_empresa)
-    res = service.send_shopee_tracking_link(pedido=pedido, tracking_url=val_to_send)
+    res = service.send_shopee_tracking_link(pedido=pedido, tracking_url=val_to_send, force=force)
     return res

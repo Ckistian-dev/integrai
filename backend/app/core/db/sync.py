@@ -877,6 +877,13 @@ def sync_database_schema(engine: Engine, base):
         except Exception as emb_sync_err:
             logger.debug(f"[SYNC] Garantia coluna embalador em pedidos: {emb_sync_err}")
 
+        # 2d. Garante coluna rastreio_enviado na tabela pedidos
+        try:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE "pedidos" ADD COLUMN IF NOT EXISTS "rastreio_enviado" BOOLEAN DEFAULT false'))
+        except Exception as rastreio_sync_err:
+            logger.debug(f"[SYNC] Garantia coluna rastreio_enviado em pedidos: {rastreio_sync_err}")
+
         # 3. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
         try:
             run_one_time_id_sequencial_migration(engine, base)
@@ -920,3 +927,11 @@ def sync_database_schema(engine: Engine, base):
         logger.info("[SYNC] Sincronização do banco de dados concluída com sucesso.")
     except Exception as e:
         logger.error(f"[SYNC] Erro crítico na inicialização do banco: {e}")
+
+
+if __name__ == "__main__":
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO)
+    from app.core.db.database import engine, Base
+    import app.core.db.models  # garante que todos os modelos estejam registrados no Base.metadata
+    sync_database_schema(engine, Base)
