@@ -15,12 +15,16 @@ const ConferenciaPedidoModal = ({
   showVolumes = false,
   showEmbalador = false
 }) => {
-  const [volumes, setVolumes] = useState(0);
+  const [volumes, setVolumes] = useState('');
   const [embalador, setEmbalador] = useState('');
 
   useEffect(() => {
     if (pedido) {
-      setVolumes(pedido.volumes_quantidade || 0);
+      setVolumes(
+        pedido.volumes_quantidade !== undefined && pedido.volumes_quantidade !== null && Number(pedido.volumes_quantidade) > 0
+          ? pedido.volumes_quantidade
+          : ''
+      );
       setEmbalador(pedido.embalador || '');
     }
   }, [pedido]);
@@ -39,16 +43,31 @@ const ConferenciaPedidoModal = ({
 
   const handleConfirmClick = () => {
     const data = {};
+    const errors = [];
+
     if (showVolumes) {
-      if (!volumes || Number(volumes) <= 0) {
-        toast.error("A quantidade de volumes deve ser maior que zero.");
-        return;
+      const numVolumes = Number(volumes);
+      if (volumes === '' || volumes === null || volumes === undefined || isNaN(numVolumes) || numVolumes <= 0) {
+        errors.push("A quantidade de volumes é obrigatória e deve ser maior que zero.");
+      } else {
+        data.volumes_quantidade = numVolumes;
       }
-      data.volumes_quantidade = Number(volumes);
     }
+
     if (showEmbalador) {
-      data.embalador = embalador ? embalador.trim() : null;
+      const embaladorTrimmed = typeof embalador === 'string' ? embalador.trim() : (embalador ? String(embalador).trim() : '');
+      if (!embaladorTrimmed) {
+        errors.push("O responsável pela embalagem é obrigatório.");
+      } else {
+        data.embalador = embaladorTrimmed;
+      }
     }
+
+    if (errors.length > 0) {
+      errors.forEach((err) => toast.error(err));
+      return;
+    }
+
     onConfirm(data);
   };
 
@@ -99,11 +118,15 @@ const ConferenciaPedidoModal = ({
                     <div><p className="text-sm text-gray-500">Data Prevista</p><p>{pedido.data_finalizacao || '-'}</p></div>
                     {showVolumes && (
                       <div>
-                        <label htmlFor="volumes" className="block text-sm font-medium text-gray-700">Qtd. Volumes</label>
+                        <label htmlFor="volumes" className="block text-sm font-medium text-gray-700">
+                          Qtd. Volumes <span className="text-red-500">*</span>
+                        </label>
                         <input
                           type="number"
                           id="volumes"
-                          min="0"
+                          min="1"
+                          step="1"
+                          placeholder="Informe a quantidade..."
                           value={volumes}
                           onChange={(e) => setVolumes(e.target.value)}
                           className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
@@ -116,7 +139,8 @@ const ConferenciaPedidoModal = ({
                           field={{
                             name: 'embalador',
                             label: 'Responsável pela Embalagem',
-                            placeholder: 'Selecione ou crie o embalador...'
+                            placeholder: 'Selecione ou crie o embalador...',
+                            required: true
                           }}
                           value={embalador}
                           onChange={(e) => setEmbalador(e.target.value)}
