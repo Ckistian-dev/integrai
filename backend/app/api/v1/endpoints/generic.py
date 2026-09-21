@@ -34,6 +34,9 @@ from app.core.service.elastic_email_service import ElasticEmailService
 # Constante global para o fuso horário de Brasília
 TZ_BR = timezone(timedelta(hours=-3))
 
+import re
+from app.utils.validators import validar_cpf, validar_cnpj
+
 from app.crud import crud_user
 
 router = APIRouter()
@@ -2725,10 +2728,22 @@ def create_item(
             if field in item_data and isinstance(item_data[field], str):
                 item_data[field] = item_data[field].upper()
 
-    # Validação de Duplicidade para Cadastros (CPF/CNPJ único por Empresa)
+    # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
+        tipo_pessoa = item_data.get("tipo_pessoa")
         if cpf_cnpj:
+            clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
+            if clean_doc not in ("00000000000", "00000000000000"):
+                if (tipo_pessoa == "fisica" or len(clean_doc) == 11) and clean_doc.isdigit():
+                    if not validar_cpf(clean_doc):
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
+                elif tipo_pessoa == "juridica" or len(clean_doc) == 14:
+                    if not validar_cnpj(clean_doc):
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
+                elif len(clean_doc) < 11:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF incompleto ou inválido.")
+
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
                 models.Cadastro.id_empresa == current_user.id_empresa
@@ -2943,10 +2958,24 @@ def update_item(
             if field in item_data and isinstance(item_data[field], str):
                 item_data[field] = item_data[field].upper()
 
-    # Validação de Duplicidade para Cadastros (CPF/CNPJ único por Empresa)
+    # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
+        tipo_pessoa = item_data.get("tipo_pessoa", getattr(db_obj, "tipo_pessoa", None))
+        if hasattr(tipo_pessoa, "value"):
+            tipo_pessoa = tipo_pessoa.value
         if cpf_cnpj:
+            clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
+            if clean_doc not in ("00000000000", "00000000000000"):
+                if (tipo_pessoa == "fisica" or len(clean_doc) == 11) and clean_doc.isdigit():
+                    if not validar_cpf(clean_doc):
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
+                elif tipo_pessoa == "juridica" or len(clean_doc) == 14:
+                    if not validar_cnpj(clean_doc):
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
+                elif len(clean_doc) < 11:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF incompleto ou inválido.")
+
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
                 models.Cadastro.id_empresa == current_user.id_empresa,
@@ -2962,6 +2991,7 @@ def update_item(
     old_shopee_tracking_val = None
     meli_campo_rastreio = None
     shopee_campo_rastreio = None
+    old_meli_rules_cols = {}
 
     if model_name == "pedidos":
         if hasattr(db_obj, "situacao"):
@@ -2970,12 +3000,19 @@ def update_item(
             old_intelipost_status = db_obj.status_intelipost
         
         try:
-            meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
+            meli_cfg = db.query(models.MeliConfiguracao).filter(
                 models.MeliConfiguracao.id_empresa == current_user.id_empresa
             ).first()
-            if meli_cfg and meli_cfg[0]:
-                meli_campo_rastreio = meli_cfg[0]
-                old_meli_tracking_val = getattr(db_obj, meli_campo_rastreio, None)
+            if meli_cfg:
+                if meli_cfg.campo_link_rastreio:
+                    meli_campo_rastreio = meli_cfg.campo_link_rastreio
+                    old_meli_tracking_val = getattr(db_obj, meli_campo_rastreio, None)
+                if meli_cfg.regras_atualizacao_status and isinstance(meli_cfg.regras_atualizacao_status, list):
+                    for r in meli_cfg.regras_atualizacao_status:
+                        if isinstance(r, dict):
+                            col = r.get('coluna_pedido')
+                            if col and hasattr(db_obj, col) and col not in old_meli_rules_cols:
+                                old_meli_rules_cols[col] = getattr(db_obj, col, None)
 
             shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
                 models.ShopeeConfiguracao.id_empresa == current_user.id_empresa
@@ -2988,6 +3025,16 @@ def update_item(
 
     # 🎯 LÓGICA ESPECÍFICA: Preencher data_pedido ao aprovar
     if model_name == "pedidos":
+        # 🎯 LÓGICA ESPECÍFICA: Validar se a embalagem já foi realizada
+        validar_embalagem = item_data.pop("validar_situacao_embalagem", None)
+        if validar_embalagem:
+            if old_situacao and old_situacao not in [models.PedidoSituacaoEnum.embalagem, "Embalagem"]:
+                old_sit_val = old_situacao.value if hasattr(old_situacao, 'value') else str(old_situacao)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,    
+                    detail=f"A embalagem deste pedido já foi realizada."
+                )
+
         new_situacao_from_payload = item_data.get("situacao")
         if new_situacao_from_payload and (new_situacao_from_payload == models.PedidoSituacaoEnum.aprovacao or new_situacao_from_payload == models.PedidoSituacaoEnum.programacao):
             if db_obj.data_pedido is None:
@@ -3190,7 +3237,11 @@ def update_item(
                     _l.getLogger(__name__).error(f"Erro ao executar tarefa assíncrona: {exc}")
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
-            status_ml_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
+            meli_rules_changed = any(
+                getattr(item, col, None) != old_val
+                for col, old_val in old_meli_rules_cols.items()
+            )
+            status_ml_mudou = (old_situacao != item.situacao) or meli_rules_changed
             is_ml_order = bool(
                 getattr(item, 'meli_order_id', None) or 
                 getattr(item, 'meli_pack_id', None) or 

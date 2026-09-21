@@ -884,6 +884,14 @@ def sync_database_schema(engine: Engine, base):
         except Exception as rastreio_sync_err:
             logger.debug(f"[SYNC] Garantia coluna rastreio_enviado em pedidos: {rastreio_sync_err}")
 
+        # 2e. Garante novos valores no ENUM pedidosituacaoenum
+        try:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TYPE "pedidosituacaoenum" ADD VALUE IF NOT EXISTS \'Saiu para Entrega\''))
+                conn.execute(text('ALTER TYPE "pedidosituacaoenum" ADD VALUE IF NOT EXISTS \'Entregue\''))
+        except Exception as enum_sync_err:
+            logger.debug(f"[SYNC] Garantia novos valores pedidosituacaoenum: {enum_sync_err}")
+
         # 3. Migração id_sequencial (fases 1 e 2 sempre rodam; fase 3 só uma vez)
         try:
             run_one_time_id_sequencial_migration(engine, base)

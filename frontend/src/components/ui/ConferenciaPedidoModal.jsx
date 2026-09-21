@@ -1,6 +1,6 @@
 import React, { Fragment, useState, useEffect } from 'react';
 import { Transition, Dialog } from '@headlessui/react';
-import { X, Package } from 'lucide-react';
+import { X, Package, AlertTriangle } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { CreatableSelectInput } from './CreatableSelectInput';
 
@@ -18,6 +18,10 @@ const ConferenciaPedidoModal = ({
   const [volumes, setVolumes] = useState('');
   const [embalador, setEmbalador] = useState('');
 
+  const isEmbalagemConferencia = showVolumes || showEmbalador;
+  const isSituacaoEmbalagem = pedido?.situacao && String(pedido.situacao).trim().toLowerCase() === 'embalagem';
+  const embalagemJaRealizada = isEmbalagemConferencia && Boolean(pedido) && !isSituacaoEmbalagem;
+
   useEffect(() => {
     if (pedido) {
       setVolumes(
@@ -26,8 +30,12 @@ const ConferenciaPedidoModal = ({
           : ''
       );
       setEmbalador(pedido.embalador || '');
+
+      if ((showVolumes || showEmbalador) && pedido.situacao && String(pedido.situacao).trim().toLowerCase() !== 'embalagem') {
+        toast.warning(`Atenção: A embalagem deste pedido já foi realizada.`);
+      }
     }
-  }, [pedido]);
+  }, [pedido, showVolumes, showEmbalador]);
 
   if (!isOpen || !pedido) return null;
 
@@ -42,6 +50,11 @@ const ConferenciaPedidoModal = ({
   const btnClass = colorClasses[variant] || colorClasses.blue;
 
   const handleConfirmClick = () => {
+    if (embalagemJaRealizada) {
+      toast.error(`Não é possível concluir: a embalagem deste pedido já foi realizada.`);
+      return;
+    }
+
     const data = {};
     const errors = [];
 
@@ -129,7 +142,11 @@ const ConferenciaPedidoModal = ({
                           placeholder="Informe a quantidade..."
                           value={volumes}
                           onChange={(e) => setVolumes(e.target.value)}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                          disabled={embalagemJaRealizada}
+                          className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm p-2 border ${embalagemJaRealizada
+                            ? 'bg-gray-100 text-gray-500 border-gray-200 cursor-not-allowed'
+                            : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                            }`}
                         />
                       </div>
                     )}
@@ -145,6 +162,7 @@ const ConferenciaPedidoModal = ({
                           value={embalador}
                           onChange={(e) => setEmbalador(e.target.value)}
                           modelName="pedidos"
+                          disabled={embalagemJaRealizada}
                         />
                       </div>
                     )}
@@ -176,7 +194,15 @@ const ConferenciaPedidoModal = ({
                 </div>
 
                 <div className="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
-                  <button type="button" className={`inline-flex w-full justify-center rounded-md border border-transparent px-4 py-2 text-base font-medium text-white shadow-sm sm:ml-3 sm:w-auto sm:text-sm ${btnClass}`} onClick={handleConfirmClick}>{confirmText}</button>
+                  <button
+                    type="button"
+                    disabled={embalagemJaRealizada}
+                    className={`inline-flex w-full justify-center rounded-md border border-transparent px-4 py-2 text-base font-medium text-white shadow-sm sm:ml-3 sm:w-auto sm:text-sm ${embalagemJaRealizada ? 'bg-gray-400 hover:bg-gray-400 cursor-not-allowed opacity-60' : btnClass
+                      }`}
+                    onClick={handleConfirmClick}
+                  >
+                    {embalagemJaRealizada ? 'Embalagem Já Realizada' : confirmText}
+                  </button>
                   <button type="button" className="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 sm:mt-0 sm:w-auto sm:text-sm" onClick={onClose}>Cancelar</button>
                 </div>
               </Dialog.Panel>

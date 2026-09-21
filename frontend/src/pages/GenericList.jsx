@@ -2157,10 +2157,18 @@ const GenericList = () => {
   const handleConfirmConferencia = async (modalData = {}) => {
     if (!selectedRowId || !conferenciaConfig) return;
 
+    // Se for conferência de embalagem, verifica se o pedido ainda está na situação 'Embalagem'
+    const isEmbalagemAction = conferenciaConfig.currentStatus === 'Embalagem' || conferenciaConfig.showVolumes || conferenciaConfig.showEmbalador;
+    if (isEmbalagemAction && currentPedidoDetails?.situacao && String(currentPedidoDetails.situacao).trim().toLowerCase() !== 'embalagem') {
+      toast.error(`A embalagem deste pedido já foi realizada. Situação atual: "${currentPedidoDetails.situacao}".`);
+      return;
+    }
+
     try {
       const targetId = selectedItem?.id_sequencial ?? currentPedidoDetails?.id_sequencial ?? selectedRowId;
       await api.put(`/generic/pedidos/${targetId}`, {
         situacao: conferenciaConfig.newStatus,
+        validar_situacao_embalagem: isEmbalagemAction,
         ...modalData
       });
 
@@ -2193,7 +2201,8 @@ const GenericList = () => {
       setSelectedRowIds([]);
       handleCloseConferenciaModal();
     } catch (err) {
-      toast.error("Erro ao atualizar o status do pedido.");
+      const errorMsg = err.response?.data?.detail || "Erro ao atualizar o status do pedido.";
+      toast.error(errorMsg);
     }
   };
 

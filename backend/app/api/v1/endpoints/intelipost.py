@@ -343,18 +343,6 @@ async def receber_webhook_intelipost(
     db.commit()
     db.refresh(pedido)
 
-    # 🎯 Sincronização automática de status com o Mercado Livre se for pedido ML
-    is_ml_order = bool(
-        getattr(pedido, 'meli_order_id', None) or 
-        getattr(pedido, 'meli_pack_id', None) or 
-        getattr(pedido, 'meli_shipment_id', None) or
-        "mercado livre" in (pedido.origem_venda or "").lower() or
-        "pedido ml:" in (pedido.observacao or "").lower() or
-        "id ml:" in (pedido.observacao or "").lower()
-    )
-    if is_ml_order:
-        empresa_id = id_empresa or pedido.id_empresa
-        background_tasks.add_task(_sync_meli_status_background, pedido.id, empresa_id)
 
     # 🎯 Sincronização automática de status com a Shopee se for pedido Shopee
     is_shopee_order = bool(

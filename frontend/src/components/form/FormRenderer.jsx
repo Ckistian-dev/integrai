@@ -31,7 +31,7 @@ import { PackagingSimulationInput } from '../ui/PackagingSimulationInput';
  * Componente FormRenderer
  * Renderiza o input correto baseado nos metadados do campo.
  */
-const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...rest }) => {
+const FormRenderer = ({ field, value, onChange, error, modelName, formData, onBlur, ...rest }) => {
   // Se o campo estiver explicitamente marcado como não visível ou for id/id_sequencial/código, não renderiza
   if (field.visible === false || field.name === 'id' || field.name === 'id_sequencial' || field.name === 'codigo') {
     return null;
@@ -40,10 +40,26 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
   // Estado para controlar se o campo está focado
   const [isFocused, setIsFocused] = React.useState(false);
 
+  // Handlers para controlar o foco e blur
+  const handleFocus = (e) => {
+    setIsFocused(true);
+    if (rest.onFocus) rest.onFocus(e);
+    if (Number(value) === 0 && e && e.target && e.target.select) {
+      setTimeout(() => e.target.select(), 10);
+    }
+  };
+  const handleBlur = (e) => {
+    setIsFocused(false);
+    if (onBlur) onBlur(e);
+    if (rest.onBlur) rest.onBlur(e);
+  };
+
   const props = {
     field,
     value: value ?? '',
     onChange,
+    onBlur: handleBlur,
+    onFocus: handleFocus,
     error,
     modelName,
     formData,
@@ -52,18 +68,24 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
   };
 
   const formatMask = field.format_mask;
-  const maskProps = (field.type !== 'date' && field.type !== 'datetime' && formatMask)
+  let maskProps = (field.type !== 'date' && field.type !== 'datetime' && formatMask)
     ? MASKS[formatMask]
     : null;
 
-  // Handlers para controlar o foco
-  const handleFocus = (e) => {
-    setIsFocused(true);
-    if (Number(value) === 0 && e && e.target && e.target.select) {
-      setTimeout(() => e.target.select(), 10);
+  // Ajusta máscara estrita para CPF (apenas números) ou CNPJ quando tipo_pessoa estiver definido
+  if ((formatMask === 'cnpj_cpf' || formatMask === 'cnpj') && formData?.tipo_pessoa) {
+    if (formData.tipo_pessoa === 'fisica') {
+      maskProps = MASKS['cpf'] || '000.000.000-00';
+    } else if (formData.tipo_pessoa === 'juridica') {
+      maskProps = {
+        mask: 'XX.XXX.XXX/XXXX-00',
+        definitions: {
+          'X': /[0-9a-zA-Z]/
+        },
+        prepareChar: (str) => str.toUpperCase()
+      };
     }
-  };
-  const handleBlur = () => setIsFocused(false);
+  }
 
   if (maskProps) {
     // 1. Lógica de SAÍDA (O que vai para o state/banco quando edita)
@@ -179,11 +201,15 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, ...r
       imaskParams.value = String(value || '');
       imaskParams.unmaskedValue = undefined; 
       imaskParams.typedValue = undefined;
+      imaskParams.onFocus = handleFocus;
+      imaskParams.onBlur = handleBlur;
     }
 
     // Key para garantir que o React renderize o input APÓS os dados chegarem
-    // FIX: Usar apenas o nome do campo para evitar que o input seja recriado (perda de foco) ao digitar
-    const forceRenderKey = field.name;
+    // Permite re-renderizar caso o tipo_pessoa mude (ex: física <-> jurídica) sem perder foco enquanto digita
+    const forceRenderKey = (formatMask === 'cnpj_cpf' || formatMask === 'cnpj')
+      ? `${field.name}-${formData?.tipo_pessoa || 'auto'}`
+      : field.name;
 
     return <MaskedInput key={forceRenderKey} {...imaskParams} />;
   }

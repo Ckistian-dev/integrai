@@ -4,9 +4,11 @@ from sqlalchemy import (
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
     UniqueConstraint, event, text, Index
 )
-from sqlalchemy.orm import relationship, Mapper
+from sqlalchemy.orm import relationship, Mapper, validates
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
+import re
+from app.utils.validators import validar_cpf, validar_cnpj
 from .database import Base
 from .types import IntEnum, SafeStrEnum, Currency, EncryptedString, EncryptedJSON
 
@@ -137,6 +139,8 @@ class PedidoSituacaoEnum(str, enum.Enum):
     faturamento = "Faturamento"
     expedicao = "Expedição"
     despachado = "Despachado"
+    saiu_para_entrega = "Saiu para Entrega"
+    entregue = "Entregue"
     cancelado = "Cancelado"
 
 class PedidoModalidadeFreteEnum(str, enum.Enum):
@@ -628,6 +632,23 @@ class Cadastro(Base):
     # --- Aba: Dados Gerais ---
     cpf_cnpj = Column(String(18), nullable=False, index=True, 
                       info={'format_mask': 'cnpj_cpf', 'tab': 'Dados Gerais', 'label': 'CPF/CNPJ', 'placeholder': 'Digite CPF ou CNPJ'})
+
+    @validates('cpf_cnpj')
+    def validate_cpf_cnpj(self, key, value):
+        if not value:
+            return value
+        clean = re.sub(r'[^a-zA-Z0-9]', '', str(value))
+        if clean in ("00000000000", "00000000000000"):
+            return value
+        if len(clean) == 11 and clean.isdigit():
+            if not validar_cpf(clean):
+                raise ValueError(f"CPF {value} informado é inválido.")
+        elif len(clean) == 14:
+            if not validar_cnpj(clean):
+                raise ValueError(f"CNPJ {value} informado é inválido.")
+        elif len(clean) < 11:
+            raise ValueError(f"Documento CPF/CNPJ {value} incompleto ou inválido.")
+        return value
     nome_razao = Column(String, nullable=False, index=True, 
                         info={'tab': 'Dados Gerais', 'label': 'Nome / Razão Social', 'placeholder': 'Ex: João Silva ou Empresa X Ltda'})
     fantasia = Column(String, 

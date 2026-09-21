@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { Save, X, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
+import { isValidCpf, isValidCnpj } from '../utils/validators';
 
 const GenericForm = ({ modelName: propModelName, propId }) => {
   const { modelName: paramModelName, id: paramId } = useParams();
@@ -72,10 +73,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
   // Funções utilitárias para validar formato de CNPJ e CEP antes de consultar APIs externas
   const isValidCnpjFormat = (cnpj) => {
-    const clean = String(cnpj || '').replace(/\D/g, '');
-    if (clean.length !== 14) return false;
-    if (/^(\d)\1+$/.test(clean)) return false; // descarta sequências como 00000000000000 ou 11111111111111
-    return true;
+    return isValidCnpj(cnpj);
   };
 
   const isValidCepFormat = (cep) => {
@@ -636,15 +634,46 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
       }
     }
 
-    // Dispara busca de CNPJ se for o campo 'cpf_cnpj' e tiver 14 dígitos válidos e novos
+    // Dispara validação e busca se for o campo 'cpf_cnpj'
     if (name === 'cpf_cnpj') {
-      const cleanCnpj = String(val).replace(/\D/g, '');
-      if (cleanCnpj.length === 14) {
+      const cleanDoc = String(val || '').replace(/[^a-zA-Z0-9]/g, '');
+
+      if (cleanDoc.length === 11 && /^\d{11}$/.test(cleanDoc)) {
+        setFormData(prev => ({ ...prev, tipo_pessoa: 'fisica' }));
+        if (!isValidCpf(cleanDoc)) {
+          setFormErrors(prev => ({ ...prev, [name]: 'CPF inválido.' }));
+        } else {
+          setFormErrors(prev => {
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          });
+        }
+      } else if (cleanDoc.length === 14) {
         setFormData(prev => ({ ...prev, tipo_pessoa: 'juridica' }));
-      }
-      if (isValidCnpjFormat(cleanCnpj) && cleanCnpj !== lastQueriedCnpjRef.current) {
-        lastQueriedCnpjRef.current = cleanCnpj;
-        fetchCnpjData(cleanCnpj);
+        if (!isValidCnpj(cleanDoc)) {
+          setFormErrors(prev => ({ ...prev, [name]: 'CNPJ inválido.' }));
+        } else {
+          setFormErrors(prev => {
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          });
+        }
+        if (isValidCnpjFormat(cleanDoc) && cleanDoc !== lastQueriedCnpjRef.current) {
+          lastQueriedCnpjRef.current = cleanDoc;
+          fetchCnpjData(cleanDoc);
+        }
+      } else {
+        // Se estiver digitando/apagando antes de completar 11 dígitos, limpa avisos anteriores de formato inválido
+        setFormErrors(prev => {
+          if (prev[name] === 'CPF inválido.' || prev[name] === 'CNPJ inválido.') {
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          }
+          return prev;
+        });
       }
     }
   };
@@ -697,6 +726,41 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
     }
   }, [formData.pagamento, modelName, isEditMode]);
 
+  // Handler para perda de foco (Blur) com validação de campos específicos
+  const handleFieldBlur = (e, fieldName) => {
+    if (fieldName === 'cpf_cnpj') {
+      const docVal = formData.cpf_cnpj;
+      if (docVal) {
+        const clean = String(docVal).replace(/[^a-zA-Z0-9]/g, '');
+        if (clean.length > 0 && clean.length < 11) {
+          setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CPF incompleto (deve ter 11 dígitos).' }));
+        } else if (clean.length === 11) {
+          if (!isValidCpf(clean)) {
+            setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CPF inválido.' }));
+          } else {
+            setFormErrors(prev => {
+              const next = { ...prev };
+              delete next.cpf_cnpj;
+              return next;
+            });
+          }
+        } else if (clean.length > 11 && clean.length < 14) {
+          setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CNPJ incompleto (deve ter 14 dígitos).' }));
+        } else if (clean.length === 14) {
+          if (!isValidCnpj(clean)) {
+            setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CNPJ inválido.' }));
+          } else {
+            setFormErrors(prev => {
+              const next = { ...prev };
+              delete next.cpf_cnpj;
+              return next;
+            });
+          }
+        }
+      }
+    }
+  };
+
   // Handler de submit
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -745,10 +809,27 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
       }
     }
 
+    // Validação de integridade para CPF / CNPJ
+    if (formData.cpf_cnpj) {
+      const cleanDoc = String(formData.cpf_cnpj).replace(/[^a-zA-Z0-9]/g, '');
+      const isFisica = formData.tipo_pessoa === 'fisica' || cleanDoc.length <= 11;
+      if (isFisica) {
+        if (!isValidCpf(cleanDoc)) {
+          errors.cpf_cnpj = 'CPF informado é inválido.';
+        }
+      } else {
+        if (!isValidCnpj(cleanDoc)) {
+          errors.cpf_cnpj = 'CNPJ informado é inválido.';
+        }
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
       if (errors.itens) {
         toast.error(errors.itens);
+      } else if (errors.cpf_cnpj) {
+        toast.error(errors.cpf_cnpj);
       } else {
         toast.error('Verifique os campos obrigatórios.');
       }
@@ -1023,6 +1104,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
                                   field={field.name === 'valor' && installmentConfig.active ? { ...field, label: 'Valor da Parcela' } : field}
                                   value={formData[field.name] ?? ''}
                                   onChange={handleChange}
+                                  onBlur={(e) => handleFieldBlur(e, field.name)}
                                   error={formErrors[field.name]}
                                   modelName={modelName}
                                   formData={formData}

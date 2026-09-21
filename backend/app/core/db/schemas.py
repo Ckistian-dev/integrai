@@ -1,5 +1,7 @@
-from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_serializer, ConfigDict
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_serializer, field_validator, ConfigDict
 from typing import Optional, List, Any, Dict, Type
+import re
+from app.utils.validators import validar_cpf, validar_cnpj
 
 class BaseModel(PydanticBaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, from_attributes=True)
@@ -246,6 +248,24 @@ class CadastroBase(BaseModel):
     criar_pedido_intelipost: Optional[bool] = True
     delivery_method_id_intelipost: Optional[str] = None
 
+    @field_validator('cpf_cnpj')
+    @classmethod
+    def validate_cpf_cnpj(cls, v: str) -> str:
+        if not v:
+            return v
+        clean = re.sub(r'[^a-zA-Z0-9]', '', str(v))
+        if clean in ("00000000000", "00000000000000"):
+            return v
+        if len(clean) == 11 and clean.isdigit():
+            if not validar_cpf(clean):
+                raise ValueError("CPF informado é inválido.")
+        elif len(clean) == 14:
+            if not validar_cnpj(clean):
+                raise ValueError("CNPJ informado é inválido.")
+        elif len(clean) < 11:
+            raise ValueError("CPF incompleto ou inválido.")
+        return v
+
 class CadastroCreate(CadastroBase):
     pass
 
@@ -271,6 +291,24 @@ class CadastroUpdate(BaseModel):
     situacao: Optional[bool] = None
     criar_pedido_intelipost: Optional[bool] = None
     delivery_method_id_intelipost: Optional[str] = None
+
+    @field_validator('cpf_cnpj')
+    @classmethod
+    def validate_cpf_cnpj(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        clean = re.sub(r'[^a-zA-Z0-9]', '', str(v))
+        if clean in ("00000000000", "00000000000000"):
+            return v
+        if len(clean) == 11 and clean.isdigit():
+            if not validar_cpf(clean):
+                raise ValueError("CPF informado é inválido.")
+        elif len(clean) == 14:
+            if not validar_cnpj(clean):
+                raise ValueError("CNPJ informado é inválido.")
+        elif len(clean) < 11:
+            raise ValueError("CPF incompleto ou inválido.")
+        return v
 
 class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
     id: int
@@ -658,6 +696,7 @@ class PedidoUpdate(BaseModel):
     volumes_peso_bruto: Optional[Decimal] = Field(None)
     volumes_peso_liquido: Optional[Decimal] = Field(None)
     embalador: Optional[str] = None
+    validar_situacao_embalagem: Optional[bool] = None
     
     total: Optional[Decimal] = Field(None)
     desconto: Optional[Decimal] = Field(None)

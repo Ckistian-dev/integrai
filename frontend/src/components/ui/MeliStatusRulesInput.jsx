@@ -5,11 +5,28 @@ import CreatableSelect from 'react-select/creatable';
 import api from '../../api/axiosConfig';
 
 export const STATUS_MERCADO_LIVRE_OPTIONS = [
-  { value: 'shipped', label: 'Despachado (shipped)' },
+  // Trânsito e Entrega
+  { value: 'shipped', label: 'Despachado / Em Trânsito (shipped)' },
+  { value: 'out_for_delivery', label: 'Saiu para Entrega (out_for_delivery)' },
   { value: 'delivered', label: 'Entregue (delivered)' },
+  { value: 'waiting_for_withdrawal', label: 'Aguardando Retirada em Agência (waiting_for_withdrawal)' },
+
+  // Preparação e Expedição
   { value: 'handling', label: 'Em Preparação (handling)' },
   { value: 'ready_to_ship', label: 'Pronto para Envio (ready_to_ship)' },
+  { value: 'printed', label: 'Etiqueta Impressa (printed)' },
+  { value: 'waiting_for_carrier', label: 'Aguardando Coleta / Transportadora (waiting_for_carrier)' },
+  { value: 'invoice_pending', label: 'Aguardando Nota Fiscal (invoice_pending)' },
+
+  // Ocorrências e Insucessos de Entrega
   { value: 'not_delivered', label: 'Não Entregue (not_delivered)' },
+  { value: 'receiver_absent', label: 'Destinatário Ausente (receiver_absent)' },
+  { value: 'bad_address', label: 'Endereço Incorreto / Não Localizado (bad_address)' },
+  { value: 'delayed', label: 'Atrasado (delayed)' },
+  { value: 'returning_to_sender', label: 'Devolvendo ao Remetente (returning_to_sender)' },
+  { value: 'returned_to_sender', label: 'Devolvido ao Remetente (returned_to_sender)' },
+  { value: 'damaged', label: 'Avariado / Sinistro (damaged)' },
+  { value: 'cancelled', label: 'Cancelado (cancelled)' },
 ];
 
 export const MeliStatusRulesInput = ({ field, value, onChange, disabled }) => {
@@ -69,7 +86,7 @@ export const MeliStatusRulesInput = ({ field, value, onChange, disabled }) => {
   };
 
   const handleAddRule = () => {
-    const defaultCol = 'status_intelipost';
+    const defaultCol = 'situacao';
     fetchColumnOptions(defaultCol);
     updateRules([...rules, { coluna_pedido: defaultCol, valor_coluna: '', status_meli: 'delivered' }]);
   };

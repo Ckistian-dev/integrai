@@ -7,11 +7,12 @@ import api from '../../api/axiosConfig';
 
 import IMask from 'imask';
 import { IMaskMixin, IMaskInput } from 'react-imask';
-
+export { isValidCpf, isValidCnpj, isValidCpfCnpj } from '../../utils/validators';
 
 export const MASKS = {
   'cep': '00000-000',
   'ncm': '0000.00.00',
+  'cpf': '000.000.000-00',
   // Adicione 'cnpj' apontando para a mesma estrutura do 'cnpj_cpf' para garantir
   'cnpj': [
     { mask: '000.000.000-00' },
@@ -236,11 +237,14 @@ export const TextInput = React.forwardRef(({
 
   return (
     <div className="flex flex-col">
-      {label && (
-        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      )}
+      <div className="flex items-center justify-between mb-1.5">
+        {label ? (
+          <label htmlFor={name} className="text-sm font-medium text-gray-700">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+        ) : <div />}
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
       <input
         type={inputType}
         id={name}
@@ -254,7 +258,6 @@ export const TextInput = React.forwardRef(({
                     ${error ? 'border-red-500 focus:ring-red-500' : ''}`}
         {...filteredInputProps}
       />
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 });
@@ -265,9 +268,12 @@ export const TextAreaInput = ({ field, value, onChange, error, modelName, ...pro
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      <div className="flex items-center justify-between mb-1.5">
+        <label htmlFor={name} className="text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
       <textarea
         id={name}
         name={name}
@@ -282,7 +288,6 @@ export const TextAreaInput = ({ field, value, onChange, error, modelName, ...pro
                     ${error ? 'border-red-500' : ''}`}
         {...props}
       />
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
@@ -314,11 +319,14 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
 
   return (
     <div className="flex flex-col">
-      {label && (
-        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      )}
+      <div className="flex items-center justify-between mb-1.5">
+        {label ? (
+          <label htmlFor={name} className="text-sm font-medium text-gray-700">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+        ) : <div />}
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
 
       {/* Caixa do Campo no Padrão do Sistema */}
       <div
@@ -342,8 +350,6 @@ export const BooleanInput = ({ field, value, onChange, error, modelName, disable
           />
         </div>
       </div>
-
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
@@ -774,11 +780,14 @@ export const SelectInput = ({ field, value, onChange, error, options = [], model
 
   return (
     <div className="flex flex-col">
-      {label && (
-        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      )}
+      <div className="flex items-center justify-between mb-1.5">
+        {label ? (
+          <label htmlFor={name} className="text-sm font-medium text-gray-700">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+        ) : <div />}
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
       <Select
         id={name}
         name={name}
@@ -794,7 +803,6 @@ export const SelectInput = ({ field, value, onChange, error, options = [], model
         isClearable={true}
         {...props}
       />
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
@@ -1163,9 +1171,12 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
 
   return (
     <div className="flex flex-col">
-      <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      <div className="flex items-center justify-between mb-1.5">
+        <label htmlFor={name} className="text-sm font-medium text-gray-700">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
       <AsyncSelect
         id={name}
         name={name}
@@ -1186,7 +1197,6 @@ export const AsyncSelectInput = ({ field, value, onChange, error, modelName, for
         isClearable
         {...props}
       />
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
@@ -1209,11 +1219,14 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, formDa
 
   return (
     <div className="flex flex-col">
-      {label && (
-        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      )}
+      <div className="flex items-center justify-between mb-1.5">
+        {label ? (
+          <label htmlFor={name} className="text-sm font-medium text-gray-700">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+        ) : <div />}
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
 
       <div className="relative flex items-center">
         <input
@@ -1242,8 +1255,6 @@ export const PasswordInput = ({ field, value, onChange, error, modelName, formDa
           {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
         </button>
       </div>
-
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
@@ -1311,11 +1322,14 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
 
   return (
     <div className="flex flex-col">
-      {label && (
-        <label htmlFor={name} className="mb-1.5 text-sm font-medium text-gray-700">
-          {label} {required && <span className="text-red-500">*</span>}
-        </label>
-      )}
+      <div className="flex items-center justify-between mb-1.5">
+        {label ? (
+          <label htmlFor={name} className="text-sm font-medium text-gray-700">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+        ) : <div />}
+        {error && <span className="text-xs font-semibold text-red-500 ml-auto pl-2">{error}</span>}
+      </div>
       <input
         type={inputType}
         id={name}
@@ -1331,7 +1345,6 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
                     ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-400' : ''}`}
         {...props}
       />
-      {error && <span className="mt-1 text-xs text-red-500">{error}</span>}
     </div>
   );
 };
