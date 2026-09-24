@@ -72,20 +72,6 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, onBl
     ? MASKS[formatMask]
     : null;
 
-  // Ajusta máscara estrita para CPF (apenas números) ou CNPJ quando tipo_pessoa estiver definido
-  if ((formatMask === 'cnpj_cpf' || formatMask === 'cnpj') && formData?.tipo_pessoa) {
-    if (formData.tipo_pessoa === 'fisica') {
-      maskProps = MASKS['cpf'] || '000.000.000-00';
-    } else if (formData.tipo_pessoa === 'juridica') {
-      maskProps = {
-        mask: 'XX.XXX.XXX/XXXX-00',
-        definitions: {
-          'X': /[0-9a-zA-Z]/
-        },
-        prepareChar: (str) => str.toUpperCase()
-      };
-    }
-  }
 
   if (maskProps) {
     // 1. Lógica de SAÍDA (O que vai para o state/banco quando edita)
@@ -104,7 +90,7 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, onBl
         } else {
           finalValue = null;
         }
-      } else if (typeof maskProps === 'string' || Array.isArray(maskProps)) {
+      } else if (formatMask === 'cnpj_cpf' || formatMask === 'cnpj' || formatMask === 'cpf' || typeof maskProps === 'string' || Array.isArray(maskProps)) {
         // Se for CPF/CNPJ, limpa tudo e deixa só caracteres alfanuméricos
         if (finalValue) finalValue = finalValue.replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); 
         if (finalValue === '') finalValue = null;
@@ -205,11 +191,8 @@ const FormRenderer = ({ field, value, onChange, error, modelName, formData, onBl
       imaskParams.onBlur = handleBlur;
     }
 
-    // Key para garantir que o React renderize o input APÓS os dados chegarem
-    // Permite re-renderizar caso o tipo_pessoa mude (ex: física <-> jurídica) sem perder foco enquanto digita
-    const forceRenderKey = (formatMask === 'cnpj_cpf' || formatMask === 'cnpj')
-      ? `${field.name}-${formData?.tipo_pessoa || 'auto'}`
-      : field.name;
+    // Key estável para não recriar o input e perder foco
+    const forceRenderKey = field.name;
 
     return <MaskedInput key={forceRenderKey} {...imaskParams} />;
   }

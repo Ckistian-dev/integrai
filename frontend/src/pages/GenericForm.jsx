@@ -533,7 +533,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
   // --- INTEGRAÇÃO BRASIL API (CNPJ) ---
   const fetchCnpjData = useCallback(async (cnpjValue) => {
-    const cnpj = String(cnpjValue).replace(/\D/g, '');
+    const cnpj = String(cnpjValue).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     if (!isValidCnpjFormat(cnpj)) return;
 
     try {
@@ -544,7 +544,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
       setFormData(prev => ({
         ...prev,
-        tipo_pessoa: prev.tipo_pessoa || 'juridica',
+        tipo_pessoa: 'juridica',
         nome_razao: prev.nome_razao || (data.razao_social ? data.razao_social.toUpperCase() : ''),
         fantasia: prev.fantasia || (data.nome_fantasia ? data.nome_fantasia.toUpperCase() : ''),
         cep: prev.cep || (data.cep ? data.cep.replace(/\D/g, '') : ''),
@@ -639,10 +639,8 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
       const cleanDoc = String(val || '').replace(/[^a-zA-Z0-9]/g, '');
 
       if (cleanDoc.length === 11 && /^\d{11}$/.test(cleanDoc)) {
-        setFormData(prev => ({ ...prev, tipo_pessoa: 'fisica' }));
-        if (!isValidCpf(cleanDoc)) {
-          setFormErrors(prev => ({ ...prev, [name]: 'CPF inválido.' }));
-        } else {
+        if (isValidCpf(cleanDoc)) {
+          setFormData(prev => ({ ...prev, tipo_pessoa: 'fisica' }));
           setFormErrors(prev => {
             const next = { ...prev };
             delete next[name];
@@ -665,9 +663,9 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           fetchCnpjData(cleanDoc);
         }
       } else {
-        // Se estiver digitando/apagando antes de completar 11 dígitos, limpa avisos anteriores de formato inválido
+        // Se estiver digitando/apagando em tamanho intermediário, limpa avisos temporários de formato
         setFormErrors(prev => {
-          if (prev[name] === 'CPF inválido.' || prev[name] === 'CNPJ inválido.') {
+          if (prev[name] === 'CPF inválido.' || prev[name] === 'CNPJ inválido.' || prev[name]?.includes('incompleto') || prev[name]?.includes('inválido')) {
             const next = { ...prev };
             delete next[name];
             return next;
@@ -732,12 +730,22 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
       const docVal = formData.cpf_cnpj;
       if (docVal) {
         const clean = String(docVal).replace(/[^a-zA-Z0-9]/g, '');
+        if (clean === "00000000000" || clean === "00000000000000") {
+          setFormErrors(prev => {
+            const next = { ...prev };
+            delete next.cpf_cnpj;
+            return next;
+          });
+          return;
+        }
+
         if (clean.length > 0 && clean.length < 11) {
           setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CPF incompleto (deve ter 11 dígitos).' }));
         } else if (clean.length === 11) {
           if (!isValidCpf(clean)) {
             setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CPF inválido.' }));
           } else {
+            setFormData(prev => ({ ...prev, tipo_pessoa: 'fisica' }));
             setFormErrors(prev => {
               const next = { ...prev };
               delete next.cpf_cnpj;
@@ -750,12 +758,15 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
           if (!isValidCnpj(clean)) {
             setFormErrors(prev => ({ ...prev, cpf_cnpj: 'CNPJ inválido.' }));
           } else {
+            setFormData(prev => ({ ...prev, tipo_pessoa: 'juridica' }));
             setFormErrors(prev => {
               const next = { ...prev };
               delete next.cpf_cnpj;
               return next;
             });
           }
+        } else if (clean.length > 14) {
+          setFormErrors(prev => ({ ...prev, cpf_cnpj: 'Documento inválido (máximo 14 caracteres).' }));
         }
       }
     }
@@ -812,14 +823,17 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
     // Validação de integridade para CPF / CNPJ
     if (formData.cpf_cnpj) {
       const cleanDoc = String(formData.cpf_cnpj).replace(/[^a-zA-Z0-9]/g, '');
-      const isFisica = formData.tipo_pessoa === 'fisica' || cleanDoc.length <= 11;
-      if (isFisica) {
-        if (!isValidCpf(cleanDoc)) {
-          errors.cpf_cnpj = 'CPF informado é inválido.';
-        }
-      } else {
-        if (!isValidCnpj(cleanDoc)) {
-          errors.cpf_cnpj = 'CNPJ informado é inválido.';
+      if (cleanDoc !== '00000000000' && cleanDoc !== '00000000000000') {
+        if (cleanDoc.length === 11 && /^\d{11}$/.test(cleanDoc)) {
+          if (!isValidCpf(cleanDoc)) {
+            errors.cpf_cnpj = 'CPF informado é inválido.';
+          }
+        } else if (cleanDoc.length === 14) {
+          if (!isValidCnpj(cleanDoc)) {
+            errors.cpf_cnpj = 'CNPJ informado é inválido.';
+          }
+        } else {
+          errors.cpf_cnpj = 'Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).';
         }
       }
     }
@@ -838,23 +852,33 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
     }
 
     try {
+      const payload = { ...formData };
+      if (payload.cpf_cnpj) {
+        const cleanDoc = String(payload.cpf_cnpj).replace(/[^a-zA-Z0-9]/g, '');
+        if (cleanDoc.length === 11) {
+          payload.tipo_pessoa = 'fisica';
+        } else if (cleanDoc.length === 14) {
+          payload.tipo_pessoa = 'juridica';
+        }
+      }
+
       if (isEditMode) {
         // Atualização (PUT)
-        await api.put(`/generic/${modelName}/${id}`, formData);
+        await api.put(`/generic/${modelName}/${id}`, payload);
       } else {
         // --- LÓGICA DE PARCELAMENTO (CONTAS - CRIAÇÃO EM LOTE) ---
         if (modelName === 'contas' && installmentConfig.active) {
           const num = Math.max(1, parseInt(installmentConfig.count));
-          const valuePerInstallment = Number(formData.valor) || 0;
+          const valuePerInstallment = Number(payload.valor) || 0;
 
-          const baseDate = formData.data_vencimento ? new Date(formData.data_vencimento + 'T12:00:00') : new Date();
+          const baseDate = payload.data_vencimento ? new Date(payload.data_vencimento + 'T12:00:00') : new Date();
 
           for (let i = 1; i <= num; i++) {
-            const currentData = { ...formData };
+            const currentData = { ...payload };
             currentData.valor = valuePerInstallment;
 
             // Formata descrição: "Descrição Original (Parcela 1/10)"
-            const descBase = formData.descricao || '';
+            const descBase = payload.descricao || '';
             currentData.descricao = num > 1 ? `${descBase} (Parcela ${i}/${num})` : descBase;
 
             // Calcula data de vencimento
@@ -877,7 +901,7 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
         }
 
         // Criação (POST)
-        await api.post(`/generic/${modelName}`, formData);
+        await api.post(`/generic/${modelName}`, payload);
       }
       // Sucesso, volta para a página anterior
       navigate(-1);

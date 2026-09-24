@@ -646,8 +646,8 @@ class Cadastro(Base):
         elif len(clean) == 14:
             if not validar_cnpj(clean):
                 raise ValueError(f"CNPJ {value} informado é inválido.")
-        elif len(clean) < 11:
-            raise ValueError(f"Documento CPF/CNPJ {value} incompleto ou inválido.")
+        else:
+            raise ValueError(f"Documento CPF/CNPJ {value} inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
         return value
     nome_razao = Column(String, nullable=False, index=True, 
                         info={'tab': 'Dados Gerais', 'label': 'Nome / Razão Social', 'placeholder': 'Ex: João Silva ou Empresa X Ltda'})

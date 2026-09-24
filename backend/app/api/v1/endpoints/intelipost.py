@@ -344,6 +344,20 @@ async def receber_webhook_intelipost(
     db.refresh(pedido)
 
 
+    empresa_id = id_empresa or pedido.id_empresa
+
+    # 🎯 Sincronização automática de status com o Mercado Livre se for pedido ML
+    is_ml_order = bool(
+        getattr(pedido, 'meli_order_id', None) or
+        getattr(pedido, 'meli_pack_id', None) or
+        getattr(pedido, 'meli_shipment_id', None) or
+        "mercado livre" in (pedido.origem_venda or "").lower() or
+        "pedido ml:" in (pedido.observacao or "").lower() or
+        "id ml:" in (pedido.observacao or "").lower()
+    )
+    if is_ml_order:
+        background_tasks.add_task(_sync_meli_status_background, pedido.id, empresa_id)
+
     # 🎯 Sincronização automática de status com a Shopee se for pedido Shopee
     is_shopee_order = bool(
         getattr(pedido, 'shopee_order_sn', None) or
@@ -351,12 +365,10 @@ async def receber_webhook_intelipost(
         "pedido shopee" in (pedido.observacao or "").lower()
     )
     if is_shopee_order:
-        empresa_id = id_empresa or pedido.id_empresa
         background_tasks.add_task(_sync_shopee_status_background, pedido.id, empresa_id)
 
     # 🎯 Envio automático do link de rastreio se houver coluna configurada
     if (tracking_url or tracking_code) and not getattr(pedido, 'rastreio_enviado', False):
-        empresa_id = id_empresa or pedido.id_empresa
         if is_ml_order:
             meli_cfg = db.query(models.MeliConfiguracao.campo_link_rastreio).filter(
                 models.MeliConfiguracao.id_empresa == empresa_id

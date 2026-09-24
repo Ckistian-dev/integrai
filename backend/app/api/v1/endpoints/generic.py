@@ -2731,18 +2731,22 @@ def create_item(
     # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
-        tipo_pessoa = item_data.get("tipo_pessoa")
         if cpf_cnpj:
             clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
             if clean_doc not in ("00000000000", "00000000000000"):
-                if (tipo_pessoa == "fisica" or len(clean_doc) == 11) and clean_doc.isdigit():
+                if len(clean_doc) == 11 and clean_doc.isdigit():
                     if not validar_cpf(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
-                elif tipo_pessoa == "juridica" or len(clean_doc) == 14:
+                    item_data["tipo_pessoa"] = "fisica"
+                elif len(clean_doc) == 14:
                     if not validar_cnpj(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
-                elif len(clean_doc) < 11:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF incompleto ou inválido.")
+                    item_data["tipo_pessoa"] = "juridica"
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
+                    )
 
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
@@ -2961,20 +2965,22 @@ def update_item(
     # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
-        tipo_pessoa = item_data.get("tipo_pessoa", getattr(db_obj, "tipo_pessoa", None))
-        if hasattr(tipo_pessoa, "value"):
-            tipo_pessoa = tipo_pessoa.value
         if cpf_cnpj:
             clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
             if clean_doc not in ("00000000000", "00000000000000"):
-                if (tipo_pessoa == "fisica" or len(clean_doc) == 11) and clean_doc.isdigit():
+                if len(clean_doc) == 11 and clean_doc.isdigit():
                     if not validar_cpf(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
-                elif tipo_pessoa == "juridica" or len(clean_doc) == 14:
+                    item_data["tipo_pessoa"] = "fisica"
+                elif len(clean_doc) == 14:
                     if not validar_cnpj(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
-                elif len(clean_doc) < 11:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF incompleto ou inválido.")
+                    item_data["tipo_pessoa"] = "juridica"
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
+                    )
 
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,

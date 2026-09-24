@@ -262,8 +262,8 @@ class CadastroBase(BaseModel):
         elif len(clean) == 14:
             if not validar_cnpj(clean):
                 raise ValueError("CNPJ informado é inválido.")
-        elif len(clean) < 11:
-            raise ValueError("CPF incompleto ou inválido.")
+        else:
+            raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
         return v
 
 class CadastroCreate(CadastroBase):
@@ -306,8 +306,8 @@ class CadastroUpdate(BaseModel):
         elif len(clean) == 14:
             if not validar_cnpj(clean):
                 raise ValueError("CNPJ informado é inválido.")
-        elif len(clean) < 11:
-            raise ValueError("CPF incompleto ou inválido.")
+        else:
+            raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
         return v
 
 class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
