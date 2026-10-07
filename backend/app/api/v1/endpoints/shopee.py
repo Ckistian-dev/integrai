@@ -311,3 +311,29 @@ def enviar_rastreio_pedido_shopee(
     service = ShopeeService(db, current_user.id_empresa)
     res = service.send_shopee_tracking_link(pedido=pedido, tracking_url=val_to_send, force=force)
     return res
+
+
+@router.post("/shopee/pedidos/{pedido_id}/confirmar-entrega")
+def confirmar_entrega_pedido_shopee(
+    pedido_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Envia confirmação explícita de entrega do pedido para a Shopee (LOGISTICS_DELIVERY_DONE).
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        models.Pedido.id_sequencial == pedido_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    service = ShopeeService(db, current_user.id_empresa)
+    res = service.update_shopee_order_status(pedido=pedido, target_status="COMPLETED")
+    return {
+        "success": res.get("status") in ["success", "ok", "info"],
+        "message": res.get("message") or "Confirmação de entrega processada para a Shopee.",
+        "details": res
+    }

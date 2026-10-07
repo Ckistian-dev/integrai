@@ -2731,22 +2731,31 @@ def create_item(
     # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
+        tipo_pessoa = item_data.get("tipo_pessoa")
+        tipo_str = tipo_pessoa.value if hasattr(tipo_pessoa, "value") else str(tipo_pessoa or "").lower()
         if cpf_cnpj:
             clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
             if clean_doc not in ("00000000000", "00000000000000"):
-                if len(clean_doc) == 11 and clean_doc.isdigit():
-                    if not validar_cpf(clean_doc):
+                if tipo_str == "fisica":
+                    if len(clean_doc) != 11 or not clean_doc.isdigit() or not validar_cpf(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
-                    item_data["tipo_pessoa"] = "fisica"
-                elif len(clean_doc) == 14:
-                    if not validar_cnpj(clean_doc):
+                elif tipo_str == "juridica":
+                    if len(clean_doc) != 14 or not validar_cnpj(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
-                    item_data["tipo_pessoa"] = "juridica"
                 else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
-                    )
+                    if len(clean_doc) == 11 and clean_doc.isdigit():
+                        if not validar_cpf(clean_doc):
+                            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
+                        item_data["tipo_pessoa"] = "fisica"
+                    elif len(clean_doc) == 14:
+                        if not validar_cnpj(clean_doc):
+                            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
+                        item_data["tipo_pessoa"] = "juridica"
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
+                        )
 
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
@@ -2965,22 +2974,31 @@ def update_item(
     # Validação de Duplicidade e Integridade para Cadastros (CPF/CNPJ único por Empresa)
     if model_name == "cadastros":
         cpf_cnpj = item_data.get("cpf_cnpj")
+        tipo_pessoa = item_data.get("tipo_pessoa") or getattr(db_obj, "tipo_pessoa", None)
+        tipo_str = tipo_pessoa.value if hasattr(tipo_pessoa, "value") else str(tipo_pessoa or "").lower()
         if cpf_cnpj:
             clean_doc = re.sub(r'[^a-zA-Z0-9]', '', str(cpf_cnpj))
             if clean_doc not in ("00000000000", "00000000000000"):
-                if len(clean_doc) == 11 and clean_doc.isdigit():
-                    if not validar_cpf(clean_doc):
+                if tipo_str == "fisica":
+                    if len(clean_doc) != 11 or not clean_doc.isdigit() or not validar_cpf(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
-                    item_data["tipo_pessoa"] = "fisica"
-                elif len(clean_doc) == 14:
-                    if not validar_cnpj(clean_doc):
+                elif tipo_str == "juridica":
+                    if len(clean_doc) != 14 or not validar_cnpj(clean_doc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
-                    item_data["tipo_pessoa"] = "juridica"
                 else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
-                    )
+                    if len(clean_doc) == 11 and clean_doc.isdigit():
+                        if not validar_cpf(clean_doc):
+                            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF informado é inválido.")
+                        item_data["tipo_pessoa"] = "fisica"
+                    elif len(clean_doc) == 14:
+                        if not validar_cnpj(clean_doc):
+                            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CNPJ informado é inválido.")
+                        item_data["tipo_pessoa"] = "juridica"
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ)."
+                        )
 
             existing = db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == cpf_cnpj,
@@ -2998,6 +3016,7 @@ def update_item(
     meli_campo_rastreio = None
     shopee_campo_rastreio = None
     old_meli_rules_cols = {}
+    old_shopee_rules_cols = {}
 
     if model_name == "pedidos":
         if hasattr(db_obj, "situacao"):
@@ -3020,12 +3039,19 @@ def update_item(
                             if col and hasattr(db_obj, col) and col not in old_meli_rules_cols:
                                 old_meli_rules_cols[col] = getattr(db_obj, col, None)
 
-            shopee_cfg = db.query(models.ShopeeConfiguracao.campo_link_rastreio).filter(
+            shopee_cfg = db.query(models.ShopeeConfiguracao).filter(
                 models.ShopeeConfiguracao.id_empresa == current_user.id_empresa
             ).first()
-            if shopee_cfg and shopee_cfg[0]:
-                shopee_campo_rastreio = shopee_cfg[0]
-                old_shopee_tracking_val = getattr(db_obj, shopee_campo_rastreio, None)
+            if shopee_cfg:
+                if shopee_cfg.campo_link_rastreio:
+                    shopee_campo_rastreio = shopee_cfg.campo_link_rastreio
+                    old_shopee_tracking_val = getattr(db_obj, shopee_campo_rastreio, None)
+                if shopee_cfg.regras_atualizacao_status and isinstance(shopee_cfg.regras_atualizacao_status, list):
+                    for r in shopee_cfg.regras_atualizacao_status:
+                        if isinstance(r, dict):
+                            col = r.get('coluna_pedido')
+                            if col and hasattr(db_obj, col) and col not in old_shopee_rules_cols:
+                                old_shopee_rules_cols[col] = getattr(db_obj, col, None)
         except Exception as _cfg_err:
             pass
 
@@ -3276,7 +3302,13 @@ def update_item(
                     _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
-            status_shopee_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost)
+            shopee_regra_col_mudou = False
+            for col, old_val in old_shopee_rules_cols.items():
+                if getattr(item, col, None) != old_val:
+                    shopee_regra_col_mudou = True
+                    break
+
+            status_shopee_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost) or shopee_regra_col_mudou
             is_shopee_order = bool(
                 getattr(item, 'shopee_order_sn', None) or 
                 "shopee" in (item.origem_venda or "").lower() or
@@ -3316,7 +3348,7 @@ def update_item(
                     str(new_shopee_tracking_val).strip() != "" and
                     str(new_shopee_tracking_val).strip() != str(old_shopee_tracking_val or "").strip()
                 )
-                if shopee_tracking_mudou and not getattr(item, 'rastreio_enviado', False):
+                if shopee_tracking_mudou:
                     try:
                         from app.core.service.shopee_service import ShopeeService
                         shopee_svc = ShopeeService(db, current_user.id_empresa)

@@ -13,17 +13,13 @@ export const MASKS = {
   'cep': '00000-000',
   'ncm': '0000.00.00',
   'cpf': '000.000.000-00',
-  // Adicione 'cnpj' apontando para a mesma estrutura do 'cnpj_cpf' para garantir
-  'cnpj': [
-    { mask: '000.000.000-00' },
-    {
-      mask: 'XX.XXX.XXX/XXXX-00',
-      definitions: {
-        'X': /[0-9a-zA-Z]/
-      },
-      prepareChar: (str) => str.toUpperCase()
-    }
-  ],
+  'cnpj': {
+    mask: 'XX.XXX.XXX/XXXX-00',
+    definitions: {
+      'X': /[0-9a-zA-Z]/
+    },
+    prepareChar: (str) => str.toUpperCase()
+  },
   'cnpj_cpf': [
     { mask: '000.000.000-00' },
     {
@@ -1352,9 +1348,10 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
 /**
  * Formata o objeto ou lista de histórico em texto estruturado e bonito para download em .txt
  */
-const formatHistoryTxt = (val, formData) => {
+const formatHistoryTxt = (val, formData, fieldName = '') => {
+  const isMeli = fieldName && (fieldName.toLowerCase().includes('meli') || fieldName.toLowerCase().includes('mercado'));
   const pedidoRef =
-    formData?.id_pedido_intelipost ||
+    (isMeli ? (formData?.meli_order_id || formData?.meli_shipment_id) : formData?.id_pedido_intelipost) ||
     formData?.numero_pedido ||
     formData?.id_sequencial ||
     formData?.id ||
@@ -1379,18 +1376,22 @@ const formatHistoryTxt = (val, formData) => {
     }
   }
 
+  const systemTitle = isMeli
+    ? '              HISTÓRICO DE EVENTOS E RASTREAMENTO - MERCADO LIVRE\n'
+    : '              HISTÓRICO DE OCORRÊNCIAS DE ENTREGA - INTELIPOST\n';
+
   let text = `================================================================================\n`;
-  text += `              HISTÓRICO DE OCORRÊNCIAS DE ENTREGA - INTELIPOST\n`;
+  text += systemTitle;
   text += `================================================================================\n`;
   if (pedidoRef) {
     text += `Pedido / Referência           : ${pedidoRef}\n`;
   }
   text += `Data de Emissão do Relatório  : ${dateFormatted}\n`;
-  text += `Total de Ocorrências Gravadas : ${list.length}\n`;
+  text += `Total de Eventos Gravados     : ${list.length}\n`;
   text += `================================================================================\n\n`;
 
   if (list.length === 0) {
-    text += `Nenhuma ocorrência foi registrada no histórico até o momento.\n`;
+    text += `Nenhum evento foi registrado no histórico até o momento.\n`;
     return text;
   }
 
@@ -1406,31 +1407,55 @@ const formatHistoryTxt = (val, formData) => {
 
   list.forEach((item, idx) => {
     text += `--------------------------------------------------------------------------------\n`;
-    text += ` OCORRÊNCIA #${idx + 1}\n`;
+    text += ` EVENTO #${idx + 1}\n`;
     text += `--------------------------------------------------------------------------------\n`;
     if (item.status || item.state) {
       text += ` • Status                : ${item.status || 'N/A'}${item.state ? ` (${item.state})` : ''}\n`;
     }
+    if (item.substatus !== undefined) {
+      text += ` • Substatus             : ${item.substatus === null ? 'null (A caminho / Entregue)' : item.substatus}\n`;
+    }
+    if (item.nome_referencia || item.status_label) {
+      text += ` • Referência / Descrição: ${item.nome_referencia || item.status_label}\n`;
+    }
     if (item.micro_state) {
       text += ` • Detalhe (Micro State) : ${item.micro_state}\n`;
     }
-    if (item.provider_message) {
-      text += ` • Mensagem Transportadora: ${item.provider_message}\n`;
+    if (item.comentario || item.comment || item.provider_message) {
+      text += ` • Mensagem / Comentário : ${item.comentario || item.comment || item.provider_message}\n`;
     }
-    if (item.event_date) {
-      text += ` • Data do Evento        : ${formatItemDate(item.event_date)}\n`;
+    const evtDate = item.data_evento || item.event_date || item.date;
+    if (evtDate) {
+      text += ` • Data do Evento        : ${formatItemDate(evtDate)}\n`;
     }
-    if (item.tracking_code) {
-      text += ` • Código de Rastreio    : ${item.tracking_code}\n`;
+    const trackCode = item.tracking_code || item.tracking_number;
+    if (trackCode) {
+      text += ` • Código de Rastreio    : ${trackCode}\n`;
     }
     if (item.tracking_url) {
       text += ` • Link de Rastreio      : ${item.tracking_url}\n`;
     }
+    if (item.shipment_id) {
+      text += ` • ID Envio (Shipment)   : ${item.shipment_id}\n`;
+    }
+    if (item.service_id) {
+      text += ` • Service ID            : ${item.service_id}\n`;
+    }
+    if (item.origem) {
+      text += ` • Origem                : ${item.origem === 'webhook_ml' ? 'Webhook Mercado Livre' : 'Envio via ERP / Notificação'}\n`;
+    }
+    if (item.sucesso !== undefined) {
+      text += ` • Status de Execução    : ${item.sucesso ? 'Sucesso (200 OK)' : 'Falha'}\n`;
+    }
+    if (item.mensagem && item.mensagem !== item.comentario) {
+      text += ` • Resposta / Retorno    : ${typeof item.mensagem === 'object' ? JSON.stringify(item.mensagem) : item.mensagem}\n`;
+    }
     if (item.volume_number) {
       text += ` • Número do Volume      : ${item.volume_number}\n`;
     }
-    if (item.recebido_em) {
-      text += ` • Registrado no ERP em  : ${formatItemDate(item.recebido_em)}\n`;
+    const regDate = item.registrado_em || item.recebido_em;
+    if (regDate) {
+      text += ` • Registrado no ERP em  : ${formatItemDate(regDate)}\n`;
     }
     text += `\n`;
   });
@@ -1447,6 +1472,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
   const { label, name, required, placeholder } = field || {};
   const fileInputRef = React.useRef(null);
 
+  const isMeliField = Boolean(name && (name.toLowerCase().includes('meli') || name.toLowerCase().includes('mercado')));
   const isHistoryField = (name && name.toLowerCase().includes('historico')) || Array.isArray(value) || (typeof value === 'object' && value !== null);
 
   const handleFileChange = (e) => {
@@ -1484,9 +1510,10 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
     if (!value) return;
 
     if (isHistoryField) {
-      const formattedTxt = formatHistoryTxt(value, formData);
-      const pedidoRef = formData?.id_pedido_intelipost || formData?.numero_pedido || formData?.id_sequencial || formData?.id || 'pedido';
-      const filename = `historico_intelipost_pedido_${pedidoRef}.txt`;
+      const formattedTxt = formatHistoryTxt(value, formData, name);
+      const pedidoRef = (isMeliField ? (formData?.meli_order_id || formData?.meli_shipment_id) : formData?.id_pedido_intelipost) || formData?.numero_pedido || formData?.id_sequencial || formData?.id || 'pedido';
+      const filePrefix = isMeliField ? 'historico_mercadolivre' : 'historico_intelipost';
+      const filename = `${filePrefix}_pedido_${pedidoRef}.txt`;
 
       const link = document.createElement('a');
       link.href = `data:text/plain;charset=utf-8,${encodeURIComponent(formattedTxt)}`;
@@ -1531,12 +1558,15 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
 
   let displayText = fileName;
   if (!displayText) {
+    const filePrefix = isMeliField ? 'historico_mercadolivre.txt' : 'historico_intelipost.txt';
+    const labelTerm = isMeliField ? 'evento(s)' : 'ocorrência(s)';
+    const labelTermSingular = isMeliField ? 'evento' : 'ocorrência';
     if (Array.isArray(value)) {
-      displayText = `historico_intelipost.txt (${value.length} ocorrência(s))`;
+      displayText = `${filePrefix} (${value.length} ${labelTerm})`;
     } else if (value && typeof value === 'object') {
-      displayText = `historico_intelipost.txt (1 ocorrência)`;
+      displayText = `${filePrefix} (1 ${labelTermSingular})`;
     } else if (value) {
-      displayText = isHistoryField ? `historico_intelipost.txt` : "Arquivo disponível";
+      displayText = isHistoryField ? filePrefix : "Arquivo disponível";
     }
   }
 

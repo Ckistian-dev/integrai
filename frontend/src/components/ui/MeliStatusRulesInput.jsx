@@ -5,28 +5,32 @@ import CreatableSelect from 'react-select/creatable';
 import api from '../../api/axiosConfig';
 
 export const STATUS_MERCADO_LIVRE_OPTIONS = [
-  // Trânsito e Entrega
-  { value: 'shipped', label: 'Despachado / Em Trânsito (shipped)' },
-  { value: 'out_for_delivery', label: 'Saiu para Entrega (out_for_delivery)' },
-  { value: 'delivered', label: 'Entregue (delivered)' },
-  { value: 'waiting_for_withdrawal', label: 'Aguardando Retirada em Agência (waiting_for_withdrawal)' },
+  // Shipped — Em trânsito
+  { value: 'shipped', label: 'Em Trânsito: A caminho / Despachado (shipped)' },
+  { value: 'out_for_delivery', label: 'Em Trânsito: Saiu para entrega / Chega hoje (out_for_delivery)' },
+  { value: 'soon_deliver', label: 'Em Trânsito: Próxima entrega (soon_deliver)' },
+  { value: 'at_the_door', label: 'Em Trânsito: Na porta do comprador (at_the_door)' },
 
-  // Preparação e Expedição
-  { value: 'handling', label: 'Em Preparação (handling)' },
-  { value: 'ready_to_ship', label: 'Pronto para Envio (ready_to_ship)' },
-  { value: 'printed', label: 'Etiqueta Impressa (printed)' },
-  { value: 'waiting_for_carrier', label: 'Aguardando Coleta / Transportadora (waiting_for_carrier)' },
-  { value: 'invoice_pending', label: 'Aguardando Nota Fiscal (invoice_pending)' },
+  // Shipped — Visitas falhas
+  { value: 'receiver_absent', label: 'Visita Falha: Comprador ausente (receiver_absent)' },
+  { value: 'bad_address', label: 'Visita Falha: Endereço incorreto (bad_address)' },
+  { value: 'dangerous_area', label: 'Visita Falha: Zona perigosa (dangerous_area)' },
+  { value: 'unauthorized_receiver', label: 'Visita Falha: Pessoa não autorizada (unauthorized_receiver)' },
+  { value: 'impassable_zone', label: 'Visita Falha: Zona intransitável (impassable_zone)' },
+  { value: 'not_visited', label: 'Visita Falha: Endereço não visitado (not_visited)' },
 
-  // Ocorrências e Insucessos de Entrega
-  { value: 'not_delivered', label: 'Não Entregue (not_delivered)' },
-  { value: 'receiver_absent', label: 'Destinatário Ausente (receiver_absent)' },
-  { value: 'bad_address', label: 'Endereço Incorreto / Não Localizado (bad_address)' },
-  { value: 'delayed', label: 'Atrasado (delayed)' },
-  { value: 'returning_to_sender', label: 'Devolvendo ao Remetente (returning_to_sender)' },
-  { value: 'returned_to_sender', label: 'Devolvido ao Remetente (returned_to_sender)' },
-  { value: 'damaged', label: 'Avariado / Sinistro (damaged)' },
-  { value: 'cancelled', label: 'Cancelado (cancelled)' },
+  // Shipped — Problemas de transporte
+  { value: 'documentation_issue', label: 'Problema Transporte: Retido por falta de documentação (documentation_issue)' },
+  { value: 'taxes_issue', label: 'Problema Transporte: Retido por falta de pagamento de imposto (taxes_issue)' },
+  { value: 'fiscalization_issue', label: 'Problema Transporte: Retido por fiscalização (fiscalization_issue)' },
+
+  // Delivered — Finalizador
+  { value: 'delivered', label: 'Finalizador: Entregue ao comprador (delivered)' },
+
+  // Not delivered — Finalizador
+  { value: 'refused_delivery', label: 'Finalizador: Compra recusada pelo comprador (refused_delivery)' },
+  { value: 'returned', label: 'Finalizador: Não entregue / Devolvido (returned)' },
+  { value: 'not_delivered', label: 'Finalizador: Não entregue (not_delivered)' },
 ];
 
 export const MeliStatusRulesInput = ({ field, value, onChange, disabled }) => {

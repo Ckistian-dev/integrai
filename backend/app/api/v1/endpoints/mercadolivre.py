@@ -290,6 +290,7 @@ async def reenviar_xml_ml(
 async def atualizar_status_pedido_ml(
     pedido_id: int,
     target_status: str = Query(None, description="Status alvo opcional (ex: shipped, delivered, handling)"),
+    tracking_url: Optional[str] = Query(None, description="Link de rastreio opcional"),
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
@@ -307,6 +308,16 @@ async def atualizar_status_pedido_ml(
     service = MeliService(db, current_user.id_empresa)
     if target_status:
         situacao_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
+        
+        # Resolução de link de rastreamento
+        final_tracking_url = tracking_url
+        if not final_tracking_url and service.config and getattr(service.config, 'campo_link_rastreio', None):
+            val_cfg = getattr(pedido, service.config.campo_link_rastreio, None)
+            if val_cfg and (str(val_cfg).startswith("http://") or str(val_cfg).startswith("https://")):
+                final_tracking_url = str(val_cfg).strip()
+        if not final_tracking_url:
+            final_tracking_url = getattr(pedido, 'intelipost_tracking_url', None)
+
         tracking = (
             getattr(pedido, 'meli_tracking_number', None) or 
             getattr(pedido, 'intelipost_tracking_code', None) or
@@ -323,21 +334,24 @@ async def atualizar_status_pedido_ml(
                 erp_status=situacao_str,
                 tracking_number=tracking,
                 target_ml_status=target_status,
-                pedido=pedido
+                pedido=pedido,
+                tracking_url=final_tracking_url
             )
             if res:
                 success = True
         return {
             "success": success,
             "message": f"Status atualizado para '{target_status}' no Mercado Livre com sucesso!" if success else "Não foi possível atualizar o status no Mercado Livre.",
-            "status_envio": pedido.meli_status_envio
+            "status_envio": pedido.meli_status_envio,
+            "historico": pedido.meli_historico
         }
     else:
         success = await service.update_meli_order_status(pedido)
         return {
             "success": success,
             "message": "Status sincronizado com o Mercado Livre com sucesso!" if success else "Não foi possível sincronizar o status no Mercado Livre.",
-            "status_envio": pedido.meli_status_envio
+            "status_envio": pedido.meli_status_envio,
+            "historico": pedido.meli_historico
         }
 
 

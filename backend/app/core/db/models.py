@@ -630,6 +630,17 @@ class Cadastro(Base):
     id_sequencial = Column(Integer, nullable=True, index=True, info={'tab': 'Dados Gerais', 'label': 'Código', 'read_only': True})
     
     # --- Aba: Dados Gerais ---
+    tipo_pessoa = Column(SQLAlchemyEnum(CadastroTipoPessoaEnum, native_enum=False), nullable=False, default=CadastroTipoPessoaEnum.fisica, 
+                         info={
+                             'tab': 'Dados Gerais', 
+                             'label': 'Tipo de Pessoa', 
+                             'placeholder': 'Selecione...',
+                             'default': 'fisica',
+                             'options': [
+                                 {'label': 'Pessoa Física', 'value': 'fisica'},
+                                 {'label': 'Pessoa Jurídica', 'value': 'juridica'}
+                             ]
+                         })
     cpf_cnpj = Column(String(18), nullable=False, index=True, 
                       info={'format_mask': 'cnpj_cpf', 'tab': 'Dados Gerais', 'label': 'CPF/CNPJ', 'placeholder': 'Digite CPF ou CNPJ'})
 
@@ -640,21 +651,28 @@ class Cadastro(Base):
         clean = re.sub(r'[^a-zA-Z0-9]', '', str(value))
         if clean in ("00000000000", "00000000000000"):
             return value
-        if len(clean) == 11 and clean.isdigit():
-            if not validar_cpf(clean):
+        tipo = getattr(self, 'tipo_pessoa', None)
+        tipo_str = tipo.value if hasattr(tipo, 'value') else str(tipo or '').lower()
+        if tipo_str == 'fisica':
+            if len(clean) != 11 or not clean.isdigit() or not validar_cpf(clean):
                 raise ValueError(f"CPF {value} informado é inválido.")
-        elif len(clean) == 14:
-            if not validar_cnpj(clean):
+        elif tipo_str == 'juridica':
+            if len(clean) != 14 or not validar_cnpj(clean):
                 raise ValueError(f"CNPJ {value} informado é inválido.")
         else:
-            raise ValueError(f"Documento CPF/CNPJ {value} inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
+            if len(clean) == 11 and clean.isdigit():
+                if not validar_cpf(clean):
+                    raise ValueError(f"CPF {value} informado é inválido.")
+            elif len(clean) == 14:
+                if not validar_cnpj(clean):
+                    raise ValueError(f"CNPJ {value} informado é inválido.")
+            else:
+                raise ValueError(f"Documento CPF/CNPJ {value} inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
         return value
     nome_razao = Column(String, nullable=False, index=True, 
                         info={'tab': 'Dados Gerais', 'label': 'Nome / Razão Social', 'placeholder': 'Ex: João Silva ou Empresa X Ltda'})
     fantasia = Column(String, 
                       info={'tab': 'Dados Gerais', 'label': 'Nome Fantasia', 'placeholder': 'Ex: Mercado Central'})
-    tipo_pessoa = Column(SQLAlchemyEnum(CadastroTipoPessoaEnum, native_enum=False), nullable=False, default=CadastroTipoPessoaEnum.fisica, 
-                         info={'tab': 'Dados Gerais', 'label': 'Tipo de Pessoa', 'placeholder': 'Selecione...'})
     tipo_cadastro = Column(SQLAlchemyEnum(CadastroTipoCadastroEnum, native_enum=False), nullable=False, default=CadastroTipoCadastroEnum.cliente, 
                            info={'tab': 'Dados Gerais', 'label': 'Tipo de Cadastro', 'placeholder': 'Selecione...'})
     
@@ -1170,6 +1188,7 @@ class Pedido(Base):
     meli_shipping_service = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Serviço Frete ML'})
     meli_status_envio = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Status Envio ML'})
     meli_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'XML enviado ML?'})
+    meli_historico = Column(JSON, default=list, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Mercado Livre', 'label': 'Histórico Eventos (Mercado Livre)', 'component': 'file'})
 
     # Campos Integração Shopee (Aba Integrações)
     shopee_order_sn = Column(String, nullable=True, index=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'ID Pedido Shopee (Order SN)'})
@@ -1178,6 +1197,7 @@ class Pedido(Base):
     shopee_tracking_number = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Código Rastreio Shopee'})
     shopee_shipping_carrier = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Transportadora Shopee'})
     shopee_xml_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'XML enviado Shopee?'})
+    shopee_historico = Column(JSON, default=list, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Histórico Eventos (Shopee)', 'component': 'file'})
     
     # Campos de Status de Integração (Elastic Email)
     email_enviado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Elastic Email', 'label': 'E-mail enviado?'})

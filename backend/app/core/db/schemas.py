@@ -1,4 +1,4 @@
-from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_serializer, field_validator, ConfigDict
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_serializer, field_validator, model_validator, ConfigDict
 from typing import Optional, List, Any, Dict, Type
 import re
 from app.utils.validators import validar_cpf, validar_cnpj
@@ -226,10 +226,10 @@ class Usuario(UsuarioBase):  # RENOMEADO de UsuarioRead para Usuario
 # --- 3. Schemas de Cadastro (Cliente, Fornecedor, etc.) ---
 
 class CadastroBase(BaseModel):
+    tipo_pessoa: CadastroTipoPessoaEnum = CadastroTipoPessoaEnum.fisica
     cpf_cnpj: str = Field(..., max_length=18)
     nome_razao: str
     fantasia: Optional[str] = None
-    tipo_pessoa: CadastroTipoPessoaEnum = CadastroTipoPessoaEnum.fisica
     tipo_cadastro: CadastroTipoCadastroEnum = CadastroTipoCadastroEnum.cliente
     email: Optional[str] = None
     telefone: Optional[str] = None
@@ -248,32 +248,41 @@ class CadastroBase(BaseModel):
     criar_pedido_intelipost: Optional[bool] = True
     delivery_method_id_intelipost: Optional[str] = None
 
-    @field_validator('cpf_cnpj')
-    @classmethod
-    def validate_cpf_cnpj(cls, v: str) -> str:
+    @model_validator(mode='after')
+    def validate_cpf_cnpj(self):
+        v = self.cpf_cnpj
         if not v:
-            return v
+            return self
         clean = re.sub(r'[^a-zA-Z0-9]', '', str(v))
         if clean in ("00000000000", "00000000000000"):
-            return v
-        if len(clean) == 11 and clean.isdigit():
-            if not validar_cpf(clean):
+            return self
+        tipo = getattr(self, "tipo_pessoa", None)
+        tipo_str = tipo.value if hasattr(tipo, "value") else str(tipo or "").lower()
+        if tipo_str == "fisica":
+            if len(clean) != 11 or not clean.isdigit() or not validar_cpf(clean):
                 raise ValueError("CPF informado é inválido.")
-        elif len(clean) == 14:
-            if not validar_cnpj(clean):
+        elif tipo_str == "juridica":
+            if len(clean) != 14 or not validar_cnpj(clean):
                 raise ValueError("CNPJ informado é inválido.")
         else:
-            raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
-        return v
+            if len(clean) == 11 and clean.isdigit():
+                if not validar_cpf(clean):
+                    raise ValueError("CPF informado é inválido.")
+            elif len(clean) == 14:
+                if not validar_cnpj(clean):
+                    raise ValueError("CNPJ informado é inválido.")
+            else:
+                raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
+        return self
 
 class CadastroCreate(CadastroBase):
     pass
 
 class CadastroUpdate(BaseModel):
+    tipo_pessoa: Optional[CadastroTipoPessoaEnum] = None
     cpf_cnpj: Optional[str] = Field(None, max_length=18)
     nome_razao: Optional[str] = None
     fantasia: Optional[str] = None
-    tipo_pessoa: Optional[CadastroTipoPessoaEnum] = None
     tipo_cadastro: Optional[CadastroTipoCadastroEnum] = None
     email: Optional[str] = None
     telefone: Optional[str] = None
@@ -292,23 +301,32 @@ class CadastroUpdate(BaseModel):
     criar_pedido_intelipost: Optional[bool] = None
     delivery_method_id_intelipost: Optional[str] = None
 
-    @field_validator('cpf_cnpj')
-    @classmethod
-    def validate_cpf_cnpj(cls, v: Optional[str]) -> Optional[str]:
+    @model_validator(mode='after')
+    def validate_cpf_cnpj(self):
+        v = self.cpf_cnpj
         if not v:
-            return v
+            return self
         clean = re.sub(r'[^a-zA-Z0-9]', '', str(v))
         if clean in ("00000000000", "00000000000000"):
-            return v
-        if len(clean) == 11 and clean.isdigit():
-            if not validar_cpf(clean):
+            return self
+        tipo = getattr(self, "tipo_pessoa", None)
+        tipo_str = (tipo.value if hasattr(tipo, "value") else str(tipo or "").lower()) if tipo is not None else None
+        if tipo_str == "fisica":
+            if len(clean) != 11 or not clean.isdigit() or not validar_cpf(clean):
                 raise ValueError("CPF informado é inválido.")
-        elif len(clean) == 14:
-            if not validar_cnpj(clean):
+        elif tipo_str == "juridica":
+            if len(clean) != 14 or not validar_cnpj(clean):
                 raise ValueError("CNPJ informado é inválido.")
         else:
-            raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
-        return v
+            if len(clean) == 11 and clean.isdigit():
+                if not validar_cpf(clean):
+                    raise ValueError("CPF informado é inválido.")
+            elif len(clean) == 14:
+                if not validar_cnpj(clean):
+                    raise ValueError("CNPJ informado é inválido.")
+            else:
+                raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
+        return self
 
 class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
     id: int
@@ -581,6 +599,7 @@ class PedidoBase(BaseModel):
     meli_shipping_service: Optional[str] = None
     meli_status_envio: Optional[str] = None
     meli_xml_enviado: Optional[bool] = False
+    meli_historico: Optional[List[Dict[str, Any]]] = None
 
     shopee_order_sn: Optional[str] = None
     shopee_order_status: Optional[str] = None
@@ -588,6 +607,7 @@ class PedidoBase(BaseModel):
     shopee_tracking_number: Optional[str] = None
     shopee_shipping_carrier: Optional[str] = None
     shopee_xml_enviado: Optional[bool] = False
+    shopee_historico: Optional[List[Dict[str, Any]]] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -684,6 +704,7 @@ class PedidoUpdate(BaseModel):
     meli_shipping_service: Optional[str] = None
     meli_status_envio: Optional[str] = None
     meli_xml_enviado: Optional[bool] = None
+    meli_historico: Optional[List[Dict[str, Any]]] = None
 
     veiculo_placa: Optional[str] = None
     veiculo_uf: Optional[EstadoEnum] = None
@@ -739,6 +760,7 @@ class PedidoUpdate(BaseModel):
     
     meli_xml_enviado: Optional[bool] = None
     shopee_xml_enviado: Optional[bool] = None
+    shopee_historico: Optional[List[Dict[str, Any]]] = None
     intelipost_criado: Optional[bool] = None
     email_enviado: Optional[bool] = None
     rastreio_enviado: Optional[bool] = None

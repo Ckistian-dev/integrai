@@ -13,7 +13,7 @@ from oauthlib.oauth1 import SIGNATURE_HMAC_SHA256
 from app.core.db import models
 from app.core.db.models import (
     CadastroTipoPessoaEnum, CadastroTipoCadastroEnum, CadastroIndicadorIEEnum,
-    PedidoModalidadeFreteEnum
+    PedidoModalidadeFreteEnum, FiscalPagamentoEnum
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,23 @@ class MagentoService:
             resource_owner_secret=self.config.token_secret,
             signature_method=SIGNATURE_HMAC_SHA256
         )
+
+    def _map_payment_method(self, method_str: str) -> tuple:
+        """Mapeia método de pagamento do Magento para FiscalPagamentoEnum do ERP."""
+        if not method_str:
+            return FiscalPagamentoEnum.outros, "Outros"
+        
+        m_lower = method_str.strip().lower()
+        if "pix" in m_lower:
+            return FiscalPagamentoEnum.pix, "PIX"
+        elif any(c in m_lower for c in ["credit", "credito", "cartao", "card", "cc"]):
+            return FiscalPagamentoEnum.cartao_credito, "CARTÃO DE CRÉDITO"
+        elif any(d in m_lower for d in ["debit", "debito"]):
+            return FiscalPagamentoEnum.cartao_debito, "CARTÃO DÉBITO"
+        elif "boleto" in m_lower or "ticket" in m_lower:
+            return FiscalPagamentoEnum.boleto_bancario, "BOLETO BANCÁRIO"
+        else:
+            return FiscalPagamentoEnum.outros, method_str.replace('_', ' ').title()
 
     def _extract_field_value(self, order, field):
         """Helper para extrair valor do pedido para filtragem, tratando campos virtuais"""
@@ -311,6 +328,9 @@ class MagentoService:
             payment = order.get('payment', {})
             payment_method = payment.get('method')
 
+            # Captura desconto do pedido (no Magento pode vir negativo ou positivo)
+            desconto_val = abs(float(order.get('discount_amount') or order.get('base_discount_amount') or 0.0))
+
             # Copia todos os dados originais do pedido para incluir todas as colunas da API
             item_data = order.copy()
             
@@ -321,6 +341,8 @@ class MagentoService:
                 "payment_method": payment_method,
                 "customer_name": f"{cust_first} {cust_last}",
                 "items_count": len(order.get('items', [])),
+                "desconto": round(desconto_val, 2),
+                "discount_amount": round(desconto_val, 2),
                 "ja_importado": order.get('ja_importado', False)
             })
             
@@ -484,8 +506,9 @@ class MagentoService:
             qtd = int(float(item.get('qty_ordered', 0)))
             preco = float(item.get('price', 0)) 
             
-            # Correção para configuráveis: Se preço for 0 e tiver parent, buscar lógica complexa.
-            # Assumindo produtos simples para este exemplo básico.
+            # Desconto específico do item (Magento armazena em discount_amount/base_discount_amount)
+            item_desconto = abs(float(item.get('discount_amount') or item.get('base_discount_amount') or 0.0))
+            item_desconto = round(item_desconto, 2)
             
             # --- Lógica de IPI e Totais Detalhados ---
             ipi_aliquota = float(produto.ipi_aliquota or 0)
@@ -503,6 +526,7 @@ class MagentoService:
                 "unidade": produto.unidade.value if hasattr(produto.unidade, 'value') else str(produto.unidade),
                 "quantidade": qtd,
                 "valor_unitario": preco,
+                "desconto": item_desconto,
                 "subtotal": subtotal,
                 "peso_unitario": float(produto.peso or 0),
                 "ipi_aliquota": ipi_aliquota,
@@ -514,7 +538,7 @@ class MagentoService:
         logger.debug(f"Total calculado dos itens: {total_calculado}")
         
         # --- Extração de Frete e Transportadora ---
-        shipping_amount = float(order_data.get('base_shipping_amount', 0))
+        shipping_amount = float(order_data.get('base_shipping_amount') or order_data.get('shipping_amount') or 0.0)
         shipping_desc = order_data.get('shipping_description', '')
         data_entrega = self._calculate_delivery_date(shipping_desc, order_data.get('created_at'))
         transportadora = self._find_carrier(shipping_desc)
@@ -550,6 +574,36 @@ class MagentoService:
         else:
             bairro = street_lines[2] if len(street_lines) > 2 else ''
 
+        # --- Cálculo dos Totais e Descontos do Pedido ---
+        # No Magento, discount_amount vem na raiz do pedido (geralmente negativo, ex: -15.87)
+        desconto_order = abs(float(order_data.get('discount_amount') or order_data.get('base_discount_amount') or 0.0))
+        # Se na raiz não veio mas os itens têm desconto somado:
+        soma_desconto_itens = sum(float(it.get('desconto', 0.0) or 0.0) for it in itens_erp)
+        if desconto_order == 0.0 and soma_desconto_itens > 0.0:
+            desconto_order = soma_desconto_itens
+        desconto_order = round(desconto_order, 2)
+
+        total_itens_com_ipi = sum(it["total_com_ipi"] for it in itens_erp)
+        total_bruto = round(total_itens_com_ipi + shipping_amount, 2)
+        total_com_descontos = round(max(0.0, total_bruto - desconto_order), 2)
+
+        # Mapeamento do Pagamento
+        payment_info = order_data.get('payment', {})
+        pm_method_raw = payment_info.get('method', '')
+        pagamento_enum, pagamento_desc = self._map_payment_method(pm_method_raw)
+
+        # Observações ricas com informações de desconto e cupom
+        obs_parts = [f"Pedido importado do Magento. ID Magento: {magento_entity_id}. Increment ID: {order_data.get('increment_id')}."]
+        if desconto_order > 0:
+            obs_parts.append(f"Desconto Magento: R$ {desconto_order:.2f}.")
+        coupon_code = order_data.get('coupon_code')
+        if coupon_code:
+            obs_parts.append(f"Cupom: {coupon_code}.")
+        discount_desc = order_data.get('discount_description')
+        if discount_desc:
+            obs_parts.append(f"Regra Desconto: {discount_desc}.")
+        obs_magento = " ".join(obs_parts).strip()
+
         # 4. Cria Pedido
         novo_pedido = models.Pedido(
             id_empresa=self.id_empresa,
@@ -560,7 +614,9 @@ class MagentoService:
             data_validade=datetime.now(),
             data_entrega=data_entrega,
             origem_venda="Magento Ecommerce",
-            total=order_data.get('grand_total'), # Usa total do Magento (inclui frete/taxas)
+            total=total_bruto,
+            desconto=desconto_order if desconto_order > 0 else 0.0,
+            total_desconto=total_com_descontos if desconto_order > 0 else total_bruto,
             valor_frete=shipping_amount,
             modalidade_frete=PedidoModalidadeFreteEnum.cif,
             id_transportadora=id_transportadora,
@@ -574,8 +630,17 @@ class MagentoService:
             endereco_cidade=shipping_address.get('city'),
             endereco_estado=shipping_address.get('region_code'),
             
+            # --- FORMA DE PAGAMENTO ---
+            pagamento=pagamento_enum,
+            pagamento_descricao=pagamento_desc,
+            pagamentos=[{
+                "forma": pagamento_enum.value,
+                "descricao": pagamento_desc,
+                "valor": total_com_descontos
+            }],
+
             itens=itens_erp,
-            observacao=f"Pedido importado do Magento. ID Magento: {magento_entity_id}. Increment ID: {order_data.get('increment_id')}"
+            observacao=obs_magento
         )
 
         logger.info(f"Salvando pedido Magento {magento_entity_id} no ERP para empresa {self.id_empresa}")

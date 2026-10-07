@@ -73,7 +73,7 @@ def _send_shopee_tracking_background(pedido_id: int, id_empresa: int, tracking_u
     db_bg = SessionLocal()
     try:
         pedido = db_bg.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
-        if pedido and not getattr(pedido, 'rastreio_enviado', False):
+        if pedido:
             shopee_svc = ShopeeService(db_bg, id_empresa)
             shopee_svc.send_shopee_tracking_link(pedido, tracking_url)
     except Exception as e:
