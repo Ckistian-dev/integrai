@@ -402,14 +402,19 @@ def set_id_sequencial(mapper, connection, target):
     if hasattr(target, "id_sequencial"):
         if getattr(target, "id_sequencial", None) is None:
             id_empresa = getattr(target, "id_empresa", None)
-            table = mapper.mapped_table
-            if "id_empresa" in table.columns and id_empresa is not None:
-                stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}" WHERE id_empresa = :emp_id')
-                res = connection.execute(stmt, {"emp_id": id_empresa}).scalar()
-            else:
-                stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}"')
-                res = connection.execute(stmt).scalar()
-            setattr(target, "id_sequencial", res or 1)
+            table = getattr(mapper, "local_table", None)
+            if table is None:
+                table = getattr(target, "__table__", None)
+            if table is None:
+                table = getattr(mapper, "persist_selectable", None)
+            if table is not None and hasattr(table, "columns") and hasattr(table, "name"):
+                if "id_empresa" in table.columns and id_empresa is not None:
+                    stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}" WHERE id_empresa = :emp_id')
+                    res = connection.execute(stmt, {"emp_id": id_empresa}).scalar()
+                else:
+                    stmt = text(f'SELECT COALESCE(MAX(id_sequencial), 0) + 1 FROM "{table.name}"')
+                    res = connection.execute(stmt).scalar()
+                setattr(target, "id_sequencial", res or 1)
 
 # --- Modelos (Tabelas) ---
 
@@ -1192,7 +1197,27 @@ class Pedido(Base):
 
     # Campos Integração Shopee (Aba Integrações)
     shopee_order_sn = Column(String, nullable=True, index=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'ID Pedido Shopee (Order SN)'})
-    shopee_order_status = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Status Shopee'})
+    shopee_order_status = Column(
+        String, 
+        nullable=True, 
+        info={
+            'tab': 'Integrações', 
+            'sub_tab': 'Shopee', 
+            'label': 'Status Shopee',
+            'component': 'select',
+            'options': [
+                {'label': 'Pronto para Envio (READY_TO_SHIP)', 'value': 'READY_TO_SHIP'},
+                {'label': 'Em Expedição / Despacho Solicitado (PROCESSED)', 'value': 'PROCESSED'},
+                {'label': 'Despachado / Em Trânsito (SHIPPED)', 'value': 'SHIPPED'},
+                {'label': 'A Confirmar Recebimento (TO_CONFIRM_RECEIVE)', 'value': 'TO_CONFIRM_RECEIVE'},
+                {'label': 'Concluído / Entregue (COMPLETED)', 'value': 'COMPLETED'},
+                {'label': 'Cancelado (CANCELLED)', 'value': 'CANCELLED'},
+                {'label': 'Em Cancelamento (IN_CANCEL)', 'value': 'IN_CANCEL'},
+                {'label': 'Não Pago (UNPAID)', 'value': 'UNPAID'},
+                {'label': 'Em Devolução (TO_RETURN)', 'value': 'TO_RETURN'},
+            ]
+        }
+    )
     shopee_buyer_username = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Comprador Shopee'})
     shopee_tracking_number = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Código Rastreio Shopee'})
     shopee_shipping_carrier = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Shopee', 'label': 'Transportadora Shopee'})
