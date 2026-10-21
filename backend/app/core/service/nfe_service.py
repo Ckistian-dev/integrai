@@ -14,7 +14,7 @@ from decimal import Decimal
 
 # Constante global para o fuso horário de Brasília
 TZ_BR = timezone(timedelta(hours=-3))
-from typing import Tuple
+from typing import Tuple, Optional, Dict, Any
 import time # Importar para usar time.sleep()
 from lxml import etree
 
@@ -178,6 +178,102 @@ class NFeService:
             return tmp.name
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao processar arquivo do certificado: {str(e)}")
+
+    def consultar_cadastro_sefaz(self, documento: str, uf: str) -> Optional[dict]:
+        """
+        Consulta os dados cadastrais (Inscrição Estadual, Situação, Razão, Fantasia, Município IBGE)
+        de um destinatário na SEFAZ do estado informado via CadConsultaCadastro4.
+        
+        Retorna dict com os dados ou None se não encontrado / erro na consulta.
+        """
+        if not documento or not uf:
+            return None
+            
+        clean_doc = self._limpar_formatacao(documento)
+        if not clean_doc:
+            return None
+            
+        uf = str(uf).strip().upper()
+        
+        # Certificado e Senha são necessários para consultar SEFAZ
+        if not self.empresa or not self.empresa.certificado_arquivo or not self.empresa.certificado_senha:
+            logger.warning(f"Empresa {self.id_empresa} não possui certificado digital A1 para consulta cadastral SEFAZ.")
+            return None
+
+        cert_path = None
+        try:
+            cert_path = self._get_certificado_path()
+            senha_cert = self.empresa.certificado_senha
+            uf_empresa = self.empresa.estado.value if hasattr(self.empresa.estado, 'value') else str(self.empresa.estado)
+            
+            # CadConsultaCadastro é sempre em produção na SEFAZ
+            con = ComunicacaoSefaz(uf_empresa.upper(), cert_path, senha_cert, homologacao=False)
+            
+            tipo_doc = "CNPJ" if len(clean_doc) == 14 else "CPF"
+            resp = con.consulta_cadastro(modelo='nfe', documento=clean_doc, tipo=tipo_doc, uf=uf)
+            
+            if resp.status_code != 200:
+                logger.warning(f"SEFAZ ConsultaCadastro retornou status {resp.status_code} para {clean_doc} na UF {uf}")
+                return None
+                
+            root = etree.fromstring(resp.content)
+            ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+            
+            cStat_list = root.xpath('//nfe:cStat/text() | //cStat/text()', namespaces=ns)
+            cStat = cStat_list[0] if cStat_list else None
+            
+            # 111 = Consulta cadastro com uma ocorrência
+            # 112 = Consulta cadastro com mais de uma ocorrência
+            if cStat not in ['111', '112']:
+                xMotivo = root.xpath('//nfe:xMotivo/text() | //xMotivo/text()', namespaces=ns)
+                motivo = xMotivo[0] if xMotivo else "Sem motivo retornado"
+                logger.info(f"SEFAZ ConsultaCadastro para {clean_doc} ({uf}): cStat={cStat} - {motivo}")
+                return None
+                
+            inf_cads = root.xpath('//nfe:infCad | //infCad', namespaces=ns)
+            if not inf_cads:
+                return None
+                
+            # Seleciona o cadastro prioritário: preferencialmente cSit == '1' (Habilitado)
+            target_cad = None
+            for cad in inf_cads:
+                sit = cad.xpath('./nfe:cSit/text() | ./cSit/text()', namespaces=ns)
+                if sit and sit[0] == '1':
+                    target_cad = cad
+                    break
+            if target_cad is None:
+                target_cad = inf_cads[0]
+                
+            ie_list = target_cad.xpath('./nfe:IE/text() | ./IE/text()', namespaces=ns)
+            cSit_list = target_cad.xpath('./nfe:cSit/text() | ./cSit/text()', namespaces=ns)
+            xNome_list = target_cad.xpath('./nfe:xNome/text() | ./xNome/text()', namespaces=ns)
+            xFant_list = target_cad.xpath('./nfe:xFant/text() | ./xFant/text()', namespaces=ns)
+            cMun_list = target_cad.xpath('.//nfe:cMun/text() | .//cMun/text()', namespaces=ns)
+            
+            ie = self._limpar_formatacao(ie_list[0]) if ie_list else None
+            cSit = cSit_list[0] if cSit_list else '0'
+            habilitado = (cSit == '1')
+            razao = xNome_list[0].strip() if xNome_list else None
+            fantasia = xFant_list[0].strip() if xFant_list else None
+            cidade_ibge = cMun_list[0].strip() if cMun_list else None
+            
+            return {
+                "ie": ie,
+                "habilitado": habilitado,
+                "cSit": cSit,
+                "razao_social": razao,
+                "nome_fantasia": fantasia,
+                "cidade_ibge": cidade_ibge
+            }
+        except Exception as e:
+            logger.error(f"Erro ao consultar cadastro SEFAZ para doc {clean_doc} UF {uf}: {e}")
+            return None
+        finally:
+            if cert_path and os.path.exists(cert_path):
+                try:
+                    os.remove(cert_path)
+                except Exception:
+                    pass
 
     def _limpar_formatacao(self, valor: str) -> str:
         if not valor:

@@ -1478,7 +1478,10 @@ class ShopeeService:
             current = list(pedido.shopee_historico) if isinstance(getattr(pedido, 'shopee_historico', None), list) else []
             current.append(entry)
             pedido.shopee_historico = current
-            flag_modified(pedido, "shopee_historico")
+            try:
+                flag_modified(pedido, "shopee_historico")
+            except Exception:
+                pass
             self.db.add(pedido)
             self.db.commit()
             self.db.refresh(pedido)
@@ -1492,15 +1495,16 @@ class ShopeeService:
         tracking_number: Optional[str] = None,
         tracking_url: Optional[str] = None,
         failed_reason: Optional[str] = None,
-        pedido: Optional[models.Pedido] = None
+        pedido: Optional[models.Pedido] = None,
+        is_manual: bool = False
     ) -> Dict[str, Any]:
         """
         Atualiza o status logístico do pedido na Shopee OpenAPI v2 via POST /api/v2/logistics/update_tracking_status.
         
         Status suportados oficialmente pela Shopee OpenAPI v2 (Brasil):
-        - LOGISTICS_PICKUP_DONE: Coleta realizada / Despachado (inicia o prazo de entrega).
-        - LOGISTICS_DELIVERY_DONE: Entrega finalizada com sucesso (transiciona o pedido para TO_CONFIRM_RECEIVE / COMPLETED).
-        - LOGISTICS_DELIVERY_FAILED: Falha na entrega (exige failed_reason).
+        - logistics_pickup_done: Coleta realizada / Despachado (inicia o prazo de entrega).
+        - logistics_delivery_done: Entrega finalizada com sucesso (transiciona o pedido para TO_CONFIRM_RECEIVE / COMPLETED).
+        - logistics_delivery_failed: Falha na entrega (exige failed_reason).
         """
         try:
             access_token = self._get_valid_access_token()
@@ -1519,13 +1523,13 @@ class ShopeeService:
             }
 
             # Normalização rigorosa do status para o padrão oficial OpenAPI v2
-            st_raw = str(logistics_status or "").strip().upper()
-            if "DELIVER" in st_raw or "ENTREG" in st_raw or "COMPLET" in st_raw:
-                st_official = "LOGISTICS_DELIVERY_DONE"
-            elif "FAIL" in st_raw or "FALHA" in st_raw or "INSUCESS" in st_raw:
-                st_official = "LOGISTICS_DELIVERY_FAILED"
+            st_raw = str(logistics_status or "").strip().lower()
+            if any(k in st_raw for k in ["deliver", "entreg", "complet", "to_confirm_receive"]):
+                st_official = "logistics_delivery_done"
+            elif any(k in st_raw for k in ["fail", "falha", "insucess"]):
+                st_official = "logistics_delivery_failed"
             else:
-                st_official = "LOGISTICS_PICKUP_DONE"
+                st_official = "logistics_pickup_done"
 
             # Resolução do número de rastreio e URL
             if not tracking_number and pedido:
@@ -1537,7 +1541,7 @@ class ShopeeService:
                 )
             if not tracking_url and pedido:
                 shopee_cfg_col = getattr(self.config, 'campo_link_rastreio', None)
-                if shopee_cfg_col:
+                if shopee_cfg_col and isinstance(shopee_cfg_col, str):
                     tracking_url = getattr(pedido, shopee_cfg_col, None)
                 if not tracking_url:
                     tracking_url = getattr(pedido, 'intelipost_tracking_url', None)
@@ -1550,7 +1554,7 @@ class ShopeeService:
                 payload_track["tracking_number"] = str(tracking_number).strip()
             if tracking_url:
                 payload_track["tracking_url"] = str(tracking_url).strip()
-            if failed_reason and st_official == "LOGISTICS_DELIVERY_FAILED":
+            if failed_reason and st_official == "logistics_delivery_failed":
                 payload_track["failed_reason"] = str(failed_reason).strip()
 
             logger.info(f"Disparando update_tracking_status Shopee para {order_sn}: {payload_track}")
@@ -1563,21 +1567,21 @@ class ShopeeService:
             is_success = resp.status_code == 200 and not err_code
 
             # Detecção de canais com logística integrada oficial (Shopee Xpress / Correios Integrados)
-            is_ssl_channel = any(kw in err_msg.lower() for kw in ["channel not support", "logistics channel", "not supported", "action not allowed"])
+            is_ssl_channel = any(kw in err_msg.lower() or kw in str(err_code).lower() for kw in ["channel not support", "logistics channel", "not supported", "action not allowed", "3pl"])
 
-            event_name = "Entrega Concluída" if st_official == "LOGISTICS_DELIVERY_DONE" else ("Falha na Entrega" if st_official == "LOGISTICS_DELIVERY_FAILED" else "Coleta/Despacho Realizado")
+            event_name = "Entrega Concluída" if st_official == "logistics_delivery_done" else ("Falha na Entrega" if st_official == "logistics_delivery_failed" else "Coleta/Despacho Realizado")
 
             if is_success:
                 message = f"Status '{event_name}' ({st_official}) transmitido à Shopee com sucesso!"
                 status_res = "success"
                 if pedido:
-                    if st_official == "LOGISTICS_DELIVERY_DONE":
+                    if st_official == "logistics_delivery_done":
                         pedido.shopee_order_status = "COMPLETED"
                         if not pedido.data_entrega:
                             pedido.data_entrega = datetime.now(timezone.utc).date()
                         if not pedido.data_finalizacao:
                             pedido.data_finalizacao = datetime.now(timezone.utc).date()
-                    elif st_official == "LOGISTICS_PICKUP_DONE":
+                    elif st_official == "logistics_pickup_done":
                         pedido.rastreio_enviado = True
                         if not pedido.data_despacho:
                             pedido.data_despacho = datetime.now(timezone.utc).date()
@@ -1585,36 +1589,55 @@ class ShopeeService:
                             pedido.shopee_tracking_number = str(tracking_number)
 
             elif is_ssl_channel:
-                status_res = "info"
-                message = (
-                    f"Pedido {order_sn} utiliza Logística Integrada Oficial Shopee. "
-                    "Nesse canal, a confirmação de entrega é registrada automaticamente pela transportadora oficial (bipagem SPX/Correios)."
-                )
+                if is_manual:
+                    is_success = False
+                    status_res = "error"
+                    message = (
+                        f"O pedido {order_sn} utiliza Logística Integrada Oficial da Shopee (SPX/Correios). "
+                        "A Shopee não permite marcar como entregue manualmente via API; a confirmação é feita automaticamente pela transportadora oficial."
+                    )
+                else:
+                    is_success = False
+                    status_res = "info"
+                    message = (
+                        f"Pedido {order_sn} utiliza Logística Integrada Oficial Shopee. "
+                        "Nesse canal, a confirmação de entrega é registrada automaticamente pela transportadora oficial (bipagem SPX/Correios)."
+                    )
                 logger.info(f"[SHOPEE SSL] {message}")
-                if pedido and st_official == "LOGISTICS_DELIVERY_DONE":
+                if pedido and st_official == "logistics_delivery_done":
                     if not pedido.data_entrega:
                         pedido.data_entrega = datetime.now(timezone.utc).date()
                     if not pedido.data_finalizacao:
                         pedido.data_finalizacao = datetime.now(timezone.utc).date()
             else:
-                status_res = "warning"
-                message = f"Aviso da API Shopee: {err_msg or err_code or resp.text}"
+                is_success = False
+                status_res = "error" if is_manual else "warning"
+                message = f"Erro da API Shopee: {err_msg or err_code or resp.text}"
 
             # Registra no histórico do pedido
             if pedido:
                 hist_entry = {
                     "data_hora": datetime.now(timezone.utc).isoformat(),
+                    "data_evento": datetime.now(timezone.utc).isoformat(),
+                    "registrado_em": datetime.now(timezone.utc).isoformat(),
                     "evento": event_name,
+                    "origem": "manual" if is_manual else "regra_automatica",
+                    "status": st_official,
+                    "status_shopee": getattr(pedido, 'shopee_order_status', None),
                     "logistics_status": st_official,
                     "status_retorno": status_res,
+                    "sucesso": is_success,
+                    "comentario": message,
                     "mensagem": message,
-                    "tracking_number": tracking_number,
+                    "tracking_code": tracking_number or getattr(pedido, 'shopee_tracking_number', None),
+                    "tracking_number": tracking_number or getattr(pedido, 'shopee_tracking_number', None),
                     "tracking_url": tracking_url,
                     "response": data
                 }
                 self._add_shopee_history_entry(pedido, hist_entry)
 
             return {
+                "success": is_success,
                 "status": status_res,
                 "message": message,
                 "logistics_status": st_official,
@@ -1627,21 +1650,26 @@ class ShopeeService:
             if pedido:
                 self._add_shopee_history_entry(pedido, {
                     "data_hora": datetime.now(timezone.utc).isoformat(),
+                    "data_evento": datetime.now(timezone.utc).isoformat(),
+                    "registrado_em": datetime.now(timezone.utc).isoformat(),
                     "evento": "Erro na Atualização de Rastreio",
+                    "origem": "manual" if is_manual else "regra_automatica",
+                    "sucesso": False,
                     "status_retorno": "error",
+                    "comentario": f"Falha de comunicação com a Shopee: {str(e)}",
                     "mensagem": str(e)
                 })
-            return {"status": "error", "message": f"Falha de comunicação com a Shopee: {str(e)}"}
+            return {"success": False, "status": "error", "message": f"Falha de comunicação com a Shopee: {str(e)}", "is_ssl_channel": False, "data": None}
 
-    def update_shopee_order_status(self, pedido: models.Pedido, target_status: str = None) -> Dict[str, Any]:
+    def update_shopee_order_status(self, pedido: models.Pedido, target_status: str = None, is_manual: bool = False) -> Dict[str, Any]:
         """
         Sincroniza e atualiza o status do pedido na Shopee OpenAPI v2:
         1. Avalia regras customizadas (regras_atualizacao_status) ou mapeia por situacao / status_intelipost.
-        2. Se o status alvo for ENTREGA / COMPLETED:
-           - Executa POST /api/v2/logistics/update_tracking_status com LOGISTICS_DELIVERY_DONE.
+        2. Se o status alvo for ENTREGA / COMPLETED / TO_CONFIRM_RECEIVE:
+           - Executa POST /api/v2/logistics/update_tracking_status com logistics_delivery_done.
         3. Se o status alvo exigir despacho (ex: 'PROCESSED', 'SHIPPED', 'despachado'):
            - Executa POST /api/v2/logistics/ship_order (dropoff / pickup / non_integrated)
-           - Executa POST /api/v2/logistics/update_tracking_status com LOGISTICS_PICKUP_DONE
+           - Executa POST /api/v2/logistics/update_tracking_status com logistics_pickup_done
         4. Consulta detalhes atualizados via GET /api/v2/order/get_order_detail.
         5. Atualiza os campos locais (shopee_order_status, shopee_tracking_number, shopee_shipping_carrier, data_despacho, data_entrega).
         """
@@ -1667,10 +1695,10 @@ class ShopeeService:
                     pass
 
         if not order_sn:
-            logger.info(f"Pedido #{pedido.id_sequencial or pedido.id} não possui shopee_order_sn. Atualização ignorada.")
-            return {"status": "skipped", "message": "Pedido não possui identificador da Shopee (shopee_order_sn)."}
+            logger.info(f"Pedido #{getattr(pedido, 'id_sequencial', None) or getattr(pedido, 'id', None)} não possui shopee_order_sn. Atualização ignorada.")
+            return {"success": False, "status": "skipped", "message": "Pedido não possui identificador da Shopee (shopee_order_sn)."}
 
-        logger.info(f"Iniciando sincronização de status para pedido Shopee {order_sn} (ERP #{pedido.id_sequencial or pedido.id})")
+        logger.info(f"Iniciando sincronização de status para pedido Shopee {order_sn} (ERP #{getattr(pedido, 'id_sequencial', None) or getattr(pedido, 'id', None)})")
 
         situacao_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
         status_intelipost_str = str(getattr(pedido, 'status_intelipost', '') or '')
@@ -1695,7 +1723,7 @@ class ShopeeService:
                     matched = False
                     if val_atual_norm == valor_esperado_norm:
                         matched = True
-                    elif valor_esperado_norm in ["entregue", "completed", "finalizado", "delivered"] and val_atual_norm in ["entregue", "completed", "finalizado", "delivered"]:
+                    elif valor_esperado_norm in ["entregue", "completed", "finalizado", "delivered", "to_confirm_receive"] and val_atual_norm in ["entregue", "completed", "finalizado", "delivered", "to_confirm_receive"]:
                         matched = True
                     elif valor_esperado_norm in ["em transito", "shipped", "despachado", "a caminho", "processed"] and val_atual_norm in ["em transito", "shipped", "despachado", "a caminho", "processed"]:
                         matched = True
@@ -1725,13 +1753,22 @@ class ShopeeService:
         ship_result = None
         delivery_result = None
 
-        # A) Status de Entrega (COMPLETED / ENTREGUE)
-        if target_shopee_status in ['COMPLETED', 'completed', 'entregue', 'finalizado', 'delivered']:
+        # A) Status de Entrega (COMPLETED / ENTREGUE / TO_CONFIRM_RECEIVE)
+        if target_shopee_status in ['COMPLETED', 'completed', 'entregue', 'finalizado', 'delivered', 'TO_CONFIRM_RECEIVE', 'to_confirm_receive']:
             delivery_result = self.update_tracking_status(
                 order_sn=order_sn,
-                logistics_status="LOGISTICS_DELIVERY_DONE",
-                pedido=pedido
+                logistics_status="logistics_delivery_done",
+                pedido=pedido,
+                is_manual=is_manual
             )
+            if not delivery_result.get("success"):
+                return {
+                    "success": False,
+                    "status": "error",
+                    "message": delivery_result.get("message") or "Erro ao atualizar entrega na Shopee.",
+                    "target_status": target_shopee_status,
+                    "delivery_result": delivery_result
+                }
             if not pedido.data_entrega:
                 pedido.data_entrega = datetime.now(timezone.utc).date()
             if not pedido.data_finalizacao:
@@ -1740,40 +1777,56 @@ class ShopeeService:
         # B) Status de Envio (PROCESSED / SHIPPED / despachado)
         elif target_shopee_status in ['PROCESSED', 'SHIPPED', 'despachado', 'shipped']:
             ship_result = self.arrange_shipment(order_sn=order_sn, pedido=pedido)
-            self.update_tracking_status(
+            pickup_result = self.update_tracking_status(
                 order_sn=order_sn,
-                logistics_status="LOGISTICS_PICKUP_DONE",
-                pedido=pedido
+                logistics_status="logistics_pickup_done",
+                pedido=pedido,
+                is_manual=is_manual
             )
+            if is_manual and not pickup_result.get("success"):
+                return {
+                    "success": False,
+                    "status": "error",
+                    "message": pickup_result.get("message") or "Erro ao registrar despacho na Shopee.",
+                    "target_status": target_shopee_status,
+                    "pickup_result": pickup_result
+                }
             if not pedido.data_despacho:
                 pedido.data_despacho = datetime.now(timezone.utc).date()
 
-        # 4. Sincroniza detalhes atuais do pedido via Shopee API (v2.order.get_order_detail)
-        order_detail = self.get_shopee_order_detail(order_sn)
-        if order_detail:
-            current_status = order_detail.get('order_status')
-            if current_status:
-                pedido.shopee_order_status = str(current_status)
-            
-            tracking_code = order_detail.get('tracking_number')
-            if tracking_code:
-                pedido.shopee_tracking_number = str(tracking_code)
-                
-            carrier = order_detail.get('shipping_carrier')
-            if carrier:
-                pedido.shopee_shipping_carrier = str(carrier)
+        # C) Status de Preparação (READY_TO_SHIP)
+        elif target_shopee_status in ['READY_TO_SHIP', 'ready_to_ship']:
+            ship_result = self.arrange_shipment(order_sn=order_sn, pedido=pedido)
 
-            if current_status in ['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED']:
-                if not pedido.data_despacho:
-                    pedido.data_despacho = datetime.now(timezone.utc).date()
-            if current_status in ['COMPLETED', 'TO_CONFIRM_RECEIVE']:
-                if not pedido.data_entrega:
-                    pedido.data_entrega = datetime.now(timezone.utc).date()
-                if not pedido.data_finalizacao:
-                    pedido.data_finalizacao = datetime.now(timezone.utc).date()
+        # 4. Sincroniza detalhes atuais do pedido via Shopee API (v2.order.get_order_detail)
+        try:
+            order_detail = self.get_shopee_order_detail(order_sn)
+            if order_detail:
+                current_status = order_detail.get('order_status')
+                if current_status:
+                    pedido.shopee_order_status = str(current_status)
+                
+                tracking_code = order_detail.get('tracking_number')
+                if tracking_code:
+                    pedido.shopee_tracking_number = str(tracking_code)
+                    
+                carrier = order_detail.get('shipping_carrier')
+                if carrier:
+                    pedido.shopee_shipping_carrier = str(carrier)
+
+                if current_status in ['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED']:
+                    if not pedido.data_despacho:
+                        pedido.data_despacho = datetime.now(timezone.utc).date()
+                if current_status in ['COMPLETED', 'TO_CONFIRM_RECEIVE']:
+                    if not pedido.data_entrega:
+                        pedido.data_entrega = datetime.now(timezone.utc).date()
+                    if not pedido.data_finalizacao:
+                        pedido.data_finalizacao = datetime.now(timezone.utc).date()
+        except Exception as det_err:
+            logger.warning(f"Aviso ao consultar get_order_detail Shopee ({order_sn}): {det_err}")
 
         # Se a entrega foi transmitida com sucesso, assegura que localmente o status de entrega não seja perdido
-        if delivery_result and delivery_result.get("status") == "success":
+        if delivery_result and delivery_result.get("success"):
             if getattr(pedido, 'shopee_order_status', None) not in ["COMPLETED", "TO_CONFIRM_RECEIVE"]:
                 pedido.shopee_order_status = "TO_CONFIRM_RECEIVE"
 
@@ -1791,6 +1844,7 @@ class ShopeeService:
             final_msg = ship_result.get("message") or final_msg
 
         return {
+            "success": True,
             "status": "success",
             "message": final_msg,
             "target_status": target_shopee_status,
@@ -1973,3 +2027,191 @@ class ShopeeService:
         self.config.refresh_expires_at = None
         self.db.commit()
         return True
+
+    def process_shopee_webhook(self, payload: dict) -> Dict[str, Any]:
+        """
+        Processa notificações Push (Webhooks) oficiais da Shopee OpenAPI v2.
+        Atualiza o pedido no ERP e grava o evento completo em shopee_historico.
+        """
+        if not payload or not isinstance(payload, dict):
+            return {"success": False, "message": "Payload vazio ou inválido"}
+
+        code = payload.get("code")
+        data = payload.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+
+        raw_order_sn = (
+            data.get("ordersn") or 
+            data.get("order_sn") or 
+            payload.get("ordersn") or 
+            payload.get("order_sn")
+        )
+
+        if not raw_order_sn:
+            logger.info(f"Webhook Shopee recebido sem order_sn (code={code}): {payload}")
+            return {"success": True, "message": f"Webhook Shopee (code={code}) recebido sem order_sn"}
+
+        order_sn = str(raw_order_sn).strip()
+
+        # 1. Busca pedido no banco de dados com múltiplos fallbacks
+        pedido = self.db.query(models.Pedido).filter(
+            models.Pedido.id_empresa == self.id_empresa,
+            models.Pedido.shopee_order_sn == order_sn
+        ).first()
+
+        if not pedido:
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.shopee_order_sn == order_sn
+            ).first()
+
+        if not pedido:
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.observacao.ilike(f"%{order_sn}%")
+            ).first()
+
+        if not pedido:
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.observacao.ilike(f"%{order_sn}%")
+            ).first()
+
+        if not pedido and order_sn.isdigit():
+            pedido = self.db.query(models.Pedido).filter(
+                models.Pedido.id_empresa == self.id_empresa,
+                models.Pedido.id_sequencial == int(order_sn)
+            ).first()
+
+        if not pedido:
+            logger.warning(f"Webhook Shopee recebido para order_sn '{order_sn}', mas pedido não foi encontrado no ERP.")
+            return {
+                "success": True,
+                "message": f"Webhook recebido, mas pedido {order_sn} não foi encontrado no banco de dados.",
+                "order_sn": order_sn
+            }
+
+        if not getattr(pedido, 'shopee_order_sn', None):
+            pedido.shopee_order_sn = order_sn
+
+        # Dicionários de rótulos amigáveis
+        STATUS_SHOPEE_LABELS = {
+            'READY_TO_SHIP': 'Pronto para Envio (READY_TO_SHIP)',
+            'PROCESSED': 'Em Expedição / Despacho Solicitado (PROCESSED)',
+            'SHIPPED': 'Despachado / Em Trânsito (SHIPPED)',
+            'TO_CONFIRM_RECEIVE': 'A Confirmar Recebimento (TO_CONFIRM_RECEIVE)',
+            'COMPLETED': 'Concluído / Entregue (COMPLETED)',
+            'CANCELLED': 'Cancelado (CANCELLED)',
+            'IN_CANCEL': 'Em Cancelamento (IN_CANCEL)',
+            'UNPAID': 'Não Pago (UNPAID)',
+            'TO_RETURN': 'Em Devolução (TO_RETURN)',
+        }
+
+        LOGISTICS_STATUS_LABELS = {
+            'LOGISTICS_NOT_START': 'Logística Não Iniciada',
+            'LOGISTICS_REQUEST_CREATED': 'Solicitação Criada',
+            'LOGISTICS_PICKUP_DONE': 'Coleta/Postagem Realizada (Despachado)',
+            'LOGISTICS_PICKUP_RETRY': 'Nova Tentativa de Coleta',
+            'LOGISTICS_PICKUP_FAILED': 'Falha na Coleta',
+            'LOGISTICS_DELIVERY_DONE': 'Entregue ao Destinatário',
+            'LOGISTICS_DELIVERY_FAILED': 'Falha na Entrega',
+            'LOGISTICS_REQUEST_CANCELED': 'Envio Cancelado',
+            'LOGISTICS_COD_REJECTED': 'Rejeitado no Pagamento na Entrega',
+            'LOGISTICS_READY': 'Pronto para Envio',
+            'LOGISTICS_INVALID': 'Logística Inválida',
+            'LOGISTICS_LOST': 'Extraviado'
+        }
+
+        # 2. Converte data/hora do evento
+        raw_ts = data.get("update_time") or payload.get("timestamp")
+        data_evento = datetime.now(timezone.utc).isoformat()
+        if raw_ts:
+            try:
+                ts_val = float(raw_ts)
+                if ts_val > 1e11:  # ms para segundos
+                    ts_val /= 1000.0
+                data_evento = datetime.fromtimestamp(ts_val, tz=timezone.utc).isoformat()
+            except Exception:
+                pass
+
+        new_status = data.get("status")
+        tracking_no = data.get("tracking_no") or data.get("tracking_number")
+        logistics_status = data.get("logistics_status")
+
+        status_label = None
+        log_label = None
+        event_name = f"Webhook Shopee (Código {code})"
+        comentario = f"Notificação Push da Shopee recebida via Webhook (Código {code})."
+
+        # Code 3: Atualização de Status do Pedido
+        if code == 3 or new_status:
+            if new_status:
+                st_str = str(new_status).strip().upper()
+                pedido.shopee_order_status = st_str
+                status_label = STATUS_SHOPEE_LABELS.get(st_str, st_str)
+                event_name = f"Webhook Shopee: Status alterado para {status_label}"
+                comentario = f"Notificação Push da Shopee recebida. Status do pedido atualizado para {status_label}."
+                
+                # Sincronização de datas conforme avanço do status
+                now_date = datetime.now(timezone.utc).date()
+                if st_str in ['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED']:
+                    if not pedido.data_despacho:
+                        pedido.data_despacho = now_date
+                if st_str in ['COMPLETED', 'TO_CONFIRM_RECEIVE']:
+                    if not pedido.data_entrega:
+                        pedido.data_entrega = now_date
+                    if not pedido.data_finalizacao:
+                        pedido.data_finalizacao = now_date
+
+        # Code 4: Atualização de Rastreamento Logístico
+        if code == 4 or tracking_no or logistics_status:
+            if tracking_no and not pedido.shopee_tracking_number:
+                pedido.shopee_tracking_number = str(tracking_no)
+            log_str = str(logistics_status).strip().upper() if logistics_status else None
+            log_label = LOGISTICS_STATUS_LABELS.get(log_str, logistics_status)
+            event_name = f"Webhook Shopee: Rastreio atualizado ({log_label or tracking_no})"
+            comentario = f"Notificação Push de Rastreio recebida. Código: {tracking_no or pedido.shopee_tracking_number or 'N/A'}, Situação Logística: {log_label or 'N/A'}."
+
+        if code == 7:
+            event_name = "Webhook Shopee: Cancelamento solicitado pelo comprador"
+            comentario = "O comprador solicitou o cancelamento do pedido na Shopee."
+
+        if code == 8:
+            event_name = "Webhook Shopee: Solicitação de devolução/reembolso"
+            comentario = f"Notificação de Devolução/Reembolso recebida da Shopee. Dados: {data}."
+
+        # 3. Grava ocorrência completa no histórico do pedido
+        hist_entry = {
+            "data_hora": datetime.now(timezone.utc).isoformat(),
+            "data_evento": data_evento,
+            "registrado_em": datetime.now(timezone.utc).isoformat(),
+            "evento": event_name,
+            "origem": "webhook_shopee",
+            "code": code,
+            "status": getattr(pedido, 'shopee_order_status', None),
+            "status_shopee": getattr(pedido, 'shopee_order_status', None),
+            "nome_referencia": status_label or log_label or event_name,
+            "logistics_status": logistics_status,
+            "tracking_code": getattr(pedido, 'shopee_tracking_number', None) or (str(tracking_no) if tracking_no else None),
+            "tracking_number": getattr(pedido, 'shopee_tracking_number', None) or (str(tracking_no) if tracking_no else None),
+            "comentario": comentario,
+            "status_retorno": "success",
+            "sucesso": True,
+            "mensagem": f"Notificação da Shopee processada com sucesso para o pedido {order_sn}.",
+            "payload": payload
+        }
+        self._add_shopee_history_entry(pedido, hist_entry)
+
+        try:
+            self.db.add(pedido)
+            self.db.commit()
+            self.db.refresh(pedido)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"Webhook Shopee ({event_name}) processado com sucesso para o pedido {order_sn}.",
+            "order_sn": order_sn,
+            "shopee_order_status": getattr(pedido, 'shopee_order_status', None)
+        }
+

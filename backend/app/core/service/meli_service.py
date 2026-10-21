@@ -581,8 +581,12 @@ class MeliService:
         )
         
         self.db.add(novo_cliente)
-        self.db.commit()
-        self.db.refresh(novo_cliente)
+        try:
+            self.db.commit()
+            self.db.refresh(novo_cliente)
+        except Exception:
+            self.db.rollback()
+            raise
         logger.info(f"Novo cliente criado com ID ERP: {novo_cliente.id}")
         return novo_cliente
 
@@ -606,8 +610,12 @@ class MeliService:
         )
         
         self.db.add(novo_produto)
-        self.db.commit()
-        self.db.refresh(novo_produto)
+        try:
+            self.db.commit()
+            self.db.refresh(novo_produto)
+        except Exception:
+            self.db.rollback()
+            raise
         return novo_produto
 
     def _find_or_create_carrier(self, shipment_details: dict) -> models.Cadastro:
@@ -717,8 +725,12 @@ class MeliService:
             estado=models.EstadoEnum.SP
         )
         self.db.add(new_carrier)
-        self.db.commit()
-        self.db.refresh(new_carrier)
+        try:
+            self.db.commit()
+            self.db.refresh(new_carrier)
+        except Exception:
+            self.db.rollback()
+            raise
         return new_carrier
 
     def _extract_weight_from_item(self, item_ml: dict) -> float:
@@ -1175,8 +1187,12 @@ class MeliService:
 
         logger.info(f"Salvando pedido {order_id_ml} no ERP para empresa {self.id_empresa}")
         self.db.add(novo_pedido)
-        self.db.commit()
-        self.db.refresh(novo_pedido)
+        try:
+            self.db.commit()
+            self.db.refresh(novo_pedido)
+        except Exception:
+            self.db.rollback()
+            raise
         
         logger.info(f"Pedido {order_id_ml} importado com frete completo. ID ERP: {novo_pedido.id}")
         return novo_pedido

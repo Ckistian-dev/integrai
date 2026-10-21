@@ -337,3 +337,57 @@ def confirmar_entrega_pedido_shopee(
         "message": res.get("message") or "Confirmação de entrega processada para a Shopee.",
         "details": res
     }
+
+
+@router.post("/shopee/webhook")
+def receber_webhook_shopee(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Recebe notificações oficiais de eventos (Push Webhooks) da Shopee OpenAPI v2.
+    Atualiza status do pedido e histórico de eventos.
+    """
+    logger.info(f"Notificação (Webhook) recebida da Shopee: {payload}")
+    if not payload or not isinstance(payload, dict):
+        return {"message": "success", "status": "empty_payload"}
+
+    shop_id = payload.get("shop_id")
+    data = payload.get("data") or {}
+    order_sn = data.get("ordersn") or data.get("order_sn") if isinstance(data, dict) else None
+
+    # Identifica a empresa correspondente
+    id_empresa = None
+    if shop_id:
+        cfg = db.query(models.ShopeeConfiguracao).filter(
+            models.ShopeeConfiguracao.shop_id == str(shop_id)
+        ).first()
+        if cfg:
+            id_empresa = cfg.id_empresa
+
+    if not id_empresa and order_sn:
+        pedido = db.query(models.Pedido).filter(
+            models.Pedido.shopee_order_sn == str(order_sn)
+        ).first()
+        if pedido:
+            id_empresa = pedido.id_empresa
+
+    if not id_empresa:
+        # Fallback: primeira empresa configurada
+        first_cfg = db.query(models.ShopeeConfiguracao).first()
+        if first_cfg:
+            id_empresa = first_cfg.id_empresa
+
+    if not id_empresa:
+        logger.warning(f"Webhook Shopee recebido, mas nenhuma empresa/loja foi identificada: shop_id={shop_id}")
+        return {"message": "success", "status": "shop_not_identified"}
+
+    try:
+        service = ShopeeService(db, id_empresa)
+        result = service.process_shopee_webhook(payload)
+        return {"message": "success", "details": result}
+    except Exception as e:
+        logger.exception(f"Erro ao processar webhook da Shopee: {e}")
+        # Retorna 200 para a Shopee não retentar indefinidamente em erro interno transitório
+        return {"message": "success", "error": str(e)}
+

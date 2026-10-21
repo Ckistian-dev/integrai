@@ -248,6 +248,7 @@ class CadastroBase(BaseModel):
     criar_pedido_intelipost: Optional[bool] = True
     delivery_method_id_intelipost: Optional[str] = None
 
+class CadastroCreate(CadastroBase):
     @model_validator(mode='after')
     def validate_cpf_cnpj(self):
         v = self.cpf_cnpj
@@ -274,9 +275,6 @@ class CadastroBase(BaseModel):
             else:
                 raise ValueError("Documento CPF/CNPJ inválido (deve conter 11 dígitos para CPF ou 14 dígitos/caracteres para CNPJ).")
         return self
-
-class CadastroCreate(CadastroBase):
-    pass
 
 class CadastroUpdate(BaseModel):
     tipo_pessoa: Optional[CadastroTipoPessoaEnum] = None
@@ -331,6 +329,7 @@ class CadastroUpdate(BaseModel):
 class Cadastro(CadastroBase):  # RENOMEADO de CadastroRead para Cadastro
     id: int
     id_empresa: int
+    cpf_cnpj: Optional[str] = None
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
 

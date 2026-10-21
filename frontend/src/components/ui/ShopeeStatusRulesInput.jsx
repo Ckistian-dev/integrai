@@ -8,8 +8,12 @@ export const STATUS_SHOPEE_OPTIONS = [
   { value: 'READY_TO_SHIP', label: 'Pronto para Envio / NF Emitida (READY_TO_SHIP)' },
   { value: 'PROCESSED', label: 'Em Expedição / Despacho Solicitado (PROCESSED)' },
   { value: 'SHIPPED', label: 'Despachado / Em Trânsito (SHIPPED)' },
+  { value: 'TO_CONFIRM_RECEIVE', label: 'Aguardando Confirmação de Entrega (TO_CONFIRM_RECEIVE)' },
   { value: 'COMPLETED', label: 'Entregue / Concluído (COMPLETED)' },
   { value: 'CANCELLED', label: 'Cancelado (CANCELLED)' },
+  { value: 'IN_CANCEL', label: 'Em Cancelamento (IN_CANCEL)' },
+  { value: 'UNPAID', label: 'Não Pago (UNPAID)' },
+  { value: 'TO_RETURN', label: 'Em Devolução (TO_RETURN)' },
 ];
 
 export const ShopeeStatusRulesInput = ({ field, value, onChange, disabled }) => {

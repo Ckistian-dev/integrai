@@ -650,10 +650,80 @@ class MagentoService:
         
         logger.info(f"Pedido Magento {magento_entity_id} importado com sucesso. ID ERP: {novo_pedido.id}")
         
+        warnings_list = []
         if carrier_warning:
-            setattr(novo_pedido, 'import_warning', carrier_warning)
+            warnings_list.append(carrier_warning)
+            
+        # Alerta preventivo se for PJ e não contribuinte
+        if cliente_erp.tipo_pessoa == CadastroTipoPessoaEnum.juridica and cliente_erp.indicador_ie == CadastroIndicadorIEEnum.nao_contribuinte:
+            warnings_list.append("Atenção: Cliente PJ importado como Não Contribuinte (sem Inscrição Estadual). Verifique antes de emitir a NF-e.")
+
+        if warnings_list:
+            setattr(novo_pedido, 'import_warning', " | ".join(warnings_list))
             
         return novo_pedido, produtos_criados
+
+    def _extract_magento_ie(self, order_data: dict, billing: dict) -> Optional[str]:
+        """
+        Tenta extrair a Inscrição Estadual informada no pedido ou no endereço de cobrança do Magento.
+        Suporta custom_attributes, extension_attributes ou campos específicos.
+        """
+        target_codes = ['ie', 'inscricao_estadual', 'rg_ie', 'ie_rg', 'rg', 'inscricaoestadual']
+
+        # 1. Busca em custom_attributes (billing e order)
+        custom_attrs = []
+        if isinstance(billing.get('custom_attributes'), list):
+            custom_attrs.extend(billing.get('custom_attributes', []))
+        if isinstance(order_data.get('custom_attributes'), list):
+            custom_attrs.extend(order_data.get('custom_attributes', []))
+
+        for attr in custom_attrs:
+            if isinstance(attr, dict):
+                code = str(attr.get('attribute_code', '')).lower()
+                val = attr.get('value')
+                if code in target_codes and val:
+                    val_str = str(val).strip()
+                    if val_str.upper() in ['ISENTO', 'ISENTA']:
+                        return 'ISENTO'
+                    clean = "".join(c for c in val_str if c.isalnum()).upper()
+                    if clean:
+                        return clean
+
+        # 2. Busca em extension_attributes (billing e order)
+        ext_attrs = []
+        if isinstance(billing.get('extension_attributes'), dict):
+            ext_attrs.append(billing.get('extension_attributes', {}))
+        if isinstance(order_data.get('extension_attributes'), dict):
+            ext_attrs.append(order_data.get('extension_attributes', {}))
+
+        for ext in ext_attrs:
+            for k, v in ext.items():
+                if k.lower() in target_codes and v and not isinstance(v, (dict, list)):
+                    val_str = str(v).strip()
+                    if val_str.upper() in ['ISENTO', 'ISENTA']:
+                        return 'ISENTO'
+                    clean = "".join(c for c in val_str if c.isalnum()).upper()
+                    if clean:
+                        return clean
+
+        # 3. Se vat_id e taxvat forem diferentes, e um for CNPJ e o outro for IE
+        vat_id = billing.get('vat_id', '')
+        taxvat = order_data.get('customer_taxvat', '')
+        clean_vat = "".join(c for c in str(vat_id) if c.isalnum()).upper()
+        clean_tax = "".join(c for c in str(taxvat) if c.isalnum()).upper()
+
+        if len(clean_vat) == 14 and clean_tax and clean_tax != clean_vat:
+            if clean_tax in ['ISENTO', 'ISENTA']:
+                return 'ISENTO'
+            if 8 <= len(clean_tax) <= 14:
+                return clean_tax
+        elif len(clean_tax) == 14 and clean_vat and clean_vat != clean_tax:
+            if clean_vat in ['ISENTO', 'ISENTA']:
+                return 'ISENTO'
+            if 8 <= len(clean_vat) <= 14:
+                return clean_vat
+
+        return None
 
     def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
         """Busca cliente por email ou CPF (taxvat) usando dados do endereço de COBRANÇA (billing_address)"""
@@ -666,10 +736,9 @@ class MagentoService:
         taxvat = order_data.get('customer_taxvat') or billing.get('vat_id')
 
         # Tenta buscar por CPF/CNPJ se existir
+        clean_doc = "".join(c for c in taxvat if c.isalnum()).upper() if taxvat else ""
         cliente = None
-        if taxvat:
-            # Remove pontuação
-            clean_doc = "".join(c for c in taxvat if c.isalnum()).upper()
+        if clean_doc:
             cliente = self.db.query(models.Cadastro).filter(
                 models.Cadastro.cpf_cnpj == clean_doc,
                 models.Cadastro.id_empresa == self.id_empresa
@@ -682,12 +751,70 @@ class MagentoService:
                 models.Cadastro.id_empresa == self.id_empresa
             ).first()
 
+        # Determina UF do cliente
+        uf = billing.get('region_code')
+        if not uf:
+            shipping_assignments = order_data.get('extension_attributes', {}).get('shipping_assignments', [])
+            if shipping_assignments:
+                uf = shipping_assignments[0].get('shipping', {}).get('address', {}).get('region_code')
+
+        # 1. Tenta extrair IE do Magento
+        ie_extraida = self._extract_magento_ie(order_data, billing)
+        sefaz_data = None
+        is_pj = len(clean_doc) == 14
+
+        # 2. Se for PJ e não houver IE informada pelo Magento, consulta SEFAZ
+        if is_pj and not ie_extraida and uf:
+            try:
+                from app.core.service.nfe_service import NFeService
+                nfe_svc = NFeService(self.db, self.id_empresa)
+                sefaz_data = nfe_svc.consultar_cadastro_sefaz(clean_doc, uf)
+                if sefaz_data and sefaz_data.get('ie'):
+                    ie_extraida = sefaz_data['ie']
+                    logger.info(f"IE encontrada via SEFAZ para CNPJ {clean_doc} ({uf}): {ie_extraida} (cSit={sefaz_data.get('cSit')})")
+            except Exception as e:
+                logger.warning(f"Não foi possível consultar SEFAZ para CNPJ {clean_doc} ({uf}): {e}")
+
+        # 3. Lógica para definição do Indicador de IE e Inscrição Estadual
+        if ie_extraida and ie_extraida.upper() in ['ISENTO', 'ISENTA']:
+            indicador_ie = CadastroIndicadorIEEnum.isento
+            inscricao_estadual = "ISENTO"
+        elif ie_extraida and (sefaz_data is None or sefaz_data.get('habilitado', True)):
+            indicador_ie = CadastroIndicadorIEEnum.contribuinte_icms
+            inscricao_estadual = ie_extraida
+        else:
+            indicador_ie = CadastroIndicadorIEEnum.nao_contribuinte
+            inscricao_estadual = None
+
+        # 4. Se cliente já existe na empresa atual, atualiza dados fiscais se necessário
         if cliente:
-            logger.info(f"Cliente {taxvat or email} já existe no ERP para empresa {self.id_empresa}")
+            logger.info(f"Cliente {clean_doc or email} já existe no ERP para empresa {self.id_empresa}")
+            mudou = False
+            # Atualiza IE se estava vazia e agora descobrimos
+            if not cliente.inscricao_estadual and inscricao_estadual:
+                cliente.inscricao_estadual = inscricao_estadual
+                mudou = True
+            # Atualiza indicador de IE se era não contribuinte e descobrimos que é contribuinte
+            val_ind_atual = cliente.indicador_ie.value if hasattr(cliente.indicador_ie, 'value') else cliente.indicador_ie
+            if (not val_ind_atual or val_ind_atual == '9') and indicador_ie == CadastroIndicadorIEEnum.contribuinte_icms:
+                cliente.indicador_ie = indicador_ie
+                mudou = True
+            # Enriquece dados complementares da SEFAZ se vazios
+            if sefaz_data:
+                if not cliente.fantasia and sefaz_data.get('nome_fantasia'):
+                    cliente.fantasia = sefaz_data['nome_fantasia'].upper()
+                    mudou = True
+                if not cliente.cidade_ibge and sefaz_data.get('cidade_ibge'):
+                    cliente.cidade_ibge = sefaz_data['cidade_ibge']
+                    mudou = True
+            if mudou:
+                self.db.commit()
+                self.db.refresh(cliente)
+                logger.info(f"Cliente #{cliente.id} atualizado com IE {cliente.inscricao_estadual} e Indicador IE {cliente.indicador_ie}")
             return cliente
 
-        # Cria novo cliente com dados do billing_address (cobrança)
-        logger.info(f"Criando novo cliente {taxvat or email} para empresa {self.id_empresa}")
+        # 5. Cria novo cliente com dados do billing_address (cobrança) e enriquecimento SEFAZ
+        logger.info(f"Criando novo cliente {clean_doc or email} para empresa {self.id_empresa}")
         street_lines = billing.get('street', [])
         rua = street_lines[0] if len(street_lines) > 0 else ''
         numero = street_lines[1] if len(street_lines) > 1 else 'S/N'
@@ -703,18 +830,28 @@ class MagentoService:
         else:
             bairro = street_lines[2] if len(street_lines) > 2 else ''
 
-        clean_doc_create = "".join(c for c in taxvat if c.isalnum()).upper() if taxvat else '00000000000'
+        clean_doc_create = clean_doc if clean_doc else '00000000000'
+        
+        # Nome / Razão Social: prioriza razão oficial da SEFAZ se houver, senão usa Firstname + Lastname do Magento
+        nome_razao = (sefaz_data.get('razao_social') if sefaz_data and sefaz_data.get('razao_social') else f"{billing.get('firstname', '')} {billing.get('lastname', '')}").strip().upper()
+        fantasia = sefaz_data.get('nome_fantasia', '').strip().upper() if sefaz_data and sefaz_data.get('nome_fantasia') else None
+        cidade_ibge = sefaz_data.get('cidade_ibge') if sefaz_data else None
+
         novo_cliente = models.Cadastro(
             id_empresa=self.id_empresa,
             cpf_cnpj=clean_doc_create,
-            nome_razao=f"{billing.get('firstname', '')} {billing.get('lastname', '')}".strip().upper(),
+            nome_razao=nome_razao,
+            fantasia=fantasia,
             tipo_cadastro=CadastroTipoCadastroEnum.cliente,
             tipo_pessoa=CadastroTipoPessoaEnum.juridica if len(clean_doc_create) > 11 else CadastroTipoPessoaEnum.fisica,
+            indicador_ie=indicador_ie,
+            inscricao_estadual=inscricao_estadual,
             email=email,
             telefone="".join(filter(str.isdigit, str(billing.get('telephone') or '')))[:20],
             cep="".join(filter(str.isdigit, str(billing.get('postcode') or '')))[:9],
             estado=billing.get('region_code'),
             cidade=billing.get('city'),
+            cidade_ibge=cidade_ibge,
             logradouro=rua,
             numero=numero,
             complemento=complemento,
@@ -724,7 +861,7 @@ class MagentoService:
         self.db.add(novo_cliente)
         self.db.commit()
         self.db.refresh(novo_cliente)
-        logger.info(f"Novo cliente criado com ID ERP: {novo_cliente.id}")
+        logger.info(f"Novo cliente criado com ID ERP: {novo_cliente.id} (IE: {novo_cliente.inscricao_estadual}, Indicador IE: {novo_cliente.indicador_ie})")
         return novo_cliente
 
     def update_magento_order_status(self, pedido):

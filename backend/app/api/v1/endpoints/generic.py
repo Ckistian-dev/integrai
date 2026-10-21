@@ -3011,6 +3011,8 @@ def update_item(
     # --- CAPTURA ESTADO ANTERIOR (Para Pedidos) ---
     old_situacao = None
     old_intelipost_status = None
+    old_shopee_order_status = None
+    manual_shopee_status_mudou = False
     old_meli_tracking_val = None
     old_shopee_tracking_val = None
     meli_campo_rastreio = None
@@ -3023,6 +3025,8 @@ def update_item(
             old_situacao = db_obj.situacao
         if hasattr(db_obj, "status_intelipost"):
             old_intelipost_status = db_obj.status_intelipost
+        if hasattr(db_obj, "shopee_order_status"):
+            old_shopee_order_status = db_obj.shopee_order_status
         
         try:
             meli_cfg = db.query(models.MeliConfiguracao).filter(
@@ -3151,6 +3155,41 @@ def update_item(
         validated_data = UpdateSchema(**item_data)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Validation error: {e}")
+
+    # 🎯 LÓGICA ESPECÍFICA: Validação e Envio Manual de Status para a Shopee
+    if model_name == "pedidos":
+        new_shopee_st_payload = item_data.get("shopee_order_status")
+        is_shopee_order = bool(
+            getattr(db_obj, 'shopee_order_sn', None) or 
+            "shopee" in (getattr(db_obj, 'origem_venda', '') or "").lower() or
+            "pedido shopee" in (getattr(db_obj, 'observacao', '') or "").lower()
+        )
+        if is_shopee_order and new_shopee_st_payload is not None:
+            old_st_clean = str(old_shopee_order_status or "").strip().upper()
+            new_st_clean = str(new_shopee_st_payload or "").strip().upper()
+            if old_st_clean != new_st_clean and new_st_clean != "":
+                manual_shopee_status_mudou = True
+                try:
+                    from app.core.service.shopee_service import ShopeeService
+                    shopee_svc = ShopeeService(db, current_user.id_empresa)
+                    res_manual = shopee_svc.update_shopee_order_status(
+                        pedido=db_obj,
+                        target_status=new_st_clean,
+                        is_manual=True
+                    )
+                    if not res_manual.get("success"):
+                        msg_err = res_manual.get("message") or "Erro ao sincronizar novo status com a Shopee."
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Shopee: {msg_err}"
+                        )
+                except HTTPException:
+                    raise
+                except Exception as shopee_err:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Falha de comunicação com a Shopee: {str(shopee_err)}"
+                    )
 
     # 🎯 CORREÇÃO PARA HASH DE SENHA NA ATUALIZAÇÃO
     if model_name == "usuarios":
@@ -3314,11 +3353,17 @@ def update_item(
                 "shopee" in (item.origem_venda or "").lower() or
                 "pedido shopee" in (item.observacao or "").lower()
             )
-            if is_shopee_order and status_shopee_mudou:
+            if not manual_shopee_status_mudou and is_shopee_order and status_shopee_mudou:
                 try:
                     from app.core.service.shopee_service import ShopeeService
                     shopee_svc = ShopeeService(db, current_user.id_empresa)
-                    shopee_svc.update_shopee_order_status(item)
+                    res_auto = shopee_svc.update_shopee_order_status(item, is_manual=False)
+                    if not res_auto.get("success"):
+                        # Se deu erro no gatilho automático, não altera o status e restaura o anterior
+                        if hasattr(item, 'shopee_order_status') and old_shopee_order_status != item.shopee_order_status:
+                            item.shopee_order_status = old_shopee_order_status
+                            db.add(item)
+                            db.commit()
                 except Exception as e:
                     import logging as _logging
                     _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")

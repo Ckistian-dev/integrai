@@ -105,12 +105,14 @@ async def disconnect_ml_connection(
     """
     Remove as credenciais de conexão com o Mercado Livre, forçando um novo login.
     """
+    empresa_id = current_user.id_empresa
     try:
-        service = MeliService(db, current_user.id_empresa)
+        service = MeliService(db, empresa_id)
         service.disconnect()
         return {"message": "Desconectado com sucesso! Realize o login novamente."}
     except Exception as e:
-        logger.exception(f"Erro ao desconectar ML para empresa {current_user.id_empresa}")
+        db.rollback()
+        logger.exception(f"Erro ao desconectar ML para empresa {empresa_id}")
         raise e
 
 @router.post("/mercadolivre/pedidos/{order_id}/importar")
@@ -119,14 +121,16 @@ async def import_ml_order(
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
+    empresa_id = current_user.id_empresa
     try:
-        service = MeliService(db, current_user.id_empresa)
+        service = MeliService(db, empresa_id)
         pedido = await service.import_order(order_id)
         return {"message": "Pedido importado com sucesso!", "id": pedido.id}
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Erro ao importar pedido {order_id} para empresa {current_user.id_empresa}")
+        db.rollback()
+        logger.exception(f"Erro ao importar pedido {order_id} para empresa {empresa_id}")
         raise e
 
 @router.get("/mercadolivre/auth_url")

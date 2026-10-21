@@ -1349,9 +1349,10 @@ export const DateInput = ({ field, value, onChange, error, disabled, modelName, 
  * Formata o objeto ou lista de histórico em texto estruturado e bonito para download em .txt
  */
 const formatHistoryTxt = (val, formData, fieldName = '') => {
-  const isMeli = fieldName && (fieldName.toLowerCase().includes('meli') || fieldName.toLowerCase().includes('mercado'));
+  const isMeli = Boolean(fieldName && (fieldName.toLowerCase().includes('meli') || fieldName.toLowerCase().includes('mercado')));
+  const isShopee = Boolean(fieldName && fieldName.toLowerCase().includes('shopee'));
   const pedidoRef =
-    (isMeli ? (formData?.meli_order_id || formData?.meli_shipment_id) : formData?.id_pedido_intelipost) ||
+    (isMeli ? (formData?.meli_order_id || formData?.meli_shipment_id) : isShopee ? formData?.shopee_order_sn : formData?.id_pedido_intelipost) ||
     formData?.numero_pedido ||
     formData?.id_sequencial ||
     formData?.id ||
@@ -1376,7 +1377,9 @@ const formatHistoryTxt = (val, formData, fieldName = '') => {
     }
   }
 
-  const systemTitle = isMeli
+  const systemTitle = isShopee
+    ? '              HISTÓRICO DE EVENTOS E STATUS - SHOPEE\n'
+    : isMeli
     ? '              HISTÓRICO DE EVENTOS E RASTREAMENTO - MERCADO LIVRE\n'
     : '              HISTÓRICO DE OCORRÊNCIAS DE ENTREGA - INTELIPOST\n';
 
@@ -1442,7 +1445,26 @@ const formatHistoryTxt = (val, formData, fieldName = '') => {
       text += ` • Service ID            : ${item.service_id}\n`;
     }
     if (item.origem) {
-      text += ` • Origem                : ${item.origem === 'webhook_ml' ? 'Webhook Mercado Livre' : 'Envio via ERP / Notificação'}\n`;
+      const origemMap = {
+        'webhook_ml': 'Webhook Mercado Livre',
+        'webhook_shopee': 'Webhook Shopee',
+        'manual': 'Alteração Manual no ERP',
+        'regra_automatica': 'Gatilho de Regra Automática',
+        'api_request': 'Requisição API Shopee'
+      };
+      text += ` • Origem                : ${origemMap[item.origem] || 'Envio via ERP / Notificação'}\n`;
+    }
+    if (item.evento) {
+      text += ` • Evento / Ação         : ${item.evento}\n`;
+    }
+    if (item.status_shopee) {
+      text += ` • Status Shopee         : ${item.status_shopee}\n`;
+    }
+    if (item.logistics_status) {
+      text += ` • Status Logístico      : ${item.logistics_status}\n`;
+    }
+    if (item.status_retorno) {
+      text += ` • Status de Retorno     : ${item.status_retorno.toUpperCase()}\n`;
     }
     if (item.sucesso !== undefined) {
       text += ` • Status de Execução    : ${item.sucesso ? 'Sucesso (200 OK)' : 'Falha'}\n`;
@@ -1452,6 +1474,9 @@ const formatHistoryTxt = (val, formData, fieldName = '') => {
     }
     if (item.volume_number) {
       text += ` • Número do Volume      : ${item.volume_number}\n`;
+    }
+    if (item.payload) {
+      text += ` • Payload Shopee (JSON) : ${typeof item.payload === 'object' ? JSON.stringify(item.payload) : item.payload}\n`;
     }
     const regDate = item.registrado_em || item.recebido_em;
     if (regDate) {
@@ -1473,6 +1498,7 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
   const fileInputRef = React.useRef(null);
 
   const isMeliField = Boolean(name && (name.toLowerCase().includes('meli') || name.toLowerCase().includes('mercado')));
+  const isShopeeField = Boolean(name && name.toLowerCase().includes('shopee'));
   const isHistoryField = (name && name.toLowerCase().includes('historico')) || Array.isArray(value) || (typeof value === 'object' && value !== null);
 
   const handleFileChange = (e) => {
@@ -1511,8 +1537,18 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
 
     if (isHistoryField) {
       const formattedTxt = formatHistoryTxt(value, formData, name);
-      const pedidoRef = (isMeliField ? (formData?.meli_order_id || formData?.meli_shipment_id) : formData?.id_pedido_intelipost) || formData?.numero_pedido || formData?.id_sequencial || formData?.id || 'pedido';
-      const filePrefix = isMeliField ? 'historico_mercadolivre' : 'historico_intelipost';
+      let filePrefix = 'historico_intelipost';
+      let pedidoRef = formData?.id_pedido_intelipost;
+
+      if (isMeliField) {
+        filePrefix = 'historico_mercadolivre';
+        pedidoRef = formData?.meli_order_id || formData?.meli_shipment_id;
+      } else if (isShopeeField) {
+        filePrefix = 'historico_shopee';
+        pedidoRef = formData?.shopee_order_sn;
+      }
+
+      pedidoRef = pedidoRef || formData?.numero_pedido || formData?.id_sequencial || formData?.id || 'pedido';
       const filename = `${filePrefix}_pedido_${pedidoRef}.txt`;
 
       const link = document.createElement('a');
@@ -1558,9 +1594,20 @@ export const FileInput = ({ field, value, onChange, error, fileName, formData, o
 
   let displayText = fileName;
   if (!displayText) {
-    const filePrefix = isMeliField ? 'historico_mercadolivre.txt' : 'historico_intelipost.txt';
-    const labelTerm = isMeliField ? 'evento(s)' : 'ocorrência(s)';
-    const labelTermSingular = isMeliField ? 'evento' : 'ocorrência';
+    let filePrefix = 'historico_intelipost.txt';
+    let labelTerm = 'ocorrência(s)';
+    let labelTermSingular = 'ocorrência';
+
+    if (isMeliField) {
+      filePrefix = 'historico_mercadolivre.txt';
+      labelTerm = 'evento(s)';
+      labelTermSingular = 'evento';
+    } else if (isShopeeField) {
+      filePrefix = 'historico_shopee.txt';
+      labelTerm = 'evento(s)';
+      labelTermSingular = 'evento';
+    }
+
     if (Array.isArray(value)) {
       displayText = `${filePrefix} (${value.length} ${labelTerm})`;
     } else if (value && typeof value === 'object') {
