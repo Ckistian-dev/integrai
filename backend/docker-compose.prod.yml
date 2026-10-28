@@ -35,6 +35,8 @@ services:
     restart: always
     # Removido --reload para produção
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./logs:/app/logs
     ports:
       # Mapeando 8002 externa -> 8000 interna (Seu Nginx vai apontar para a 8002)
       - "8002:8000"
