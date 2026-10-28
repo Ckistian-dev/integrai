@@ -101,6 +101,9 @@ def init_logging(logs_dir: Optional[str] = None, log_level: int = logging.INFO):
 
     # Remover handlers antigos duplicados se houver
     for h in list(root_logger.handlers):
+        if isinstance(h, logging.FileHandler):
+            h.flush()
+            h.close()
         root_logger.removeHandler(h)
 
     # 1. Console Handler (stdout)

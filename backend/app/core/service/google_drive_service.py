@@ -270,6 +270,65 @@ class GoogleDriveService:
 
         return deleted_count
 
+    def delete_old_files_by_prefix(self, folder_id: str, prefix: str, days: int = 30) -> int:
+        """
+        Lista os arquivos da pasta que começam com `prefix` e exclui permanentemente
+        aqueles criados há mais de `days` dias.
+        """
+        if not self.service:
+            logger.error("Drive: Tentativa de limpeza sem serviço inicializado.")
+            return 0
+
+        from datetime import datetime, timezone, timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_str = cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        deleted_count = 0
+        page_token = None
+
+        try:
+            while True:
+                query = (
+                    f"'{folder_id}' in parents "
+                    f"and trashed = false "
+                    f"and createdTime < '{cutoff_str}'"
+                )
+                results = self.service.files().list(
+                    q=query,
+                    pageSize=100,
+                    fields="nextPageToken, files(id, name, createdTime)",
+                    pageToken=page_token
+                ).execute()
+
+                items = results.get('files', [])
+                for item in items:
+                    name = item.get('name', '')
+                    if not name.startswith(prefix):
+                        continue
+                    try:
+                        self.service.files().delete(fileId=item['id']).execute()
+                        logger.info(
+                            f"Drive: Arquivo antigo excluído — '{name}' "
+                            f"(criado em {item.get('createdTime', 'desconhecido')})"
+                        )
+                        deleted_count += 1
+                    except Exception as del_ex:
+                        logger.warning(
+                            f"Drive: Não foi possível excluir '{name}' "
+                            f"(ID: {item['id']}): {del_ex}"
+                        )
+
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+
+            logger.info(f"Drive: Limpeza por prefixo '{prefix}' concluída. {deleted_count} arquivo(s) excluído(s).")
+        except Exception as e:
+            logger.error(f"Drive: Erro ao limpar arquivos antigos com prefixo '{prefix}': {e}", exc_info=True)
+
+        return deleted_count
+
     def watch_file(self, file_id: str, channel_id: str, webhook_url: str):
         """Registra um canal de watch (push notifications) para um arquivo ou pasta."""
         if not self.service:
