@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_active_user
 from app.core.db import database, models
 from app.core.service.atendai_service import AtendaiService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import AtendaiErrorCode, LogStatus
 
 router = APIRouter()
 

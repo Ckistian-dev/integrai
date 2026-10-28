@@ -4,6 +4,9 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.core.db import models
 
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import AtendaiErrorCode, LogStatus
+
 logger = logging.getLogger(__name__)
 
 

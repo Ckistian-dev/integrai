@@ -16,6 +16,9 @@ from app.core.db.models import (
     PedidoModalidadeFreteEnum, FiscalPagamentoEnum
 )
 
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import MagentoErrorCode, LogStatus
+
 logger = logging.getLogger(__name__)
 
 # Cache em memória para os pedidos do Magento por empresa: { id_empresa: { "timestamp": float, "raw_orders": list } }
@@ -663,52 +666,146 @@ class MagentoService:
             
         return novo_pedido, produtos_criados
 
-    def _extract_magento_ie(self, order_data: dict, billing: dict) -> Optional[str]:
+    def _collect_custom_attributes(self, source: Optional[dict]) -> list:
+        """Helper para extrair custom_attributes normalizados tanto em lista quanto em dicionário."""
+        if not source or not isinstance(source, dict):
+            return []
+        attrs = source.get('custom_attributes')
+        if isinstance(attrs, list):
+            return [a for a in attrs if isinstance(a, dict)]
+        elif isinstance(attrs, dict):
+            return [{"attribute_code": k, "value": v} for k, v in attrs.items()]
+        return []
+
+    def get_customer(self, customer_id: int) -> Optional[dict]:
         """
-        Tenta extrair a Inscrição Estadual informada no pedido ou no endereço de cobrança do Magento.
+        Busca dados completos de um cliente específico no Magento via GET /V1/customers/{customer_id}.
+        """
+        if not customer_id:
+            return None
+
+        url = f"{self.api_base}/customers/{customer_id}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        try:
+            logger.debug(f"Buscando cliente {customer_id} no Magento: {url}")
+            resp = requests.get(url, auth=self._get_auth(), headers=headers, timeout=15.0)
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 404:
+                logger.warning(f"Cliente {customer_id} não encontrado no Magento.")
+                return None
+            else:
+                logger.warning(f"Erro ao buscar cliente {customer_id} no Magento: {resp.status_code} - {resp.text}")
+                return None
+        except Exception as e:
+            logger.warning(f"Exceção ao buscar cliente {customer_id} no Magento: {e}")
+            return None
+
+    def search_customer_by_email(self, email: str) -> Optional[dict]:
+        """
+        Busca dados de um cliente no Magento pelo e-mail via GET /V1/customers/search.
+        """
+        if not email:
+            return None
+
+        url = f"{self.api_base}/customers/search"
+        params = {
+            "searchCriteria[filter_groups][0][filters][0][field]": "email",
+            "searchCriteria[filter_groups][0][filters][0][value]": email,
+            "searchCriteria[filter_groups][0][filters][0][condition_type]": "eq",
+            "searchCriteria[pageSize]": 1
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        try:
+            logger.debug(f"Buscando cliente por e-mail {email} no Magento: {url}")
+            resp = requests.get(url, auth=self._get_auth(), params=params, headers=headers, timeout=15.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get('items', [])
+                if items:
+                    return items[0]
+            return None
+        except Exception as e:
+            logger.warning(f"Exceção ao buscar cliente por e-mail {email} no Magento: {e}")
+            return None
+
+    def _extract_magento_ie(
+        self,
+        order_data: Optional[dict] = None,
+        billing: Optional[dict] = None,
+        customer_data: Optional[dict] = None
+    ) -> Optional[str]:
+        """
+        Tenta extrair a Inscrição Estadual informada no cliente, pedido ou endereço de cobrança do Magento.
         Suporta custom_attributes, extension_attributes ou campos específicos.
         """
-        target_codes = ['ie', 'inscricao_estadual', 'rg_ie', 'ie_rg', 'rg', 'inscricaoestadual']
+        # Se order_data for passado com estrutura de cliente Magento (ex: possui 'group_id' ou 'addresses' sem 'items'),
+        # ou se apenas um argumento for passado, trata como customer_data se este estiver vazio.
+        order_dict = order_data if isinstance(order_data, dict) else {}
+        billing_dict = billing if isinstance(billing, dict) else {}
+        cust_dict = customer_data if isinstance(customer_data, dict) else {}
 
-        # 1. Busca em custom_attributes (billing e order)
+        if not cust_dict and ('group_id' in order_dict or ('addresses' in order_dict and 'items' not in order_dict)):
+            cust_dict = order_dict
+            order_dict = {}
+
+        # 1. Coleta todos os custom_attributes possíveis (Customer, Endereços do Customer, Billing, Order)
         custom_attrs = []
-        if isinstance(billing.get('custom_attributes'), list):
-            custom_attrs.extend(billing.get('custom_attributes', []))
-        if isinstance(order_data.get('custom_attributes'), list):
-            custom_attrs.extend(order_data.get('custom_attributes', []))
+        custom_attrs.extend(self._collect_custom_attributes(cust_dict))
+        if isinstance(cust_dict.get('addresses'), list):
+            for addr in cust_dict['addresses']:
+                custom_attrs.extend(self._collect_custom_attributes(addr))
+        custom_attrs.extend(self._collect_custom_attributes(billing_dict))
+        custom_attrs.extend(self._collect_custom_attributes(order_dict))
 
-        for attr in custom_attrs:
-            if isinstance(attr, dict):
+        # Códigos de atributos com prioridade: específicos de IE primeiro, depois genéricos (ex: 'rg')
+        priority_1_codes = ['ie', 'inscricao_estadual', 'rg_ie', 'ie_rg', 'inscricaoestadual']
+        priority_2_codes = ['rg', 'inscricao']
+
+        for target_codes in [priority_1_codes, priority_2_codes]:
+            for attr in custom_attrs:
                 code = str(attr.get('attribute_code', '')).lower()
                 val = attr.get('value')
-                if code in target_codes and val:
+                if code in target_codes and val is not None and not isinstance(val, (bool, dict, list)):
                     val_str = str(val).strip()
-                    if val_str.upper() in ['ISENTO', 'ISENTA']:
+                    if val_str.upper() in ['ISENTO', 'ISENTA', 'ISENTO/ISENTA', 'ISENTO / ISENTA']:
                         return 'ISENTO'
                     clean = "".join(c for c in val_str if c.isalnum()).upper()
-                    if clean:
+                    if clean in ['ISENTO', 'ISENTA']:
+                        return 'ISENTO'
+                    if clean and clean not in ['0', '00', '000', 'NAOINFORMADO', 'NAOPOSSUI', 'SEMIE', 'SEM', 'NULL', 'NONE']:
                         return clean
 
-        # 2. Busca em extension_attributes (billing e order)
+        # 2. Busca em extension_attributes (Customer, Billing e Order)
         ext_attrs = []
-        if isinstance(billing.get('extension_attributes'), dict):
-            ext_attrs.append(billing.get('extension_attributes', {}))
-        if isinstance(order_data.get('extension_attributes'), dict):
-            ext_attrs.append(order_data.get('extension_attributes', {}))
+        for src in [cust_dict, billing_dict, order_dict]:
+            if isinstance(src.get('extension_attributes'), dict):
+                ext_attrs.append(src.get('extension_attributes', {}))
 
-        for ext in ext_attrs:
-            for k, v in ext.items():
-                if k.lower() in target_codes and v and not isinstance(v, (dict, list)):
-                    val_str = str(v).strip()
-                    if val_str.upper() in ['ISENTO', 'ISENTA']:
-                        return 'ISENTO'
-                    clean = "".join(c for c in val_str if c.isalnum()).upper()
-                    if clean:
-                        return clean
+        for target_codes in [priority_1_codes, priority_2_codes]:
+            for ext in ext_attrs:
+                for k, v in ext.items():
+                    if k.lower() in target_codes and v is not None and not isinstance(v, (bool, dict, list)):
+                        val_str = str(v).strip()
+                        if val_str.upper() in ['ISENTO', 'ISENTA', 'ISENTO/ISENTA', 'ISENTO / ISENTA']:
+                            return 'ISENTO'
+                        clean = "".join(c for c in val_str if c.isalnum()).upper()
+                        if clean in ['ISENTO', 'ISENTA']:
+                            return 'ISENTO'
+                        if clean and clean not in ['0', '00', '000', 'NAOINFORMADO', 'NAOPOSSUI', 'SEMIE', 'SEM', 'NULL', 'NONE']:
+                            return clean
 
         # 3. Se vat_id e taxvat forem diferentes, e um for CNPJ e o outro for IE
-        vat_id = billing.get('vat_id', '')
-        taxvat = order_data.get('customer_taxvat', '')
+        vat_id = billing_dict.get('vat_id', '')
+        taxvat = order_dict.get('customer_taxvat', '') or cust_dict.get('taxvat', '')
         clean_vat = "".join(c for c in str(vat_id) if c.isalnum()).upper()
         clean_tax = "".join(c for c in str(taxvat) if c.isalnum()).upper()
 
@@ -726,14 +823,51 @@ class MagentoService:
         return None
 
     def _find_or_create_customer(self, order_data: dict) -> models.Cadastro:
-        """Busca cliente por email ou CPF (taxvat) usando dados do endereço de COBRANÇA (billing_address)"""
+        """Busca cliente por email ou CPF (taxvat) usando dados do Magento com enriquecimento do perfil do cliente"""
         logger.info(f"Buscando ou criando cliente para o pedido Magento {order_data.get('increment_id')}")
 
-        # --- DADOS DO CLIENTE: USA BILLING_ADDRESS (COBRANÇA) COMO FONTE PRINCIPAL ---
-        billing = order_data.get('billing_address', {})
+        # Se for passado diretamente o payload de um cliente Magento (sem increment_id e com 'group_id' ou 'addresses')
+        customer_data = None
+        if 'group_id' in order_data or ('addresses' in order_data and 'increment_id' not in order_data):
+            customer_data = order_data
+            order_data = {}
 
-        email = order_data.get('customer_email') or billing.get('email')
-        taxvat = order_data.get('customer_taxvat') or billing.get('vat_id')
+        billing = order_data.get('billing_address', {})
+        if not billing and customer_data and isinstance(customer_data.get('addresses'), list):
+            # Procura endereço default_billing ou o primeiro disponível
+            default_billing_id = str(customer_data.get('default_billing', ''))
+            billing = next(
+                (a for a in customer_data['addresses'] if str(a.get('id', '')) == default_billing_id or a.get('default_billing')),
+                customer_data['addresses'][0] if customer_data['addresses'] else {}
+            )
+
+        customer_id = order_data.get('customer_id') or (customer_data.get('id') if customer_data else None)
+        email = order_data.get('customer_email') or billing.get('email') or (customer_data.get('email') if customer_data else None)
+
+        # Se temos o ID do cliente mas ainda não buscamos seus dados completos da API Magento, busca agora
+        if not customer_data and customer_id:
+            try:
+                customer_data = self.get_customer(customer_id)
+            except Exception as e:
+                logger.warning(f"Não foi possível buscar cliente {customer_id} no Magento: {e}")
+
+        # Se ainda não temos dados do cliente e temos email, tenta buscar pelo e-mail
+        if not customer_data and email:
+            try:
+                customer_data = self.search_customer_by_email(email)
+            except Exception as e:
+                logger.debug(f"Busca de cliente por e-mail {email} no Magento não retornou dados: {e}")
+
+        # Documento fiscal (taxvat / vat_id / custom_attributes.cnpj)
+        taxvat = order_data.get('customer_taxvat') or billing.get('vat_id') or (customer_data.get('taxvat') if customer_data else None)
+        if not taxvat and customer_data:
+            for attr in self._collect_custom_attributes(customer_data):
+                c_code = str(attr.get('attribute_code', '')).lower()
+                if c_code in ['cnpj', 'cpf', 'taxvat', 'vat_id', 'documento']:
+                    v_val = attr.get('value')
+                    if v_val and not isinstance(v_val, (bool, dict, list)):
+                        taxvat = str(v_val).strip()
+                        break
 
         # Tenta buscar por CPF/CNPJ se existir
         clean_doc = "".join(c for c in taxvat if c.isalnum()).upper() if taxvat else ""
@@ -743,7 +877,7 @@ class MagentoService:
                 models.Cadastro.cpf_cnpj == clean_doc,
                 models.Cadastro.id_empresa == self.id_empresa
             ).first()
-        
+
         # Se não achou, tenta por email
         if not cliente and email:
              cliente = self.db.query(models.Cadastro).filter(
@@ -752,14 +886,20 @@ class MagentoService:
             ).first()
 
         # Determina UF do cliente
-        uf = billing.get('region_code')
+        uf = billing.get('region_code') or (billing.get('region', {}).get('region_code') if isinstance(billing.get('region'), dict) else None)
         if not uf:
             shipping_assignments = order_data.get('extension_attributes', {}).get('shipping_assignments', [])
             if shipping_assignments:
                 uf = shipping_assignments[0].get('shipping', {}).get('address', {}).get('region_code')
+        if not uf and customer_data and isinstance(customer_data.get('addresses'), list):
+            for addr in customer_data['addresses']:
+                addr_uf = addr.get('region_code') or (addr.get('region', {}).get('region_code') if isinstance(addr.get('region'), dict) else None)
+                if addr_uf:
+                    uf = addr_uf
+                    break
 
-        # 1. Tenta extrair IE do Magento
-        ie_extraida = self._extract_magento_ie(order_data, billing)
+        # 1. Tenta extrair IE do Magento (consultando fontes: customer_data, billing e order_data)
+        ie_extraida = self._extract_magento_ie(order_data, billing, customer_data=customer_data)
         sefaz_data = None
         is_pj = len(clean_doc) == 14
 
@@ -790,15 +930,20 @@ class MagentoService:
         if cliente:
             logger.info(f"Cliente {clean_doc or email} já existe no ERP para empresa {self.id_empresa}")
             mudou = False
-            # Atualiza IE se estava vazia e agora descobrimos
+            # Atualiza IE se estava vazia ou se era ISENTO e agora temos IE numérica
             if not cliente.inscricao_estadual and inscricao_estadual:
                 cliente.inscricao_estadual = inscricao_estadual
                 mudou = True
-            # Atualiza indicador de IE se era não contribuinte e descobrimos que é contribuinte
+            elif inscricao_estadual and inscricao_estadual != "ISENTO" and str(cliente.inscricao_estadual).upper() == "ISENTO":
+                cliente.inscricao_estadual = inscricao_estadual
+                mudou = True
+
+            # Atualiza indicador de IE se era não contribuinte e descobrimos que é contribuinte ou isento
             val_ind_atual = cliente.indicador_ie.value if hasattr(cliente.indicador_ie, 'value') else cliente.indicador_ie
-            if (not val_ind_atual or val_ind_atual == '9') and indicador_ie == CadastroIndicadorIEEnum.contribuinte_icms:
+            if (not val_ind_atual or val_ind_atual == '9') and indicador_ie in (CadastroIndicadorIEEnum.contribuinte_icms, CadastroIndicadorIEEnum.isento):
                 cliente.indicador_ie = indicador_ie
                 mudou = True
+
             # Enriquece dados complementares da SEFAZ se vazios
             if sefaz_data:
                 if not cliente.fantasia and sefaz_data.get('nome_fantasia'):
@@ -813,12 +958,12 @@ class MagentoService:
                 logger.info(f"Cliente #{cliente.id} atualizado com IE {cliente.inscricao_estadual} e Indicador IE {cliente.indicador_ie}")
             return cliente
 
-        # 5. Cria novo cliente com dados do billing_address (cobrança) e enriquecimento SEFAZ
+        # 5. Cria novo cliente com dados do billing_address / customer_data e enriquecimento SEFAZ
         logger.info(f"Criando novo cliente {clean_doc or email} para empresa {self.id_empresa}")
         street_lines = billing.get('street', [])
         rua = street_lines[0] if len(street_lines) > 0 else ''
         numero = street_lines[1] if len(street_lines) > 1 else 'S/N'
-        
+
         # Mapeamento de endereço (Padrão 4 linhas: Rua, Numero, Complemento, Bairro)
         complemento = ''
         bairro = ''
@@ -831,9 +976,12 @@ class MagentoService:
             bairro = street_lines[2] if len(street_lines) > 2 else ''
 
         clean_doc_create = clean_doc if clean_doc else '00000000000'
-        
+
         # Nome / Razão Social: prioriza razão oficial da SEFAZ se houver, senão usa Firstname + Lastname do Magento
-        nome_razao = (sefaz_data.get('razao_social') if sefaz_data and sefaz_data.get('razao_social') else f"{billing.get('firstname', '')} {billing.get('lastname', '')}").strip().upper()
+        firstname = billing.get('firstname') or (customer_data.get('firstname') if customer_data else '') or ''
+        lastname = billing.get('lastname') or (customer_data.get('lastname') if customer_data else '') or ''
+        magento_name = f"{firstname} {lastname}".strip()
+        nome_razao = (sefaz_data.get('razao_social') if sefaz_data and sefaz_data.get('razao_social') else magento_name).strip().upper()
         fantasia = sefaz_data.get('nome_fantasia', '').strip().upper() if sefaz_data and sefaz_data.get('nome_fantasia') else None
         cidade_ibge = sefaz_data.get('cidade_ibge') if sefaz_data else None
 
@@ -849,7 +997,7 @@ class MagentoService:
             email=email,
             telefone="".join(filter(str.isdigit, str(billing.get('telephone') or '')))[:20],
             cep="".join(filter(str.isdigit, str(billing.get('postcode') or '')))[:9],
-            estado=billing.get('region_code'),
+            estado=billing.get('region_code') or (billing.get('region', {}).get('region_code') if isinstance(billing.get('region'), dict) else None),
             cidade=billing.get('city'),
             cidade_ibge=cidade_ibge,
             logradouro=rua,
@@ -863,6 +1011,7 @@ class MagentoService:
         self.db.refresh(novo_cliente)
         logger.info(f"Novo cliente criado com ID ERP: {novo_cliente.id} (IE: {novo_cliente.inscricao_estadual}, Indicador IE: {novo_cliente.indicador_ie})")
         return novo_cliente
+
 
     def update_magento_order_status(self, pedido):
         """

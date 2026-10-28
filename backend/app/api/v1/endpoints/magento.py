@@ -6,6 +6,8 @@ from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.db.schemas import Page
 from app.core.service.magento_service import MagentoService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import MagentoErrorCode, LogStatus
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -73,6 +75,28 @@ def import_magento_order(
     except Exception as e:
         logger.exception(f"Erro ao importar pedido Magento: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/magento/clientes/{customer_id}")
+def get_magento_customer_proxy(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Busca dados de um cliente diretamente na API do Magento (incluindo custom_attributes como IE e CNPJ).
+    """
+    try:
+        service = MagentoService(db, current_user.id_empresa)
+        data = service.get_customer(customer_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado no Magento.")
+        return data
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Erro ao buscar cliente {customer_id} no Magento: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/magento/teste-conexao")
 def testar_conexao_magento(

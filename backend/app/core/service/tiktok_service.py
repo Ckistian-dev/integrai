@@ -16,6 +16,9 @@ import hashlib
 import time
 from urllib.parse import urlencode
 
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import TikTokErrorCode, LogStatus
+
 logger = logging.getLogger(__name__)
 
 class TiktokService:

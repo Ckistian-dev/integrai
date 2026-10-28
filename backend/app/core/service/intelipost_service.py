@@ -11,6 +11,8 @@ from decimal import Decimal
 
 from app.core.db import models
 from app.core.config import settings
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import IntelipostErrorCode, LogStatus
 
 class IntelipostService:
     def __init__(self, db: Session, id_empresa: int):
