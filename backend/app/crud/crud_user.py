@@ -4,6 +4,8 @@ from typing import Optional, Any
 from app.core.db import models
 from app.core.db.schemas import  UsuarioCreate,  UsuarioUpdate
 from app.core.service.security import get_password_hash, verify_password
+from app.core.logger import log_info, log_warning, log_error
+from app.core.error_codes import AuthErrorCode, LogStatus
 
 # Nota: Todas as funções recebem 'db: Session' como primeiro argumento.
 
@@ -28,6 +30,8 @@ def create_user(db: Session, *, obj_in: UsuarioCreate, id_empresa: int) -> model
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    log_info("AUTH", "crud_user", "create_user", LogStatus.SUCCESS,
+             f"Novo usuário criado com sucesso", {"user_id": db_user.id, "email": db_user.email, "id_empresa": id_empresa})
     return db_user
 
 def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Usuario]:
@@ -35,15 +39,18 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Us
     Autentica um usuário. Retorna o usuário se for válido, senão None.
     Suporta senhas criptografadas por EncryptedString e hashes antigos do Bcrypt.
     """
-    print(f"[DEBUG AUTH] Tentando autenticar usuário com email: '{email}'")
+    log_info("AUTH", "crud_user", "authenticate_user", LogStatus.PROCESSING,
+             f"Tentativa de autenticação para o email: {email}", {"email": email})
     
     user = db.query(models.Usuario).filter(models.Usuario.email == email).order_by(models.Usuario.id.desc()).first()
     
     if not user:
-        print(f"[DEBUG AUTH] Falha: Usuário com email '{email}' não encontrado no banco de dados.")
+        log_warning("AUTH", "crud_user", "authenticate_user", AuthErrorCode.USER_NOT_FOUND,
+                    f"Falha de autenticação: usuário com email '{email}' não encontrado", {"email": email})
         return None
         
-    print(f"[DEBUG AUTH] Usuário encontrado: ID={user.id}, Empresa={user.id_empresa}")
+    log_info("AUTH", "crud_user", "authenticate_user", LogStatus.PROCESSING,
+             f"Usuário localizado no banco", {"user_id": user.id, "id_empresa": user.id_empresa, "email": email})
     
     # Suporte a senhas legadas (Bcrypt $2b$) e novo EncryptedString
     is_valid = False
@@ -53,10 +60,12 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Us
         is_valid = (user.senha == senha)
 
     if not is_valid:
-        print(f"[DEBUG AUTH] Falha: Senha incorreta para o usuário '{email}' (ID={user.id}, Empresa={user.id_empresa}).")
+        log_warning("AUTH", "crud_user", "authenticate_user", AuthErrorCode.INVALID_CREDENTIALS,
+                    f"Falha de autenticação: senha incorreta", {"user_id": user.id, "id_empresa": user.id_empresa, "email": email})
         return None
         
-    print(f"[DEBUG AUTH] Sucesso: Usuário '{email}' autenticado corretamente para Empresa={user.id_empresa}.")
+    log_info("AUTH", "crud_user", "authenticate_user", LogStatus.SUCCESS,
+             f"Usuário autenticado com sucesso", {"user_id": user.id, "id_empresa": user.id_empresa, "email": email})
     return user
 
 def update_user(db: Session, *, db_obj: models.Usuario, obj_in: UsuarioUpdate) -> models.Usuario:

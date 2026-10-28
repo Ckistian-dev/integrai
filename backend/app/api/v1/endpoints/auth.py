@@ -6,6 +6,8 @@ from app.core.db.database import get_db
 from app.core.db.schemas import Token # Importa o schema Token
 from app.crud import crud_user, crud_business
 from app.core.service import security
+from app.core.logger import log_info, log_warning, log_error
+from app.core.error_codes import AuthErrorCode, LogStatus
 
 router = APIRouter()
 
@@ -18,22 +20,27 @@ def login_for_access_token(
     Endpoint de login. Recebe email (no campo 'username') e senha.
     Retorna um token JWT.
     """
-    print(f"[DEBUG AUTH ENDPOINT] Recebido pedido de login. Username: '{form_data.username}'")
+    log_info("AUTH", "auth_endpoint", "login_for_access_token", LogStatus.PROCESSING,
+             f"Recebida requisição de login para: {form_data.username}", {"username": form_data.username})
     user = crud_user.authenticate_user(
         db, email=form_data.username, senha=form_data.password
     )
     if not user:
-        print("[DEBUG AUTH ENDPOINT] Autenticação falhou: Credenciais inválidas.")
+        log_warning("AUTH", "auth_endpoint", "login_for_access_token", AuthErrorCode.INVALID_CREDENTIALS,
+                    f"Falha no login: credenciais inválidas para {form_data.username}", {"username": form_data.username})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or senha",
             headers={"WWW-Authenticate": "Bearer"},
         )
         
-    print(f"[DEBUG AUTH ENDPOINT] Autenticação bem sucedida. Gerando token para usuário ID={user.id}")
+    log_info("AUTH", "auth_endpoint", "login_for_access_token", LogStatus.SUCCESS,
+             f"Login realizado com sucesso. Gerando token JWT", {"user_id": user.id, "id_empresa": user.id_empresa})
         
     business = crud_business.get_business(db, id_empresa=user.id_empresa) # Corrigido para get_empresa/id_empresa
     if not business:
+        log_error("AUTH", "auth_endpoint", "login_for_access_token", AuthErrorCode.USER_NOT_FOUND,
+                  f"Empresa não encontrada para o usuário {user.id}", context={"user_id": user.id, "id_empresa": user.id_empresa})
         raise HTTPException(status_code=404, detail="Business not found for user")
     
     # Dados que serão armazenados dentro do token JWT

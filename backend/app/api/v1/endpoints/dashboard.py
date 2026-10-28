@@ -141,8 +141,17 @@ def get_dynamic_card_data(
     Processa a query dinâmica de um card específico baseado na sua configuração.
     Usa o model_dispatch para acessar qualquer tabela do ERP.
     """
+    from app.core.logger import log_info, log_warning
+    from app.core.error_codes import LogStatus, GenericErrorCode
+    
+    log_info("DASHBOARD", "dashboard_endpoint", "get_dynamic_card_data", LogStatus.PROCESSING,
+             f"Executando query de card para modelo: {query.modelo} (tipo: {query.tipo})",
+             {"modelo": query.modelo, "tipo": query.tipo, "id_empresa": current_user.id_empresa})
+
     registry = get_registry_entry(query.modelo)
     if not registry:
+        log_warning("DASHBOARD", "dashboard_endpoint", "get_dynamic_card_data", GenericErrorCode.RECORD_NOT_FOUND,
+                    f"Modelo '{query.modelo}' não encontrado no registry", {"modelo": query.modelo})
         raise HTTPException(status_code=400, detail=f"Modelo '{query.modelo}' não encontrado.")
         
     model = registry["model"]

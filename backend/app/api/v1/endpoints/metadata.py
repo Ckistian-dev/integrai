@@ -386,8 +386,8 @@ def get_model_metadata(model_name: str):
             is_single_record=is_single_record
         )
     except Exception as e:
-        # Adiciona um print para debug no console do backend
-        print(f"Erro Crítico ao inspecionar modelo {model_name}: {e}")
-        import traceback
-        traceback.print_exc()
+        from app.core.logger import log_error
+        from app.core.error_codes import GenericErrorCode
+        log_error("METADATA", "metadata_endpoint", "get_model_metadata", GenericErrorCode.VALIDATION_FAILED,
+                  f"Erro crítico ao inspecionar modelo {model_name}: {e}", exc=e, context={"model_name": model_name})
         raise HTTPException(status_code=500, detail=f"Error inspecting model: {e}")
