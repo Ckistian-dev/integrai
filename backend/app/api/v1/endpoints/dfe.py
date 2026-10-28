@@ -4,6 +4,8 @@ from sqlalchemy import cast, String
 from app.core.db import database, models
 from app.api.dependencies import get_current_active_user
 from app.core.service.nfe_service import NFeService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import DfeErrorCode, LogStatus
 from lxml import etree
 from typing import List, Dict, Any
 from fastapi.responses import Response
@@ -16,6 +18,8 @@ async def sync_dfe(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Busca novos documentos destinados no Web Service da SEFAZ."""
+    log_info("DFE", "dfe_endpoint", "sync_dfe", LogStatus.PROCESSING,
+             "Iniciando sincronização de DF-e com a SEFAZ", {"id_empresa": current_user.id_empresa})
     service = NFeService(db, current_user.id_empresa)
     return service.sincronizar_dfe()
 
@@ -26,6 +30,8 @@ async def manifest_dfe(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Envia evento de Ciência da Operação para liberar o download do XML completo."""
+    log_info("DFE", "dfe_endpoint", "manifest_dfe", LogStatus.PROCESSING,
+             f"Enviando manifestação de ciência para a nota #{nota_id}", {"nota_id": nota_id, "id_empresa": current_user.id_empresa})
     service = NFeService(db, current_user.id_empresa)
     return service.manifestar_ciencia(nota_id)
 

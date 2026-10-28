@@ -9,6 +9,8 @@ from app.core.db.database import get_db
 from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.service.nfe_service import NFeService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import NfeErrorCode, LogStatus
 
 router = APIRouter()
 
@@ -34,10 +36,14 @@ def emitir_nfe(
     """
     Emite a NFe para um pedido específico usando PyNFE.
     """
-    service = NFeService(db, current_user.id_empresa)
-    
     id_regra = payload.id_regra_tributaria if payload else None
+    log_info("NFE", "nfe_endpoint", "emitir_nfe", LogStatus.PROCESSING,
+             f"Recebida requisição de emissão de NF-e para o pedido #{pedido_id}",
+             {"pedido_id": pedido_id, "id_regra_tributaria": id_regra, "id_empresa": current_user.id_empresa})
+    service = NFeService(db, current_user.id_empresa)
     resultado = service.emitir_nfe(pedido_id, id_regra_tributaria=id_regra)
+    log_info("NFE", "nfe_endpoint", "emitir_nfe", LogStatus.SUCCESS,
+             f"Emissão de NF-e finalizada para o pedido #{pedido_id}", {"pedido_id": pedido_id})
     return resultado
 
 @router.post("/nfe/devolucao/{pedido_id}")

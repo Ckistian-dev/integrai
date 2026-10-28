@@ -44,6 +44,9 @@ from app.core.db.models import (
     PedidoIndicadorPresencaEnum
 )
 
+from app.core.logger import log_info, log_warning, log_error, log_critical, log_debug
+from app.core.error_codes import NfeErrorCode, DfeErrorCode, LogStatus, SystemErrorCode
+
 logger = logging.getLogger(__name__)
 
 # Cache em memória para gerenciar o cooldown da SEFAZ e evitar o erro 656
@@ -1419,9 +1422,8 @@ class NFeService:
             return None
 
         except Exception as e:
-            print(f"Erro PDF: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error("NFE", "nfe_service", "_gerar_danfe", NfeErrorCode.DANFE_GENERATION,
+                      f"Erro na geração de DANFE: {e}", exc=e, context={"chNFe": chNFe, "nProt": nProt})
             return None
 
     def _gerar_danfe_simplificada(self, xml_nfe, nProt: str, dhRecbto: str, chNFe: str, c=None, is_cancelada: bool = False) -> str:
@@ -1683,9 +1685,8 @@ class NFeService:
             return None
 
         except Exception as e:
-            print(f"Erro PDF Simplificado: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error("NFE", "nfe_service", "_gerar_danfe_simplificada", NfeErrorCode.DANFE_GENERATION,
+                      f"Erro na geração de DANFE simplificada: {e}", exc=e, context={"chNFe": chNFe, "nProt": nProt})
             return None
 
     def _gerar_pdf_cce(self, chave_acesso: str, cnpj_cpf: str, protocolo: str, data_evento: str, uf: str, texto_correcao: str) -> str:
