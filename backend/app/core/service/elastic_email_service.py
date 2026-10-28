@@ -8,6 +8,9 @@ from fastapi import HTTPException
 from app.core.db import models
 from app.core.config import settings
 
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import EmailErrorCode, LogStatus
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,9 +93,13 @@ class ElasticEmailService:
             regras_matching.append(r)
 
         if not regras_matching:
-            logger.info(
-                f"Nenhuma regra de e-mail encontrada para a transição "
-                f"'{situacao_de}' -> '{situacao_para}' na empresa {self.id_empresa}."
+            log_info(
+                "EMAIL",
+                "elastic_email",
+                "send_trigger_emails",
+                LogStatus.INFO,
+                f"Nenhuma regra de e-mail encontrada para a transição '{situacao_de}' -> '{situacao_para}'",
+                context={"empresa_id": self.id_empresa}
             )
             return []
 
@@ -118,12 +125,24 @@ class ElasticEmailService:
         elastic_config = self.config
 
         if not elastic_config or not elastic_config.api_key:
-            logger.warning(f"Regra '{regra.nome}' sem configuração de API Key válida. Configure o Elastic Email primeiro.")
+            log_warning(
+                "EMAIL",
+                "elastic_email",
+                "_send_for_regra",
+                EmailErrorCode.CONFIG_MISSING,
+                f"Regra '{regra.nome}' sem configuração de API Key válida",
+                context={"empresa_id": self.id_empresa}
+            )
             return {"success": False, "regra": regra.nome, "message": "API Key não configurada."}
 
         if not pedido.cliente or not pedido.cliente.email:
-            logger.warning(
-                f"Pedido {pedido.id} sem e-mail de cliente. Regra '{regra.nome}' não enviada."
+            log_warning(
+                "EMAIL",
+                "elastic_email",
+                "_send_for_regra",
+                EmailErrorCode.DISPATCH_FAILED,
+                f"Pedido {pedido.id} sem e-mail de cliente. Regra '{regra.nome}' não enviada.",
+                context={"empresa_id": self.id_empresa}
             )
             return {"success": False, "regra": regra.nome, "message": "Cliente sem e-mail."}
 
@@ -187,13 +206,24 @@ class ElasticEmailService:
 
         try:
             async with httpx.AsyncClient() as client:
-                logger.info(
-                    f"[EmailRegra '{regra.nome}'] Enviando e-mail para "
-                    f"{pedido.cliente.email} (Pedido #{pedido.id}, {situacao_de} -> {situacao_para})..."
+                log_info(
+                    "EMAIL",
+                    "elastic_email",
+                    "_send_for_regra",
+                    LogStatus.PROCESSING,
+                    f"[EmailRegra '{regra.nome}'] Enviando e-mail para {pedido.cliente.email} (Pedido #{pedido.id}, {situacao_de} -> {situacao_para})",
+                    context={"empresa_id": self.id_empresa}
                 )
 
                 if settings.ENVIRONMENT != "production":
-                    logger.info(f"[EmailRegra '{regra.nome}'] SIMULADO: E-mail não enviado pois o ambiente é '{settings.ENVIRONMENT}'.")
+                    log_info(
+                        "EMAIL",
+                        "elastic_email",
+                        "_send_for_regra",
+                        LogStatus.SUCCESS,
+                        f"[EmailRegra '{regra.nome}'] SIMULADO: E-mail não enviado pois ambiente é '{settings.ENVIRONMENT}'",
+                        context={"empresa_id": self.id_empresa}
+                    )
                     return {
                         "success": True,
                         "regra": regra.nome,
@@ -206,8 +236,13 @@ class ElasticEmailService:
 
                 if resp.status_code in [200, 201, 202]:
                     data = resp.json()
-                    logger.info(
-                        f"[EmailRegra '{regra.nome}'] Enviado! TransactionID: {data.get('TransactionID')}"
+                    log_info(
+                        "EMAIL",
+                        "elastic_email",
+                        "_send_for_regra",
+                        LogStatus.SUCCESS,
+                        f"[EmailRegra '{regra.nome}'] Enviado com sucesso! TransactionID: {data.get('TransactionID')}",
+                        context={"empresa_id": self.id_empresa}
                     )
                     return {
                         "success": True,
@@ -216,9 +251,13 @@ class ElasticEmailService:
                         "transaction_id": data.get("TransactionID"),
                     }
                 else:
-                    logger.error(
-                        f"[EmailRegra '{regra.nome}'] Erro API Elastic Email: "
-                        f"{resp.status_code} - {resp.text}"
+                    log_error(
+                        "EMAIL",
+                        "elastic_email",
+                        "_send_for_regra",
+                        EmailErrorCode.DISPATCH_FAILED,
+                        f"[EmailRegra '{regra.nome}'] Erro API Elastic Email: {resp.status_code} - {resp.text}",
+                        context={"empresa_id": self.id_empresa}
                     )
                     return {
                         "success": False,
@@ -228,7 +267,15 @@ class ElasticEmailService:
                     }
 
         except Exception as e:
-            logger.exception(f"[EmailRegra '{regra.nome}'] Falha fatal: {str(e)}")
+            log_error(
+                "EMAIL",
+                "elastic_email",
+                "_send_for_regra",
+                EmailErrorCode.DISPATCH_FAILED,
+                f"[EmailRegra '{regra.nome}'] Falha fatal: {str(e)}",
+                exc=e,
+                context={"empresa_id": self.id_empresa}
+            )
             return {
                 "success": False,
                 "regra": regra.nome,
@@ -269,5 +316,12 @@ class ElasticEmailService:
             sucesso = next((r for r in results if r.get("success")), None)
             return sucesso or results[-1]
 
-        logger.info(f"Nenhuma regra de e-mail encontrada para o fluxo de NFe do pedido {pedido.id}. Nenhum e-mail enviado.")
+        log_info(
+            "EMAIL",
+            "elastic_email",
+            "send_invoice_email",
+            LogStatus.INFO,
+            f"Nenhuma regra de e-mail encontrada para o fluxo de NFe do pedido {pedido.id}. Nenhum e-mail enviado.",
+            context={"empresa_id": self.id_empresa}
+        )
         return None

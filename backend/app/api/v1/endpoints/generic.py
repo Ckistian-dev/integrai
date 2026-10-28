@@ -30,6 +30,16 @@ from app.core.db import models, database, schemas
 from app.api.v1.model_dispatch import get_registry_entry
 from app.core.service.nfe_service import NFeService
 from app.core.service.elastic_email_service import ElasticEmailService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import (
+    GenericErrorCode,
+    EmailErrorCode,
+    MeliErrorCode,
+    MagentoErrorCode,
+    ShopeeErrorCode,
+    AtendaiErrorCode,
+    LogStatus,
+)
 
 # Constante global para o fuso horário de Brasília
 TZ_BR = timezone(timedelta(hours=-3))
@@ -2624,7 +2634,15 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
 
         db.commit()
     except Exception as e:
-        print(f"Erro ao gerar financeiro automático do pedido: {e}")
+        log_error(
+            "GENERIC",
+            "pedidos",
+            "gerar_contas_financeiras_pedido",
+            GenericErrorCode.TRIGGER_EXECUTION_FAILED,
+            f"Erro ao gerar financeiro automático do pedido: {e}",
+            exc=e,
+            context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+        )
 
 
 _TABLE_TO_MODEL_MAP = {}
@@ -2679,7 +2697,14 @@ def resolve_related_ids(db: Session, model: Any, item_data: Dict[str, Any], id_e
                                 if target_obj_by_id and target_obj_by_id.id_sequencial is not None:
                                     item_data[col_name] = target_obj_by_id.id_sequencial
     except Exception as e:
-        print(f"Aviso ao resolver IDs relacionados em {model}: {e}")
+        log_warning(
+            "GENERIC",
+            "resolve_related_ids",
+            "resolve_related_ids",
+            GenericErrorCode.INVALID_FIELD,
+            f"Aviso ao resolver IDs relacionados em {model}: {e}",
+            context={"empresa_id": id_empresa}
+        )
 
     # Processa itens aninhados em Pedidos (ex: id_produto / produto_id)
     if "itens" in item_data and isinstance(item_data["itens"], list):
@@ -2819,7 +2844,15 @@ def create_item(
                     atendai_svc = AtendaiService(db, current_user.id_empresa)
                     atendai_svc.send_order_notification(item, event_type="pedido_criado")
                 except Exception as e:
-                    print(f"Erro ao notificar AtendAI na criação do pedido #{item.id}: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "atendai_notification",
+                        AtendaiErrorCode.NOTIFICATION_FAILED,
+                        f"Erro ao notificar AtendAI na criação do pedido #{item.id}: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
     except IntegrityError as e:
         db.rollback()
         error_info = str(e.orig) if e.orig else str(e)
@@ -2904,7 +2937,15 @@ def batch_update_items(
             for item in items:
                 atendai_svc.send_order_notification(item, event_type="pedido_atualizado")
         except Exception as e:
-            print(f"Erro ao notificar AtendAI na atualização em lote de pedidos: {e}")
+            log_error(
+                "GENERIC",
+                "pedidos",
+                "atendai_batch_notification",
+                AtendaiErrorCode.NOTIFICATION_FAILED,
+                f"Erro ao notificar AtendAI na atualização em lote de pedidos: {e}",
+                exc=e,
+                context={"empresa_id": current_user.id_empresa}
+            )
 
     return {"message": f"{len(items)} itens atualizados com sucesso."}
 
@@ -3242,7 +3283,15 @@ def update_item(
                 )
                 db.commit()
             except Exception as e:
-                print(f"Erro ao propagar regras_uf: {e}")
+                log_error(
+                    "GENERIC",
+                    "tributacao",
+                    "propagar_regras_uf",
+                    GenericErrorCode.TRIGGER_EXECUTION_FAILED,
+                    f"Erro ao propagar regras_uf: {e}",
+                    exc=e,
+                    context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                )
 
         # 🎯 LÓGICA ESPECÍFICA: Gerar Financeiro ao Aprovar Pedido (Programação)
         if model_name == "pedidos":
@@ -3267,7 +3316,15 @@ def update_item(
                     
                     db.commit()
                 except Exception as e:
-                    print(f"Erro ao cancelar contas relacionadas ao pedido: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "cancelar_contas",
+                        GenericErrorCode.TRIGGER_EXECUTION_FAILED,
+                        f"Erro ao cancelar contas relacionadas ao pedido: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # 🎯 LÓGICA ESPECÍFICA: Disparo de E-mails por Trigger de Status
             if old_situacao != item.situacao:
@@ -3286,8 +3343,15 @@ def update_item(
                     ))
                 except Exception as e:
                     # Erro de e-mail não deve bloquear a atualização do pedido
-                    import logging as _logging
-                    _logging.getLogger(__name__).error(f"Erro ao disparar e-mails por trigger: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "email_trigger",
+                        EmailErrorCode.DISPATCH_FAILED,
+                        f"Erro ao disparar e-mails por trigger: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # Helper seguro para rodar corotina assíncrona em endpoint síncrono
             def _exec_async(coro):
@@ -3304,8 +3368,15 @@ def update_item(
                     else:
                         return asyncio.run(coro)
                 except Exception as exc:
-                    import logging as _l
-                    _l.getLogger(__name__).error(f"Erro ao executar tarefa assíncrona: {exc}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "_exec_async",
+                        GenericErrorCode.TRIGGER_EXECUTION_FAILED,
+                        f"Erro ao executar tarefa assíncrona: {exc}",
+                        exc=exc,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Mercado Livre
             meli_rules_changed = any(
@@ -3327,8 +3398,15 @@ def update_item(
                     meli_svc = MeliService(db, current_user.id_empresa)
                     _exec_async(meli_svc.update_meli_order_status(item))
                 except Exception as e:
-                    import logging as _logging
-                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "meli_status_sync",
+                        MeliErrorCode.ORDER_SYNC_FAILED,
+                        f"Erro ao sincronizar status com Mercado Livre para pedido #{item.id}: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Magento
             if "ID Magento:" in (item.observacao or "") and (old_situacao != item.situacao):
@@ -3337,8 +3415,15 @@ def update_item(
                     magento_svc = MagentoService(db, current_user.id_empresa)
                     magento_svc.update_magento_order_status(item)
                 except Exception as e:
-                    import logging as _logging
-                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "magento_status_sync",
+                        MagentoErrorCode.ORDER_SYNC_FAILED,
+                        f"Erro ao sincronizar status com Magento para pedido #{item.id}: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # 🎯 LÓGICA ESPECÍFICA: Sincronização de Status com Shopee
             shopee_regra_col_mudou = False
@@ -3365,8 +3450,15 @@ def update_item(
                             db.add(item)
                             db.commit()
                 except Exception as e:
-                    import logging as _logging
-                    _logging.getLogger(__name__).error(f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}")
+                    log_error(
+                        "GENERIC",
+                        "pedidos",
+                        "shopee_status_sync",
+                        ShopeeErrorCode.ORDER_SYNC_FAILED,
+                        f"Erro ao sincronizar status com Shopee para pedido #{item.id}: {e}",
+                        exc=e,
+                        context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                    )
 
             # 🎯 LÓGICA ESPECÍFICA: Envio de Link/Código de Rastreio para Mercado Livre
             if is_ml_order and meli_campo_rastreio:
@@ -3382,8 +3474,15 @@ def update_item(
                         meli_svc = MeliService(db, current_user.id_empresa)
                         _exec_async(meli_svc.send_meli_tracking_link(item, tracking_url=str(new_meli_tracking_val).strip()))
                     except Exception as e:
-                        import logging as _logging
-                        _logging.getLogger(__name__).error(f"Erro ao enviar link de rastreio ao Mercado Livre para pedido #{item.id}: {e}")
+                        log_error(
+                            "GENERIC",
+                            "pedidos",
+                            "meli_tracking_sync",
+                            MeliErrorCode.TRACKING_FAILED,
+                            f"Erro ao enviar link de rastreio ao Mercado Livre para pedido #{item.id}: {e}",
+                            exc=e,
+                            context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                        )
 
             # 🎯 LÓGICA ESPECÍFICA: Envio de Link/Código de Rastreio para Shopee
             if is_shopee_order and shopee_campo_rastreio:
@@ -3399,8 +3498,15 @@ def update_item(
                         shopee_svc = ShopeeService(db, current_user.id_empresa)
                         shopee_svc.send_shopee_tracking_link(item, tracking_url=str(new_shopee_tracking_val).strip())
                     except Exception as e:
-                        import logging as _logging
-                        _logging.getLogger(__name__).error(f"Erro ao enviar link de rastreio à Shopee para pedido #{item.id}: {e}")
+                        log_error(
+                            "GENERIC",
+                            "pedidos",
+                            "shopee_tracking_sync",
+                            ShopeeErrorCode.TRACKING_FAILED,
+                            f"Erro ao enviar link de rastreio à Shopee para pedido #{item.id}: {e}",
+                            exc=e,
+                            context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                        )
 
         # 🎯 LÓGICA ESPECÍFICA: Notificação AtendAI em qualquer alteração de pedido
         if model_name == "pedidos":
@@ -3409,7 +3515,15 @@ def update_item(
                 atendai_svc = AtendaiService(db, current_user.id_empresa)
                 atendai_svc.send_order_notification(item, event_type="pedido_atualizado")
             except Exception as e:
-                print(f"Erro ao notificar AtendAI na atualização do pedido #{item.id}: {e}")
+                log_error(
+                    "GENERIC",
+                    "pedidos",
+                    "atendai_notification",
+                    AtendaiErrorCode.NOTIFICATION_FAILED,
+                    f"Erro ao notificar AtendAI na atualização do pedido #{item.id}: {e}",
+                    exc=e,
+                    context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                )
 
     return registry["schema"].from_orm(item)
 

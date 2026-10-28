@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Type, Any
 from pydantic import BaseModel
 from app.core.db.database import Base
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import GenericErrorCode, LogStatus
 
 ModelType = Type[Base] # Tipo para o modelo SQLAlchemy
 
@@ -40,6 +42,14 @@ def create(db: Session, *, model: ModelType, obj_in: BaseModel, id_empresa: int)
     db.add(db_obj)
     db.commit()
     db.refresh(db_obj)
+    log_info(
+        "GENERIC",
+        "crud_generic",
+        "create",
+        LogStatus.SUCCESS,
+        f"Registro criado com sucesso no modelo '{getattr(model, '__tablename__', str(model))}'",
+        context={"empresa_id": id_empresa, "record_id": getattr(db_obj, "id", None)}
+    )
     return db_obj
 
 def update(
@@ -64,6 +74,14 @@ def update(
     db.add(db_obj)
     db.commit()
     db.refresh(db_obj)
+    log_info(
+        "GENERIC",
+        "crud_generic",
+        "update",
+        LogStatus.SUCCESS,
+        f"Registro atualizado no modelo '{getattr(type(db_obj), '__tablename__', str(type(db_obj)))}'",
+        context={"empresa_id": id_empresa, "record_id": getattr(db_obj, "id", None)}
+    )
     return db_obj
 
 def delete(db: Session, *, model: ModelType, id: int, id_empresa: int) -> Optional[Base]:
@@ -72,4 +90,22 @@ def delete(db: Session, *, model: ModelType, id: int, id_empresa: int) -> Option
     if obj:
         db.delete(obj)
         db.commit()
+        log_info(
+            "GENERIC",
+            "crud_generic",
+            "delete",
+            LogStatus.SUCCESS,
+            f"Registro ID {id} deletado com sucesso do modelo '{getattr(model, '__tablename__', str(model))}'",
+            context={"empresa_id": id_empresa, "record_id": id}
+        )
+    else:
+        log_warning(
+            "GENERIC",
+            "crud_generic",
+            "delete",
+            GenericErrorCode.RECORD_NOT_FOUND,
+            f"Tentativa de deletar registro ID {id} inexistente no modelo '{getattr(model, '__tablename__', str(model))}'",
+            context={"empresa_id": id_empresa, "record_id": id}
+        )
     return obj
+

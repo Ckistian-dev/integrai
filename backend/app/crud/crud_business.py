@@ -3,6 +3,8 @@ from typing import Optional
 
 from app.core.db import models
 from app.core.db.schemas import EmpresaCreate, EmpresaUpdate # Mantemos schemas para tipagem
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import GenericErrorCode, LogStatus
 
 def get_business(db: Session, *, id_empresa: int) -> Optional[models.Empresa]:
     """
