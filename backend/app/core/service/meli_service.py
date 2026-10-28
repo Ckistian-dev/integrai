@@ -16,6 +16,8 @@ from app.core.db.models import (
     PedidoSituacaoEnum, PedidoModalidadeFreteEnum, FiscalPagamentoEnum
 )
 from app.core.config import settings
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import MeliErrorCode, LogStatus
 
 logger = logging.getLogger(__name__)
 

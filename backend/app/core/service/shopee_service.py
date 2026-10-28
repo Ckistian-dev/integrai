@@ -18,6 +18,9 @@ from app.core.db.models import (
     FiscalPagamentoEnum, CadastroIndicadorIEEnum
 )
 
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import ShopeeErrorCode, LogStatus
+
 logger = logging.getLogger(__name__)
 
 

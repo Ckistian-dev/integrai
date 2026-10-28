@@ -7,6 +7,8 @@ from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.db.schemas import Page
 from app.core.service.shopee_service import ShopeeService
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import ShopeeErrorCode, LogStatus
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,14 +24,19 @@ def list_shopee_orders_proxy(
     """
     Endpoint Proxy: Busca pedidos diretamente na API da Shopee e retorna formatado.
     """
+    log_info("SHOPEE", "shopee_endpoint", "list_shopee_orders_proxy", LogStatus.PROCESSING,
+             f"Listando pedidos Shopee (skip={skip}, limit={limit})", {"id_empresa": current_user.id_empresa, "skip": skip, "limit": limit})
     try:
         service = ShopeeService(db, current_user.id_empresa)
         data = service.list_orders(limit=limit, offset=skip, filters=filters)
+        log_info("SHOPEE", "shopee_endpoint", "list_shopee_orders_proxy", LogStatus.SUCCESS,
+                 "Pedidos Shopee listados com sucesso", {"id_empresa": current_user.id_empresa})
         return data
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Erro ao listar pedidos Shopee: {e}")
+        log_error("SHOPEE", "shopee_endpoint", "list_shopee_orders_proxy", ShopeeErrorCode.ORDER_SYNC,
+                  f"Erro ao listar pedidos Shopee: {e}", exc=e, context={"id_empresa": current_user.id_empresa})
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/shopee/pedidos/{order_sn}/importar")

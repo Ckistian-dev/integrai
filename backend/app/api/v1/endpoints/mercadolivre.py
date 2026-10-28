@@ -9,6 +9,8 @@ from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.service.meli_service import MeliService
 from app.core.db.schemas import Page, ModelMetadata, FieldMetadata
+from app.core.logger import log_info, log_error, log_warning
+from app.core.error_codes import MeliErrorCode, LogStatus
 from fastapi.responses import RedirectResponse
 router = APIRouter()
 
@@ -26,9 +28,13 @@ async def list_ml_orders_proxy(
     Endpoint que imita o /generic/list mas busca dados da API do Mercado Livre.
     """
     try:
-        logger.info(f"Requisição recebida: list_ml_orders_proxy | Empresa: {current_user.id_empresa} | Skip: {skip} | Limit: {limit}")
+        log_info("MELI", "meli_endpoint", "list_ml_orders_proxy", LogStatus.PROCESSING,
+                 f"Requisição recebida: list_ml_orders_proxy (skip={skip}, limit={limit})",
+                 {"id_empresa": current_user.id_empresa, "skip": skip, "limit": limit})
         service = MeliService(db, current_user.id_empresa)
         data = await service.list_orders(limit=limit, offset=skip)
+        log_info("MELI", "meli_endpoint", "list_ml_orders_proxy", LogStatus.SUCCESS,
+                 "Pedidos Mercado Livre listados com sucesso", {"id_empresa": current_user.id_empresa})
         
         # Aplica filtros avançados localmente (se houver)
         if filters and data.get('items'):
