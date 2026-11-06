@@ -56,7 +56,8 @@ const SYSTEM_MODULES = [
         {key: 'imprimir_etiqueta', label: 'Etiqueta Transporte'},
         {key: 'cancelar_nfe', label: 'Cancelar NFe'},
         {key: 'carta_correcao', label: 'Carta de Correção'},
-        {key: 'devolucao', label: 'Devolução'}
+        {key: 'devolucao', label: 'Devolução'},
+        {key: 'complemento', label: 'Complemento'}
     ],
     subpages: [
         {key: 'Todos', label: 'Todos'},
@@ -67,8 +68,28 @@ const SYSTEM_MODULES = [
         {key: 'Embalagem', label: 'Embalagem'},
         {key: 'Faturamento', label: 'Faturamento'},
         {key: 'Expedição', label: 'Expedição'},
-        {key: 'Nota Fiscal', label: 'Nota Fiscal'},
+        {key: 'Despachado', label: 'Despachado'},
         {key: 'Cancelado', label: 'Cancelado'}
+    ]
+  },
+  { 
+    key: 'notas_fiscais', 
+    label: 'Notas Fiscais', 
+    model: 'pedidos', 
+    actions: [
+        {key: 'export', label: 'Exportar CSV'},
+        {key: 'visualizar', label: 'Visualizar'},
+        {key: 'inutilizar', label: 'Inutilizar Numeração'},
+        {key: 'download_danfe', label: 'Baixar DANFE'},
+        {key: 'cancelar_nfe', label: 'Cancelar NFe'},
+        {key: 'carta_correcao', label: 'Carta de Correção'},
+        {key: 'devolucao', label: 'Devolução'},
+        {key: 'complemento', label: 'Complemento'}
+    ],
+    subpages: [
+        {key: 'Notas Fiscais de Produtos', label: 'Notas Fiscais de Produtos'},
+        {key: 'Inutilização', label: 'Inutilização'},
+        {key: 'DF-e', label: 'DF-e'}
     ]
   },
   { 
@@ -81,17 +102,30 @@ const SYSTEM_MODULES = [
     key: 'estoque', 
     label: 'Estoque', 
     model: 'estoque', 
-    actions: [{key: 'create', label: 'Criar'}, {key: 'edit', label: 'Editar'}, {key: 'delete', label: 'Deletar'}],
+    actions: [
+      {key: 'create', label: 'Criar'}, 
+      {key: 'edit', label: 'Editar'}, 
+      {key: 'delete', label: 'Deletar'},
+      {key: 'export', label: 'Exportar CSV/PDF'},
+      {key: 'inventario', label: 'Realizar Inventário'}
+    ],
     subpages: [
       {key: 'Saldo', label: 'Saldo'},
-      {key: 'Movimentações', label: 'Movimentações'}
+      {key: 'Movimentações', label: 'Movimentações'},
+      {key: 'Inventário', label: 'Inventário'}
     ]
   },
   { 
     key: 'contas', 
     label: 'Financeiro', 
     model: 'contas', 
-    actions: [{key: 'create', label: 'Criar'}, {key: 'edit', label: 'Editar'}, {key: 'delete', label: 'Deletar'}, {key: 'export', label: 'Exportar'}],
+    actions: [
+      {key: 'create', label: 'Criar'}, 
+      {key: 'edit', label: 'Editar'}, 
+      {key: 'delete', label: 'Deletar'}, 
+      {key: 'export', label: 'Exportar'},
+      {key: 'baixa', label: 'Baixar Conta'}
+    ],
     subpages: [
       {key: 'Contas', label: 'Contas a Pagar/Receber'},
       {key: 'Contábil', label: 'Plano de Contas'}
@@ -117,7 +151,12 @@ const SYSTEM_MODULES = [
     subpages: [
       {key: 'Intelipost', label: 'Intelipost'},
       {key: 'Mercado Livre', label: 'Mercado Livre'},
-      {key: 'Magento', label: 'Magento'}
+      {key: 'Shopee', label: 'Shopee'},
+      {key: 'Magento', label: 'Magento'},
+      {key: 'Tiktok Shop', label: 'Tiktok Shop'},
+      {key: 'AtendAI', label: 'AtendAI'},
+      {key: 'Elastic Email', label: 'Elastic Email'},
+      {key: 'Outras Empresas', label: 'Outras Empresas'}
     ]
   },
 ];

@@ -369,11 +369,11 @@ const GenericList = () => {
     return base;
   }, [user, permissionKey, isNotasFiscaisView, isInutilizacoesView, modelName]);
 
-  // Se for admin, libera tudo. Se não, checa a lista de ações.
-  const canCreate = user?.perfil === 'admin' || userPermissions.acoes?.includes('create');
-  const canEdit = user?.perfil === 'admin' || userPermissions.acoes?.includes('edit');
-  const canDelete = user?.perfil === 'admin' || userPermissions.acoes?.includes('delete');
-  const canExport = user?.perfil === 'admin' || userPermissions.acoes?.includes('export');
+  // Se for admin, libera tudo. Se não, checa a lista de ações (suporta chaves em inglês e aliases em português).
+  const canCreate = user?.perfil === 'admin' || userPermissions.acoes?.includes('create') || userPermissions.acoes?.includes('criar');
+  const canEdit = user?.perfil === 'admin' || userPermissions.acoes?.includes('edit') || userPermissions.acoes?.includes('editar');
+  const canDelete = user?.perfil === 'admin' || userPermissions.acoes?.includes('delete') || userPermissions.acoes?.includes('excluir');
+  const canExport = user?.perfil === 'admin' || userPermissions.acoes?.includes('export') || userPermissions.acoes?.includes('exportar');
   // ---------------------------------------
 
   // --- PROTEÇÃO DE SUBPÁGINAS (STATUS) ---
@@ -383,8 +383,8 @@ const GenericList = () => {
     // Verifica se é o módulo de pedidos (que usa abas de status controladas) e se tem filtro
     if (permissionKey === 'pedidos') {
       const currentSub = statusFilter || 'Todos';
-      const allowedSubpages = userPermissions.subpaginas || [];
-      if (!allowedSubpages.includes(currentSub)) {
+      const allowedSubpages = userPermissions.subpaginas;
+      if (allowedSubpages && Array.isArray(allowedSubpages) && allowedSubpages.length > 0 && !allowedSubpages.includes(currentSub)) {
         toast.error(`Você não tem permissão para acessar a aba: ${currentSub}`);
         navigate('/dashboard');
       }
@@ -3774,7 +3774,8 @@ const GenericList = () => {
                     'imprimir_etiqueta',
                     'cancelar_nfe',
                     'carta_correcao',
-                    'devolucao'
+                    'devolucao',
+                    'complemento'
                   ];
                   if (criticalActions.includes(action.onClickHandler)) {
                     return null;

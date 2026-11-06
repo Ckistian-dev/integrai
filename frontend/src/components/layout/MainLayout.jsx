@@ -77,7 +77,10 @@ const MainLayout = () => {
     const permissions = user?.permissoes || {};
     const modulePerms = permissions[module];
 
-    return modulePerms?.subpaginas?.includes(subpageName);
+    if (!modulePerms || modulePerms.acesso === false) return false;
+    if (!modulePerms.subpaginas || !Array.isArray(modulePerms.subpaginas) || modulePerms.subpaginas.length === 0) return true;
+
+    return modulePerms.subpaginas.includes(subpageName);
   };
 
   const handleLogout = () => {
@@ -654,9 +657,9 @@ const MainLayout = () => {
                       {notasFiscaisItems.map(subItem => {
                         let isAllowed = true;
                         if (subItem.name === 'DF-e') {
-                          isAllowed = hasPermission('nfe_rece_bidas') || hasPermission('notas_fiscais');
+                          isAllowed = hasSubpagePermission('notas_fiscais', 'DF-e') || hasPermission('nfe_rece_bidas');
                         } else {
-                          isAllowed = hasPermission('notas_fiscais');
+                          isAllowed = hasSubpagePermission('notas_fiscais', subItem.name);
                         }
 
                         if (!isAllowed) {

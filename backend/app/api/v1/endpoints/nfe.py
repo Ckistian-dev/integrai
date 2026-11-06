@@ -9,6 +9,7 @@ from app.core.db.database import get_db
 from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.service.nfe_service import NFeService
+from app.core.security_guard import verify_model_access
 from app.core.logger import log_info, log_error, log_warning
 from app.core.error_codes import NfeErrorCode, LogStatus
 
@@ -139,6 +140,7 @@ def inutilizar_nfe(
     """
     Inutiliza uma faixa de numeração de NF-e/NFC-e junto à SEFAZ.
     """
+    verify_model_access("notas_fiscais", "create", current_user)
     service = NFeService(db, current_user.id_empresa)
     return service.inutilizar_numeracao(
         modelo=payload.modelo,
@@ -160,5 +162,6 @@ def listar_inutilizacoes(
     """
     Lista o histórico de inutilizações de numeração homologadas ou rejeitadas da empresa.
     """
+    verify_model_access("notas_fiscais", "read", current_user)
     service = NFeService(db, current_user.id_empresa)
     return service.listar_inutilizacoes(limit=limit, offset=offset)

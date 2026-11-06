@@ -135,7 +135,7 @@ def safe_xml_fromstring(xml_content: str | bytes) -> etree._Element:
 # ==============================================================================
 
 ADMIN_ONLY_MODELS = {
-    "usuarios", "perfil", "perfis", "empresas",
+    "perfil", "perfis",
     "intelipost_configuracoes", "intelipost_configuracao",
     "shopee_configuracoes", "shopee_configuracao",
     "magento_configuracoes", "magento_configuracao",
@@ -148,6 +148,8 @@ ADMIN_ONLY_MODELS = {
 
 MODULE_MAP = {
     "pedidos": "pedidos",
+    "pedidos_itens": "pedidos",
+    "pedido_itens": "pedidos",
     "contas": "contas",
     "cadastros": "cadastros",
     "produtos": "produtos",
@@ -156,18 +158,28 @@ MODULE_MAP = {
     "tributacoes": "tributacoes",
     "regras_tributarias": "tributacoes",
     "classificacao_contabil": "contas",
+    "classificacoes_contabeis": "contas",
     "relatorios": "relatorios",
     "nfe_inutilizacoes": "notas_fiscais",
     "nfe_inutilizacao": "notas_fiscais",
     "notas_fiscais": "notas_fiscais",
-    "nfe_recebidas": "nfe_rece_bidas"
+    "nfe_recebidas": "notas_fiscais",
+    "nfe_rece_bidas": "nfe_rece_bidas",
+    "usuarios": "usuarios",
+    "empresas": "empresas",
+    "mercadolivre_pedidos": "integracoes",
+    "magento_pedidos": "integracoes",
+    "shopee_pedidos": "integracoes",
+    "tiktok_pedidos": "integracoes",
+    "intelipost": "integracoes",
+    "email_regras": "integracoes"
 }
 
 def verify_model_access(model_name: str, action: str, current_user: Any):
     """
     Garante que:
-    1. Apenas usuários 'admin' acessem ou modifiquem modelos administrativos e configurações.
-    2. Operadores respeitem as permissões de módulo ('acesso' e 'acoes').
+    1. Apenas usuários 'admin' acessem modelos estritamente administrativos e credenciais de integrações.
+    2. Operadores respeitem a matriz de permissões de módulo ('acesso' e 'acoes').
     """
     model_lower = model_name.lower().strip()
     user_profile = (getattr(current_user, "perfil", "") or "").lower()
@@ -191,23 +203,47 @@ def verify_model_access(model_name: str, action: str, current_user: Any):
     if not isinstance(permissoes, dict):
         permissoes = {}
 
+    # Caso especial: Usuários e Minha Empresa requerem admin ou permissão explícita no módulo
+    if model_lower in ("usuarios", "empresas"):
+        mod_key = "usuarios" if model_lower == "usuarios" else "empresas"
+        if not (permissoes.get(mod_key, {}).get("acesso") is True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acesso negado: o recurso '{model_name}' requer privilégios de Administrador."
+            )
+
     module_key = MODULE_MAP.get(model_lower)
-    if module_key and module_key in permissoes:
-        mod_perm = permissoes[module_key]
+    if module_key:
+        if module_key in ("notas_fiscais", "nfe_rece_bidas"):
+            mod_perm = permissoes.get("notas_fiscais") or permissoes.get("nfe_rece_bidas")
+        else:
+            mod_perm = permissoes.get(module_key)
+
+        # Se o módulo não estiver nas permissões ou tiver acesso == False
+        if not mod_perm or (isinstance(mod_perm, dict) and mod_perm.get("acesso") is False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acesso negado: você não tem permissão para acessar o módulo '{module_key}'."
+            )
+
         if isinstance(mod_perm, dict):
-            if mod_perm.get("acesso") is False:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Acesso negado: você não tem permissão para acessar o módulo '{module_key}'."
-                )
-            if action == "delete":
-                acoes = mod_perm.get("acoes", [])
-                if isinstance(acoes, list) and len(acoes) > 0:
-                    if not any(a in acoes for a in ["excluir", "deletar", "delete"]):
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Acesso negado: você não tem permissão de exclusão no módulo '{module_key}'."
-                        )
+            acoes = mod_perm.get("acoes", [])
+            if isinstance(acoes, list) and len(acoes) > 0:
+                if action == "delete" and not any(a in acoes for a in ["excluir", "deletar", "delete"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Acesso negado: você não tem permissão de exclusão no módulo '{module_key}'."
+                    )
+                if action == "create" and not any(a in acoes for a in ["criar", "create"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Acesso negado: você não tem permissão de criação no módulo '{module_key}'."
+                    )
+                if action == "update" and not any(a in acoes for a in ["editar", "edit", "update"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Acesso negado: você não tem permissão de edição no módulo '{module_key}'."
+                    )
 
 
 # ==============================================================================

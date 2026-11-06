@@ -4,13 +4,14 @@ import httpx
 from app.core.error_codes import SystemErrorCode
 
 class TestMainLoggingStartup(unittest.IsolatedAsyncioTestCase):
-    @patch("app.core.db.sync.sync_database_schema")
-    @patch("app.core.service.backup_service.start_backup_scheduler")
-    @patch("app.core.service.log_service.start_log_scheduler")
+    @patch("app.main.sync_database_schema")
+    @patch("app.main.start_backup_scheduler")
+    @patch("app.main.start_log_scheduler")
     def test_startup_initializes_log_scheduler(self, mock_start_log, mock_backup, mock_sync):
         from app.main import on_startup
         on_startup()
         mock_start_log.assert_called_once()
+        mock_backup.assert_called_once()
 
     @patch("app.main.log_error")
     async def test_unhandled_exception_logged_with_system_error_code(self, mock_log_err):

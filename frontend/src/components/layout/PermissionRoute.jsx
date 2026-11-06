@@ -37,7 +37,12 @@ const PermissionRoute = ({ children, module: propModule }) => {
     'magento_pedidos': 'integracoes',
     'shopee_pedidos': 'integracoes',
     'intelipost': 'integracoes',
-    'nfe_recebidas': 'nfe_rece_bidas',
+    'tiktok_pedidos': 'integracoes',
+    'tiktok_configuracoes': 'integracoes',
+    'elastic_email_configuracoes': 'integracoes',
+    'email_regras': 'integracoes',
+    'outras_empresas_configuracoes': 'integracoes',
+    'nfe_recebidas': 'notas_fiscais',
     'nfe_inutilizacoes': 'notas_fiscais',
     'nfe_inutilizacao': 'notas_fiscais'
   };
@@ -66,20 +71,44 @@ const PermissionRoute = ({ children, module: propModule }) => {
           requiredSubpage = 'Contas';
       } else if (modelName === 'classificacao_contabil') {
           requiredSubpage = 'Contábil';
+      } else if (currentModule === 'notas_fiscais') {
+          if (modelName === 'nfe_inutilizacoes' || modelName === 'nfe_inutilizacao' || location.pathname.includes('/nfe_inutilizacoes')) {
+              requiredSubpage = 'Inutilização';
+          } else if (modelName === 'nfe_recebidas' || location.pathname.includes('/nfe_recebidas')) {
+              requiredSubpage = 'DF-e';
+          } else {
+              requiredSubpage = 'Notas Fiscais de Produtos';
+          }
+      } else if (currentModule === 'estoque') {
+          if (statusFilter === 'Saldo') requiredSubpage = 'Saldo';
+          else if (statusFilter === 'Movimentações') requiredSubpage = 'Movimentações';
+          else if (statusFilter === 'Inventário') requiredSubpage = 'Inventário';
       } else if (currentModule === 'integracoes') {
           if (modelName.includes('intelipost')) requiredSubpage = 'Intelipost';
           if (modelName.includes('mercadolivre') || modelName.includes('meli')) requiredSubpage = 'Mercado Livre';
           if (modelName.includes('shopee')) requiredSubpage = 'Shopee';
           if (modelName.includes('magento')) requiredSubpage = 'Magento';
+          if (modelName.includes('tiktok')) requiredSubpage = 'Tiktok Shop';
+          if (modelName.includes('atendai')) requiredSubpage = 'AtendAI';
+          if (modelName.includes('email') || modelName.includes('elastic')) requiredSubpage = 'Elastic Email';
+          if (modelName.includes('outras_empresas')) requiredSubpage = 'Outras Empresas';
       }
   } else {
     // Fallback por path para rotas que não usam :modelName
     const path = location.pathname;
-    if (path.startsWith('/integracoes')) currentModule = 'integracoes';
-    else if (path.startsWith('/notas_fiscais')) currentModule = 'notas_fiscais';
-    else if (path.startsWith('/contas')) currentModule = 'contas';
-    else if (path.startsWith('/classificacao_contabil')) currentModule = 'contas';
+    if (path.startsWith('/integracoes') || path.startsWith('/email_regras')) currentModule = 'integracoes';
+    else if (path.startsWith('/notas_fiscais')) {
+        currentModule = 'notas_fiscais';
+        requiredSubpage = 'Notas Fiscais de Produtos';
+    } else if (path.startsWith('/nfe_inutilizacoes')) {
+        currentModule = 'notas_fiscais';
+        requiredSubpage = 'Inutilização';
+    } else if (path.startsWith('/nfe_recebidas')) {
+        currentModule = 'notas_fiscais';
+        requiredSubpage = 'DF-e';
+    } else if (path.startsWith('/contas') || path.startsWith('/classificacao_contabil')) currentModule = 'contas';
     else if (path.startsWith('/tributacoes')) currentModule = 'tributacoes';
+    else if (path.startsWith('/relatorios')) currentModule = 'relatorios';
     else if (path.startsWith('/dashboard')) currentModule = 'dashboard';
   }  
 
@@ -102,6 +131,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
       { module: 'estoque', path: '/estoque' },
       { module: 'contas', path: '/contas' },
       { module: 'tributacoes', path: '/tributacoes' },
+      { module: 'relatorios', path: '/relatorios' },
       { module: 'integracoes', path: '/integracoes' },
     ];
 
@@ -111,8 +141,13 @@ const PermissionRoute = ({ children, module: propModule }) => {
 
         // 1. Verifica acesso ao módulo
         // 2. Verifica acesso à subpágina (se aplicável)
-        const hasModuleAccess = modulePerms?.acesso;
-        const hasSubpageAccess = !requiredSubpage || (modulePerms?.subpaginas && modulePerms.subpaginas.includes(requiredSubpage));
+        const hasModuleAccess = modulePerms?.acesso || (currentModule === 'notas_fiscais' && permissions['nfe_rece_bidas']?.acesso);
+        const hasSubpageAccess = !requiredSubpage || 
+          !modulePerms?.subpaginas || 
+          !Array.isArray(modulePerms.subpaginas) || 
+          modulePerms.subpaginas.length === 0 ||
+          modulePerms.subpaginas.includes(requiredSubpage) ||
+          (requiredSubpage === 'DF-e' && permissions['nfe_rece_bidas']?.acesso);
 
         if (!hasModuleAccess || !hasSubpageAccess) {
         const firstAllowed = modules.find(m => permissions[m.module]?.acesso);

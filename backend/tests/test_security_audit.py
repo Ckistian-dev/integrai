@@ -91,6 +91,38 @@ class TestSecurityAudit(unittest.TestCase):
             verify_model_access(model, "create", mock_admin)
             verify_model_access(model, "delete", mock_admin)
 
+    def test_rbac_granular_actions_and_modules(self):
+        """Verifica se controle de ações granulares (create, update, delete) e módulos é estritamente aplicado."""
+        mock_operador = MagicMock(spec=models.Usuario)
+        mock_operador.perfil = "Operador"
+        mock_operador.permissoes = {
+            "pedidos": {
+                "acesso": True,
+                "acoes": ["create", "edit"] # Sem delete
+            },
+            "notas_fiscais": {
+                "acesso": True,
+                "acoes": ["visualizar", "export"]
+            }
+        }
+
+        # Pedidos: create e update permitidos, delete bloqueado
+        verify_model_access("pedidos", "read", mock_operador)
+        verify_model_access("pedidos", "create", mock_operador)
+        verify_model_access("pedidos", "update", mock_operador)
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("pedidos", "delete", mock_operador)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        # Notas Fiscais e Inutilizações: permitidos via notas_fiscais
+        verify_model_access("notas_fiscais", "read", mock_operador)
+        verify_model_access("nfe_inutilizacoes", "read", mock_operador)
+
+        # Módulo não concedido (contas / financeiro): bloqueado
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("contas", "read", mock_operador)
+        self.assertEqual(ctx.exception.status_code, 403)
+
     def test_user_password_censored_in_schema(self):
         """Garante que o schema Usuario nunca serializa o campo de senha."""
         now = datetime.now(timezone.utc)

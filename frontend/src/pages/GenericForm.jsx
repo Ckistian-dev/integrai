@@ -92,8 +92,9 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
   const permissionKey = useMemo(() => {
     // Mapeia models que usam permissões de outros módulos
     if (modelName === 'perfis') return 'usuarios';
-    // Rotas de configuração (ex: meli_configuracoes) usam a permissão do módulo 'integracoes'
-    if (modelName.endsWith('_configuracoes')) return 'integracoes';
+    // Rotas de configuração usam a permissão do módulo 'integracoes'
+    if (modelName.endsWith('_configuracoes') || modelName === 'email_regras') return 'integracoes';
+    if (modelName === 'nfe_inutilizacoes' || modelName === 'nfe_inutilizacao' || modelName === 'notas_fiscais' || modelName === 'nfe_recebidas') return 'notas_fiscais';
     return modelName;
   }, [modelName]);
 
@@ -101,8 +102,8 @@ const GenericForm = ({ modelName: propModelName, propId }) => {
 
   // Para integrações, a ação 'manage' concede permissão de edição/criação.
   const canManageIntegrations = permissionKey === 'integracoes' && userPermissions.acoes?.includes('manage');
-  const canCreate = user?.perfil === 'admin' || userPermissions.acoes?.includes('create') || canManageIntegrations;
-  const canEdit = user?.perfil === 'admin' || userPermissions.acoes?.includes('edit') || canManageIntegrations;
+  const canCreate = user?.perfil === 'admin' || userPermissions.acoes?.includes('create') || userPermissions.acoes?.includes('criar') || canManageIntegrations;
+  const canEdit = user?.perfil === 'admin' || userPermissions.acoes?.includes('edit') || userPermissions.acoes?.includes('editar') || canManageIntegrations;
 
   const canSave = isEditMode ? canEdit : canCreate;
 
