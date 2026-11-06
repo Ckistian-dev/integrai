@@ -1,12 +1,20 @@
+import os
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import PostgresDsn, validator
 from typing import Any, Dict, Optional
 
+# Localiza arquivo .env tanto se executado de backend/ quanto da raiz do repositório
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_FILE = str(BASE_DIR / ".env") if (BASE_DIR / ".env").exists() else ".env"
+
+DEFAULT_INSECURE_SECRET = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+
 class Settings(BaseSettings):
-    # Carrega as variáveis do .env
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
+    # Carrega as variáveis do .env com defaults seguros para evitar falha em testes unitários
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_DB: str = "erp_talatto"
     POSTGRES_SERVER: str = "localhost" # Nome do serviço do DB no docker-compose.yml ou localhost
     ENVIRONMENT: str = "development"
 
@@ -28,10 +36,20 @@ class Settings(BaseSettings):
         )
 
     # Chave secreta para assinar os tokens JWT
-    # Gere um com: openssl rand -hex 32
-    SECRET_KEY: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+    # Em produção, deve sempre vir do ambiente (.env)
+    SECRET_KEY: str = DEFAULT_INSECURE_SECRET
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 # 24 horas
+
+    @validator("SECRET_KEY")
+    def validate_secret_key(cls, v: str, values: Dict[str, Any]) -> str:
+        env = values.get("ENVIRONMENT", "development")
+        if env == "production" and v == DEFAULT_INSECURE_SECRET:
+            raise ValueError(
+                "SEGURANÇA CRÍTICA: SECRET_KEY padrão detectada em ambiente de produção! "
+                "Defina uma chave forte aleatória no arquivo .env (ex: openssl rand -hex 32)."
+            )
+        return v
 
     # Configurações do Responsável Técnico (NFe)
     RESP_TECNICO_CNPJ: Optional[str] = None
@@ -51,6 +69,6 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_FOLDER_ID: str = "1dwN1APH1MviWCyJnUFGkE2rdIIq6ujUU"
 
     # Configuração para o Pydantic ler o arquivo .env (sintaxe Pydantic V2)
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()

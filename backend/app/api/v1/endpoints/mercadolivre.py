@@ -202,10 +202,8 @@ async def meli_notification_callback(
             id_empresa = cfg.id_empresa
 
     if not id_empresa:
-        # Fallback: primeira empresa com credenciais válidas
-        first_cred = db.query(models.MeliCredentials).first()
-        if first_cred:
-            id_empresa = first_cred.id_empresa
+        logger.warning(f"Webhook ML rejeitado por segurança: nenhuma empresa correspondente para user_id={user_id_ml}, app_id={app_id}")
+        return {"status": "warning", "message": "Empresa não identificada"}
 
     if not id_empresa:
         logger.warning(f"Webhook ML recebido mas nenhuma empresa correspondente foi encontrada para user_id={user_id_ml}, app_id={app_id}")

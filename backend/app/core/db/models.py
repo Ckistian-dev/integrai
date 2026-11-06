@@ -1,4 +1,5 @@
 import enum
+from datetime import datetime
 from sqlalchemy import (
     Boolean, Column, ForeignKey, ForeignKeyConstraint, Integer, String, Enum as SQLAlchemyEnum,
     BigInteger, DateTime, Numeric, JSON, Text, Date, LargeBinary, TypeDecorator,
@@ -1027,6 +1028,9 @@ class Pedido(Base):
         Index("idx_pedidos_empresa_data_orc", "id_empresa", "data_orcamento"),
         Index("idx_pedidos_empresa_criado", "id_empresa", "criado_em"),
         Index("idx_pedidos_empresa_cliente", "id_empresa", "id_cliente"),
+        Index("idx_pedidos_empresa_id_intelipost", "id_empresa", "id_pedido_intelipost"),
+        Index("idx_pedidos_empresa_intelipost_id", "id_empresa", "intelipost_id"),
+        Index("idx_pedidos_empresa_numero_nf", "id_empresa", "numero_nf"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -1122,9 +1126,20 @@ class Pedido(Base):
     })
 
     # --- Aba: Fiscal ---
+    natureza_operacao = Column(Integer, nullable=True,
+                               info={
+                                   'tab': 'Fiscal',
+                                   'label': 'Natureza da Operação',
+                                   'placeholder': 'Selecione...',
+                                   'component': 'select',
+                                   'options': [
+                                       {'label': '0 - Entrada', 'value': 0},
+                                       {'label': '1 - Saída', 'value': 1}
+                                   ]
+                               })
     tipo_operacao = Column(SQLAlchemyEnum(RegraTipoOperacaoEnum, native_enum=False), default=RegraTipoOperacaoEnum.venda_mercadoria,
                            info={'tab': 'Fiscal', 'label': 'Tipo de Operação', 'placeholder': 'Selecione...'})
-    numero_nf = Column(String, info={'tab': 'Fiscal', 'label': 'Número NFe', 'placeholder': ''})
+    numero_nf = Column(String, index=True, info={'tab': 'Fiscal', 'label': 'Número NFe', 'placeholder': ''})
     chave_acesso = Column(String(44), index=True, info={'tab': 'Fiscal', 'label': 'Chave de Acesso NFe', 'placeholder': ''})
     chave_nfe_referencia = Column(String(44), info={'tab': 'Fiscal', 'label': 'Chave NFe Referenciada', 'placeholder': ''})
     protocolo_autorizacao = Column(String, info={'tab': 'Fiscal', 'label': 'Protocolo', 'placeholder': ''})
@@ -1163,8 +1178,8 @@ class Pedido(Base):
     }, default=55) # 55=NFe, 65=NFCe
 
     # Campos Integração Intelipost
-    id_pedido_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Pedido (Intelipost)'})
-    intelipost_id = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Ordem Envio (Intelipost)'})
+    id_pedido_intelipost = Column(String, nullable=True, index=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Pedido (Intelipost)'})
+    intelipost_id = Column(String, nullable=True, index=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Ordem Envio (Intelipost)'})
     intelipost_criado = Column(Boolean, default=False, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'Criado Intelipost?'})
 
     delivery_method_id_intelipost = Column(String, nullable=True, info={'tab': 'Integrações', 'sub_tab': 'Intelipost', 'label': 'ID Método Entrega (Intelipost)'})
@@ -1873,3 +1888,45 @@ class NotaFiscalRecebida(Base):
 Nfe_recebida = NotaFiscalRecebida
 Nfe_recebidas = NotaFiscalRecebida
 Nota_fiscal_recebida = NotaFiscalRecebida
+
+
+class NfeInutilizacao(Base):
+    """Modelo para registro e histórico de inutilização de numeração de NF-e/NFC-e."""
+    __tablename__ = "nfe_inutilizacoes"
+    __label__ = "Inutilização de NF-e"
+    __label_plural__ = "Inutilizações de NF-e"
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("modelo", "55")
+        kwargs.setdefault("serie", 1)
+        kwargs.setdefault("sucesso", False)
+        super().__init__(**kwargs)
+
+    id = Column(Integer, primary_key=True, index=True, info={'label': 'ID', 'visible': False})
+    id_empresa = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False, index=True, info={'visible': False})
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, info={'label': 'Data/Hora', 'visible': True})
+    modelo = Column(String(2), default="55", nullable=False, info={'label': 'Modelo', 'visible': True})
+    serie = Column(Integer, default=1, nullable=False, info={'label': 'Série', 'visible': True})
+    numero_inicial = Column(Integer, nullable=False, info={'label': 'Nº Inicial', 'visible': True})
+    numero_final = Column(Integer, nullable=False, info={'label': 'Nº Final', 'visible': True})
+    ano = Column(Integer, nullable=False, info={'label': 'Ano', 'visible': True})
+    protocolo = Column(String(50), nullable=True, info={'label': 'Protocolo SEFAZ', 'visible': True})
+    cstat = Column(String(10), nullable=True, info={'label': 'Status SEFAZ', 'visible': True})
+    xmotivo = Column(String(255), nullable=True, info={'label': 'Motivo SEFAZ', 'visible': True})
+    justificativa = Column(String(255), nullable=False, info={'label': 'Justificativa', 'visible': True})
+
+    # Retorno SEFAZ
+    data_recebimento = Column(DateTime, nullable=True, info={'label': 'Data Recebimento SEFAZ', 'visible': False})
+    xml_retorno = Column(Text, nullable=True, info={'visible': False})
+    sucesso = Column(Boolean, default=False, nullable=False, info={'label': 'Homologado', 'visible': True})
+
+    id_usuario = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, info={'visible': False})
+
+    # Relacionamentos
+    empresa = relationship("Empresa")
+    usuario = relationship("Usuario")
+
+
+# Aliases para o dispatcher
+Nfe_inutilizacao = NfeInutilizacao
+Nfe_inutilizacoes = NfeInutilizacao

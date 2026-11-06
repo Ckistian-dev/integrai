@@ -1,17 +1,18 @@
+import hmac
 from sqlalchemy.orm import Session
 from typing import Optional, Any
 
 from app.core.db import models
-from app.core.db.schemas import  UsuarioCreate,  UsuarioUpdate
+from app.core.db.schemas import UsuarioCreate, UsuarioUpdate
 from app.core.service.security import get_password_hash, verify_password
 from app.core.logger import log_info, log_warning, log_error
 from app.core.error_codes import AuthErrorCode, LogStatus
 
 # Nota: Todas as funções recebem 'db: Session' como primeiro argumento.
 
-def get_user_by_email(db: Session, email: str) -> Optional[models. Usuario]:
+def get_user_by_email(db: Session, email: str) -> Optional[models.Usuario]:
     """Busca um usuário pelo email."""
-    return db.query(models. Usuario).filter(models. Usuario.email == email).first()
+    return db.query(models.Usuario).filter(models.Usuario.email == email).first()
 
 def get_user(db: Session, user_id: int) -> Optional[models.Usuario]:
     """Busca um usuário pelo ID Sequencial ou ID primário."""
@@ -38,6 +39,7 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Us
     """
     Autentica um usuário. Retorna o usuário se for válido, senão None.
     Suporta senhas criptografadas por EncryptedString e hashes antigos do Bcrypt.
+    Utiliza hmac.compare_digest para proteção contra timing attacks.
     """
     log_info("AUTH", "crud_user", "authenticate_user", LogStatus.PROCESSING,
              f"Tentativa de autenticação para o email: {email}", {"email": email})
@@ -54,10 +56,11 @@ def authenticate_user(db: Session, email: str, senha: str) -> Optional[models.Us
     
     # Suporte a senhas legadas (Bcrypt $2b$) e novo EncryptedString
     is_valid = False
-    if user.senha and (user.senha.startswith("$2b$") or user.senha.startswith("$2a$")):
-        is_valid = verify_password(senha, user.senha)
+    stored_password = user.senha or ""
+    if stored_password.startswith("$2b$") or stored_password.startswith("$2a$"):
+        is_valid = verify_password(senha, stored_password)
     else:
-        is_valid = (user.senha == senha)
+        is_valid = hmac.compare_digest(stored_password, senha)
 
     if not is_valid:
         log_warning("AUTH", "crud_user", "authenticate_user", AuthErrorCode.INVALID_CREDENTIALS,
@@ -86,9 +89,6 @@ def update_user(db: Session, *, db_obj: models.Usuario, obj_in: UsuarioUpdate) -
     db.commit()
     db.refresh(db_obj)
     return db_obj
-
-# Adicione outras funções de 'user' aqui se precisar
-# (ex: delete_user, get_users_by_business, etc.)
 
 def get(db: Session, model: Any, id: int, id_empresa: int) -> Optional[models.Usuario]:
     """Generic get for user, compatible with generic endpoint signature. Busca por id_sequencial prioritariamente."""

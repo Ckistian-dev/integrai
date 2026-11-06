@@ -565,8 +565,10 @@ const CardConfigModal = ({ isOpen, onClose, onSave, initialConfig, preSelectedTy
                               >
                                 <option value="">Selecione...</option>
                                 <option value="__search__">Busca Global (Pesquisar em tudo)</option>
-                                {metadataFields.map(f => (
-                                  <option key={f.name} value={f.name}>{f.label}</option>
+                                {metadataFields
+                                  .filter(f => f && f.name && f.name !== 'id' && f.name !== 'id_empresa' && f.label?.toLowerCase() !== 'id interno')
+                                  .map(f => (
+                                    <option key={f.name} value={f.name}>{f.label}</option>
                                 ))}
                               </select>
                             )}

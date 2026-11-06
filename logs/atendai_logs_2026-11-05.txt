@@ -1,0 +1,10 @@
+[2026-11-05 11:00:39.984] [CRITICAL] [SYSTEM:main:main] [ERR_SYSTEM_UNHANDLED_EXCEPTION] - ERRO CRÍTICO: ENCRYPTION_KEY não definida ou inválida. Fernet key must be 32 url-safe base64-encoded bytes.
+[2026-11-05 11:00:42.340] [INFO] [SERVICES:agent_service:carregar_tabela_precos] [STATUS_INFO] - [Tabela Precos] Tabela de precos carregada no agent_service: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'meta-business-agent', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview']
+[2026-11-05 11:00:42.342] [WARNING] [GOOGLE_GENAI:_api_client:get_env_api_key] [STATUS_WARNING] - Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.
+[2026-11-05 11:00:45.047] [INFO] [GRAPH:workflow:create_agent_graph] [STATUS_INFO] - [Workflow] Grafo LangGraph do Agente compilado com sucesso.
+[2026-11-05 11:00:45.058] [INFO] [SYSTEM:atendai:main] [STATUS_INFO] - Configurando CORS para as origens: ['http://localhost:3000', 'http://localhost:5173']
+[2026-11-05 11:00:45.141] [INFO] [SYSTEM:atendai:main] [STATUS_INFO] - Configurando CORS para as origens: ['http://localhost:3000', 'http://localhost:5173']
+[2026-11-05 11:01:00.111] [CRITICAL] [SYSTEM:main:main] [ERR_SYSTEM_UNHANDLED_EXCEPTION] - ERRO CRÍTICO: ENCRYPTION_KEY não definida ou inválida. Fernet key must be 32 url-safe base64-encoded bytes.
+[2026-11-05 11:01:02.471] [INFO] [SERVICES:agent_service:carregar_tabela_precos] [STATUS_INFO] - [Tabela Precos] Tabela de precos carregada no agent_service: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'meta-business-agent', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview']
+[2026-11-05 11:01:10.833] [CRITICAL] [SYSTEM:main:main] [ERR_SYSTEM_UNHANDLED_EXCEPTION] - ERRO CRÍTICO: ENCRYPTION_KEY não definida ou inválida. Fernet key must be 32 url-safe base64-encoded bytes.
+[2026-11-05 11:01:12.971] [INFO] [SERVICES:agent_service:carregar_tabela_precos] [STATUS_INFO] - [Tabela Precos] Tabela de precos carregada no agent_service: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'meta-business-agent', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview']

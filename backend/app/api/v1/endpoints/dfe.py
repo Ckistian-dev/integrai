@@ -7,6 +7,7 @@ from app.core.service.nfe_service import NFeService
 from app.core.logger import log_info, log_error, log_warning
 from app.core.error_codes import DfeErrorCode, LogStatus
 from lxml import etree
+from app.core.security_guard import safe_xml_fromstring
 from typing import List, Dict, Any
 from fastapi.responses import Response
 
@@ -57,7 +58,7 @@ async def get_detalhes(
         raise HTTPException(status_code=400, detail=f"O documento selecionado é um {nota.tipo_documento} e não contém itens de produtos.")
 
     try:
-        root = etree.fromstring(nota.xml_completo.encode('utf-8'))
+        root = safe_xml_fromstring(nota.xml_completo)
         ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
         
         items = []

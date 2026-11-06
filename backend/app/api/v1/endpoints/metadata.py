@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from app.api.dependencies import get_current_active_user
+from app.core.db import models
 from typing import List, Optional
 from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy import String, Integer, Boolean, Numeric, Date, DateTime, JSON, LargeBinary, Enum as SQLAlchemyEnum
@@ -72,7 +74,7 @@ def get_format_mask(col_name: str, col_type: TypeEngine) -> Optional[str]:
 
 
 @router.get("/metadata/{model_name}", response_model=ModelMetadata)
-def get_model_metadata(model_name: str):
+def get_model_metadata(model_name: str, current_user: models.Usuario = Depends(get_current_active_user)):
     """
     Retorna os metadados de um modelo para o frontend construir
     formulários e tabelas dinamicamente.

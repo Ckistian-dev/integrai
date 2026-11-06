@@ -26,6 +26,15 @@ class CancelarNFeRequest(BaseModel):
 class CorrigirNFeRequest(BaseModel):
     correcao: str
 
+class InutilizarNFeRequest(BaseModel):
+    modelo: str = "55"
+    serie: int
+    numero_inicial: int
+    numero_final: int
+    ano: Optional[int] = None
+    justificativa: str
+
+
 @router.post("/nfe/emitir/{pedido_id}")
 def emitir_nfe(
     pedido_id: int,
@@ -120,3 +129,36 @@ def gerar_danfe_lote(
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=danfes_lote.pdf"}
     )
+
+@router.post("/nfe/inutilizar")
+def inutilizar_nfe(
+    payload: InutilizarNFeRequest,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Inutiliza uma faixa de numeração de NF-e/NFC-e junto à SEFAZ.
+    """
+    service = NFeService(db, current_user.id_empresa)
+    return service.inutilizar_numeracao(
+        modelo=payload.modelo,
+        serie=payload.serie,
+        numero_inicial=payload.numero_inicial,
+        numero_final=payload.numero_final,
+        justificativa=payload.justificativa,
+        ano=payload.ano,
+        id_usuario=current_user.id
+    )
+
+@router.get("/nfe/inutilizacoes")
+def listar_inutilizacoes(
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Lista o histórico de inutilizações de numeração homologadas ou rejeitadas da empresa.
+    """
+    service = NFeService(db, current_user.id_empresa)
+    return service.listar_inutilizacoes(limit=limit, offset=offset)

@@ -1,0 +1,9 @@
+[2026-10-28 14:33:12.424] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_PROCESSING] - Enviando log integrai_logs_2026-10-27.txt para o Google Drive...
+[2026-10-28 14:33:12.430] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Log integrai_logs_2026-10-27.txt enviado com sucesso ao Drive (ID: drive_file_123).
+[2026-10-28 14:33:12.431] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Arquivo local anterior integrai_logs_2026-10-27.txt removido do disco.
+[2026-10-28 14:33:12.431] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Limpeza de logs no Drive concluída: 1 arquivo(s) > 30 dias excluído(s).
+[2026-10-28 14:33:59.006] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_PROCESSING] - Enviando log integrai_logs_2026-10-27.txt para o Google Drive...
+[2026-10-28 14:33:59.007] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Log integrai_logs_2026-10-27.txt enviado com sucesso ao Drive (ID: drive_file_123).
+[2026-10-28 14:33:59.007] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Arquivo local anterior integrai_logs_2026-10-27.txt removido do disco.
+[2026-10-28 14:33:59.007] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Limpeza de logs no Drive concluída: 1 arquivo(s) > 30 dias excluído(s).
+HTTP Request: GET http://testserver/test-unhandled-exception-endpoint "HTTP/1.1 500 Internal Server Error"

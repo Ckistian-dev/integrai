@@ -6,9 +6,9 @@ from app.core.config import settings
 # SQLAlchemy's create_engine expects a string, so we must convert the Pydantic DSN object.
 engine = create_engine(
     str(settings.DATABASE_URL),
-    pool_size=20,
-    max_overflow=20,
-    pool_timeout=30.0,
+    pool_size=30,
+    max_overflow=30,
+    pool_timeout=45.0,
     pool_pre_ping=True,
     pool_recycle=300
 )

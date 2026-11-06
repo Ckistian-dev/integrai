@@ -1,3 +1,5 @@
+
+from app.core.security_guard import verify_model_access, is_safe_external_url, safe_download_image, sanitize_record_dict
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import StreamingResponse # Importar StreamingResponse
 import io # Importar io
@@ -63,6 +65,16 @@ def is_enum_type(col_type):
         return False
     return isinstance(col_type, (Enum, models.SQLAlchemyEnum)) or hasattr(col_type, "enums") or hasattr(col_type, "enum_class")
 
+def extract_search_tokens(search_term: str) -> list:
+    """Extrai termos de busca, preservando frases exatas entre aspas e separando palavras por espaços."""
+    if not search_term:
+        return []
+    import re
+    # Encontra expressões entre aspas duplas OU palavras separadas por espaço
+    matches = re.findall(r'"([^"]+)"|(\S+)', str(search_term).strip())
+    tokens = [m[0] or m[1] for m in matches if (m[0] or m[1])]
+    return [t.strip() for t in tokens if t.strip()]
+
 def safe_unaccent(col_attr, col_obj=None):
     """Retorna expressão unaccent segura para PostgreSQL, fazendo cast de Enum para String quando necessário."""
     col_type = getattr(col_obj, "type", None) or getattr(col_attr, "type", None)
@@ -71,12 +83,16 @@ def safe_unaccent(col_attr, col_obj=None):
     return func.unaccent(cast(col_attr, String))
 
 def apply_search_filter(query, model, search_term: str, search_field: str = None):
-    """Aplica filtro de busca textual inteligente e otimizado em colunas e relacionamentos (FKs)."""
+    """Aplica filtro de busca textual inteligente e otimizado em colunas e relacionamentos (FKs), com suporte a múltiplos termos (tokens)."""
     if not search_term:
         return query
 
     search_term = str(search_term).strip()
     if not search_term:
+        return query
+
+    tokens = extract_search_tokens(search_term)
+    if not tokens:
         return query
 
     # 1. BUSCA EM CAMPO ESPECÍFICO
@@ -100,7 +116,14 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
                         rel_alias = aliased(related_model)
                         query = query.outerjoin(rel_alias, getattr(model, rel.key))
                         rel_col_obj = related_model.__table__.columns.get(display_field)
-                        return query.filter(safe_unaccent(getattr(rel_alias, display_field), rel_col_obj).ilike(func.unaccent(f"%{search_term}%")))
+                        target_col = getattr(rel_alias, display_field)
+                        if len(tokens) == 1:
+                            return query.filter(safe_unaccent(target_col, rel_col_obj).ilike(func.unaccent(f"%{tokens[0]}%")))
+                        else:
+                            return query.filter(and_(*[
+                                safe_unaccent(target_col, rel_col_obj).ilike(func.unaccent(f"%{t}%"))
+                                for t in tokens
+                            ]))
 
             if col_obj is not None and isinstance(col_obj.type, (Integer, BigInteger)):
                 clean_num = search_term.lstrip('#').strip()
@@ -108,28 +131,21 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
                     return query.filter(col_attr == int(clean_num))
                 return query.filter(cast(col_attr, String).like(f"%{clean_num}%"))
             else:
-                return query.filter(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{search_term}%")))
+                if len(tokens) == 1:
+                    return query.filter(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{tokens[0]}%")))
+                else:
+                    return query.filter(and_(*[
+                        safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{t}%"))
+                        for t in tokens
+                    ]))
 
         return query
 
-    # 2. BUSCA GLOBAL INTELIGENTE
-    filter_conditions = []
-    search_pattern = f"%{search_term}%"
-
-    # Se for número (ex: ID do pedido, código sequencial, NF), busca direta por igualdade / like numérico
-    clean_digits = search_term.lstrip('#').strip()
-    if clean_digits.isdigit():
-        num_val = int(clean_digits)
-        if hasattr(model, "id_sequencial"):
-            filter_conditions.append(model.id_sequencial == num_val)
-        if hasattr(model, "id"):
-            filter_conditions.append(model.id == num_val)
-        if hasattr(model, "numero_nf"):
-            filter_conditions.append(model.numero_nf.like(f"%{clean_digits}%"))
-
+    # 2. BUSCA GLOBAL INTELIGENTE (MULTI-TERMO / MULTI-TOKEN)
     # Colunas de texto prioritárias do próprio modelo
     PRIORITY_TEXT_FIELDS = [
         "descricao", "nome_razao", "fantasia", "nome", "sku", "email",
+        "cpf_cnpj", "telefone", "celular", "cep",
         "chave_acesso", "numero_nf", "shopee_order_sn", "meli_order_id",
         "id_pedido_intelipost", "observacao", "observacoes_nf", "titulo",
         "cidade", "bairro", "logradouro", "endereco_cidade", "endereco_logradouro",
@@ -137,13 +153,14 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
         "embalador"
     ]
 
+    model_text_targets = []
     for field_name in PRIORITY_TEXT_FIELDS:
         if hasattr(model, field_name):
             col_obj = model.__table__.columns.get(field_name)
             if col_obj is not None:
                 col_attr = getattr(model, field_name)
                 if is_pure_string_type(col_obj.type) or is_enum_type(col_obj.type):
-                    filter_conditions.append(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(search_pattern)))
+                    model_text_targets.append((col_attr, col_obj, field_name))
 
     # Busca em relacionamentos chave (cliente, vendedor, transportadora, etc.)
     mapper = inspect(model)
@@ -151,6 +168,7 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
         "nome_razao", "fantasia", "nome", "descricao", "razao", "sku"
     ]
 
+    rel_targets = []
     for rel in mapper.relationships:
         if rel.direction.name == 'MANYTOONE':
             related_model = rel.mapper.class_
@@ -160,10 +178,44 @@ def apply_search_filter(query, model, search_term: str, search_field: str = None
                 query = query.outerjoin(rel_alias, getattr(model, rel.key))
                 related_attr = getattr(rel_alias, display_field)
                 rel_col_obj = related_model.__table__.columns.get(display_field)
-                filter_conditions.append(safe_unaccent(related_attr, rel_col_obj).ilike(func.unaccent(search_pattern)))
+                rel_targets.append((related_attr, rel_col_obj))
 
-    if filter_conditions:
-        query = query.filter(or_(*filter_conditions))
+    token_filters = []
+    for token in tokens:
+        token_conds = []
+
+        # Se for número (ex: ID do pedido, código sequencial, NF), busca direta por igualdade / like numérico
+        clean_digits = token.lstrip('#').strip()
+        if clean_digits.isdigit():
+            num_val = int(clean_digits)
+            # Se o modelo possui id_sequencial, busca apenas por ele (ID de negócio), ignorando o id interno do banco
+            if hasattr(model, "id_sequencial"):
+                token_conds.append(model.id_sequencial == num_val)
+            elif hasattr(model, "id"):
+                token_conds.append(model.id == num_val)
+            if hasattr(model, "numero_nf"):
+                token_conds.append(model.numero_nf.like(f"%{clean_digits}%"))
+
+        token_unaccent = func.unaccent(f"%{token}%")
+
+        for col_attr, col_obj, field_name in model_text_targets:
+            token_conds.append(safe_unaccent(col_attr, col_obj).ilike(token_unaccent))
+            if field_name == "cpf_cnpj" and clean_digits.isdigit() and len(clean_digits) in (11, 14):
+                if len(clean_digits) == 11:
+                    fmt = f"{clean_digits[:3]}.{clean_digits[3:6]}.{clean_digits[6:9]}-{clean_digits[9:]}"
+                    token_conds.append(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{fmt}%")))
+                elif len(clean_digits) == 14:
+                    fmt = f"{clean_digits[:2]}.{clean_digits[2:5]}.{clean_digits[5:8]}/{clean_digits[8:12]}-{clean_digits[12:]}"
+                    token_conds.append(safe_unaccent(col_attr, col_obj).ilike(func.unaccent(f"%{fmt}%")))
+
+        for related_attr, rel_col_obj in rel_targets:
+            token_conds.append(safe_unaccent(related_attr, rel_col_obj).ilike(token_unaccent))
+
+        if token_conds:
+            token_filters.append(or_(*token_conds))
+
+    if token_filters:
+        query = query.filter(and_(*token_filters))
 
     return query
 
@@ -219,13 +271,14 @@ def generate_shipping_label(
                 print(f"Aviso: Erro ao decodificar logo em base64: {e}")
         else:
             try:
-                req = urllib.request.Request(logo_url, headers={'User-Agent': 'Mozilla/5.0'})
-                # Timeout de 3 segundos para evitar travamento
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    logo_reader = ImageReader(io.BytesIO(response.read()))
+                if is_safe_external_url(logo_url):
+                    img_bytes = safe_download_image(logo_url, timeout=3)
+                    if img_bytes:
+                        logo_reader = ImageReader(io.BytesIO(img_bytes))
+                else:
+                    print(f"[ANTI-SSRF] URL de logo bloqueada: {logo_url}")
             except Exception as e:
                 print(f"Aviso: Erro ao baixar logo: {e}")
-
 
     # 2. Configuração do Canvas (TAMANHO CRÍTICO: 100x75mm)
     # Isso faz o layout ficar compacto igual à referência
@@ -481,9 +534,12 @@ def generate_batch_shipping_labels(
                 print(f"Aviso: Erro ao decodificar logo em base64 no lote: {e}")
         else:
             try:
-                req = urllib.request.Request(logo_url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    logo_reader = ImageReader(io.BytesIO(response.read()))
+                if is_safe_external_url(logo_url):
+                    img_bytes = safe_download_image(logo_url, timeout=3)
+                    if img_bytes:
+                        logo_reader = ImageReader(io.BytesIO(img_bytes))
+                else:
+                    print(f"[ANTI-SSRF] URL de logo bloqueada no lote: {logo_url}")
             except Exception as e:
                 print(f"Aviso: Erro ao baixar logo no lote: {e}")
 
@@ -877,7 +933,6 @@ def get_inventario_saldo(
 
     return {"items": result, "total_count": total_count}
 
-
 @router.post("/estoque/inventario", response_model=Any)
 def processar_inventario(
     payload: Dict[str, Any] = Body(...),
@@ -992,7 +1047,6 @@ def processar_inventario(
 
     return {"success": True, "registros_criados": len(criados)}
 
-
 # --- Endpoint de Listagem (GET) ---
 @router.get("/generic/{model_name}", response_model=Any)
 def list_items(
@@ -1013,6 +1067,7 @@ def list_items(
     Lista itens paginados de um modelo para o business do usuário,
     com filtro de busca opcional.
     """
+    verify_model_access(model_name, "read", current_user)
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -1249,7 +1304,6 @@ def list_items(
 
         return {"items": serialized_items, "total_count": total_count, "totals": totals}
 
-
     if situacao:
         # Verifica se o modelo realmente tem a coluna "situacao"
         if hasattr(registry["model"], "situacao"):
@@ -1342,14 +1396,60 @@ def list_items(
                         continue
 
                     if operator == "contains":
+
+                        tokens = extract_search_tokens(value)
+
                         if is_pure_text_col:
-                            field_conditions.append(func.unaccent(column_attr).ilike(func.unaccent(f"%{value}%")))
+
+                            if len(tokens) > 1:
+
+                                field_conditions.append(and_(*[
+
+                                    func.unaccent(column_attr).ilike(func.unaccent(f"%{t}%"))
+
+                                    for t in tokens
+
+                                ]))
+
+                            else:
+
+                                field_conditions.append(func.unaccent(column_attr).ilike(func.unaccent(f"%{value}%")))
+
                         elif is_enum_col:
-                            field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
+
+                            if len(tokens) > 1:
+
+                                field_conditions.append(and_(*[
+
+                                    func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{t}%"))
+
+                                    for t in tokens
+
+                                ]))
+
+                            else:
+
+                                field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
+
                         elif is_int_col and str(value).isdigit():
+
                             field_conditions.append(column_attr == int(value))
+
                         else:
-                            field_conditions.append(cast(column_attr, String).ilike(f"%{value}%"))
+
+                            if len(tokens) > 1:
+
+                                field_conditions.append(and_(*[
+
+                                    cast(column_attr, String).ilike(f"%{t}%")
+
+                                    for t in tokens
+
+                                ]))
+
+                            else:
+
+                                field_conditions.append(cast(column_attr, String).ilike(f"%{value}%"))
 
                     elif operator == "starts_with":
                         if is_pure_text_col:
@@ -1828,7 +1928,30 @@ def export_items_to_csv(
                     value = f.get("value")
                     
                     if operator == "contains":
-                        field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
+
+                    
+                        tokens = extract_search_tokens(value)
+
+                    
+                        if len(tokens) > 1:
+
+                    
+                            field_conditions.append(and_(*[
+
+                    
+                                func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{t}%"))
+
+                    
+                                for t in tokens
+
+                    
+                            ]))
+
+                    
+                        else:
+
+                    
+                            field_conditions.append(func.unaccent(cast(column_attr, String)).ilike(func.unaccent(f"%{value}%")))
                     elif operator == "equals":
                         if isinstance(value, str) and "," in value:
                             vals = [v.strip() for v in value.split(",")]
@@ -2395,11 +2518,12 @@ def generate_custom_report_pdf(
                 decoded_bytes = base64.b64decode(base64_data)
                 logo = Image(io.BytesIO(decoded_bytes), width=35*mm, height=15*mm, kind='proportional')
             else:
-                req = urllib.request.Request(empresa.url_logo, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    img_data = response.read()
-                logo = Image(io.BytesIO(img_data), width=35*mm, height=15*mm, kind='proportional')
-            elemento_esq = logo
+                logo = None
+                if is_safe_external_url(empresa.url_logo):
+                    img_data = safe_download_image(empresa.url_logo, timeout=3)
+                    if img_data:
+                        logo = Image(io.BytesIO(img_data), width=35*mm, height=15*mm, kind='proportional')
+            elemento_esq = logo if logo else Paragraph(f"<b>{nome_empresa}</b>", styles['Normal'])
         except Exception as e:
             print(f"Erro ao carregar logo no relatorio: {e}")
             elemento_esq = Paragraph(f"<b>{nome_empresa}</b>", styles['Normal'])
@@ -2644,7 +2768,6 @@ def gerar_contas_financeiras_pedido(db: Session, item: models.Pedido, current_us
             context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
         )
 
-
 _TABLE_TO_MODEL_MAP = {}
 
 def _get_model_class_by_tablename(tablename: str):
@@ -2725,7 +2848,6 @@ def resolve_related_ids(db: Session, model: Any, item_data: Dict[str, Any], id_e
 
     return item_data
 
-
 # --- Endpoint de Criação (POST) ---
 @router.post("/generic/{model_name}", response_model=Any)
 def create_item(
@@ -2735,6 +2857,7 @@ def create_item(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Cria um novo item, validando com o schema de criação."""
+    verify_model_access(model_name, "create", current_user)
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -2958,6 +3081,7 @@ def read_item(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Busca um item específico pelo ID."""
+    verify_model_access(model_name, "read", current_user)
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -2984,6 +3108,14 @@ def update_item(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Atualiza um item."""
+    verify_model_access(model_name, "update", current_user)
+    # Proteção de senha e segredos
+    if model_name == "usuarios":
+        if not item_data.get("senha") or item_data.get("senha") == "********":
+            item_data.pop("senha", None)
+    for sec_field in ["api_key", "partner_key", "client_secret", "consumer_secret", "app_secret", "access_token", "refresh_token", "token_secret", "webhook_token"]:
+        if item_data.get(sec_field) == "********":
+            item_data.pop(sec_field, None)
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -3536,6 +3668,7 @@ def delete_item(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """Deleta um item."""
+    verify_model_access(model_name, "delete", current_user)
     registry = get_registry_entry(model_name)
     if not registry:
         raise HTTPException(status_code=404, detail="Model not found")

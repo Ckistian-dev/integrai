@@ -13,13 +13,16 @@ export const MODULE_MAP = {
   cadastros:                { module: 'Cadastros', modulePath: '/cadastros' },
   produtos:                 { module: 'Produtos', modulePath: '/produtos' },
   pedidos:                  { module: 'Pedidos', modulePath: '/pedidos/Todos' },
+  notas_fiscais:            { module: 'Notas Fiscais', modulePath: '/notas_fiscais' },
   embalagens:               { module: 'Embalagens', modulePath: '/embalagens' },
   estoque:                  { module: 'Estoque', modulePath: '/estoque/Saldo' },
   contas:                   { module: 'Financeiro', modulePath: '/contas' },
   classificacoes_contabeis: { module: 'Financeiro', modulePath: '/contas' },
   classificacao_contabil:   { module: 'Financeiro', modulePath: '/contas' },
   tributacoes:              { module: 'Regras Tributárias', modulePath: '/tributacoes' },
-  nfe_recebidas:            { module: 'DF-e', modulePath: '/nfe_recebidas' },
+  nfe_recebidas:            { module: 'Notas Fiscais', modulePath: '/notas_fiscais' },
+  nfe_inutilizacoes:        { module: 'Notas Fiscais', modulePath: '/notas_fiscais' },
+  nfe_inutilizacao:         { module: 'Notas Fiscais', modulePath: '/notas_fiscais' },
   relatorios:               { module: 'Relatórios', modulePath: '/relatorios' },
   integracoes:              { module: 'Integrações', modulePath: null },
   intelipost:               { module: 'Integrações', modulePath: null },
@@ -51,6 +54,9 @@ export const HUMAN_MODEL_NAMES = {
   classificacao_contabil: 'Classificação Contábil',
   tributacoes: 'Regras Tributárias',
   nfe_recebidas: 'DF-e',
+  nfe_inutilizacoes: 'Inutilizações de NF-e',
+  nfe_inutilizacao: 'Inutilização de NF-e',
+  notas_fiscais: 'Notas Fiscais',
 };
 
 /**
@@ -178,6 +184,11 @@ export const isPathAccessible = (path, user) => {
   // DF-e
   if (cleanPath.startsWith('/nfe_recebidas')) {
     return permissions.nfe_recebidas?.acesso === true;
+  }
+
+  // Notas Fiscais
+  if (cleanPath.startsWith('/notas_fiscais')) {
+    return permissions.notas_fiscais?.acesso === true;
   }
 
   // Relatórios

@@ -5,7 +5,7 @@ import DatePicker, { registerLocale } from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import ptBR from 'date-fns/locale/pt-BR';
 import { Dialog, Transition, Popover, Menu } from '@headlessui/react';
-import { useParams, useNavigate, Link, useOutletContext } from 'react-router-dom';
+import { useParams, useNavigate, Link, useOutletContext, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/axiosConfig';
@@ -18,6 +18,8 @@ import ModalCotacaoIntelipost from '../components/ui/ModalCotacaoIntelipost'; //
 import ModalImportacaoDfe from '../components/ui/ModalImportacaoDfe'; // NOVO COMPONENTE
 import ModalInventario from '../components/ui/ModalInventario'; // Modal de Inventário
 import Modal from '../components/ui/Modal';
+import ModalInutilizarNFe from '../components/nfe/ModalInutilizarNFe';
+import ModalHistoricoInutilizacoes from '../components/nfe/ModalHistoricoInutilizacoes';
 import { DefaultFiltersInput } from '../components/ui/InputFields';
 import {
   Plus,
@@ -56,7 +58,9 @@ import {
   FileCode,
   Download,
   ClipboardList,
-  AlertCircle
+  AlertCircle,
+  FileX,
+  History
 } from 'lucide-react';
 import { MODULE_MAP, HUMAN_MODEL_NAMES, Breadcrumb } from '../components/layout/breadcrumbUtils';
 
@@ -314,6 +318,9 @@ const getSortArray = (sort, hasIdSeq = false) => {
 
 const GenericList = () => {
   const { modelName: paramModelName, statusFilter } = useParams();
+  const location = useLocation();
+  const isNotasFiscaisView = paramModelName === 'notas_fiscais' || location.pathname === '/notas_fiscais';
+  const isInutilizacoesView = paramModelName === 'nfe_inutilizacoes' || location.pathname === '/nfe_inutilizacoes' || location.pathname === '/notas_fiscais/inutilizacoes';
   const isIntelipostView = paramModelName === 'intelipost';
   const isMeliView = paramModelName === 'mercadolivre_pedidos';
   const isMagentoView = paramModelName === 'magento_pedidos';
@@ -325,7 +332,8 @@ const GenericList = () => {
     isMagentoView ? 'magento_pedidos' :
       isTiktokView ? 'tiktok_pedidos' :
         isShopeeView ? 'shopee_pedidos' :
-          (paramModelName === 'intelipost' ? 'pedidos' : paramModelName);
+          isInutilizacoesView ? 'nfe_inutilizacoes' :
+            ((paramModelName === 'intelipost' || isNotasFiscaisView) ? 'pedidos' : paramModelName);
 
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -337,13 +345,29 @@ const GenericList = () => {
     if (isMeliView || isMagentoView || isTiktokView || isShopeeView || isIntelipostView) {
       return 'integracoes';
     }
+    if (isNotasFiscaisView || isInutilizacoesView || modelName === 'nfe_inutilizacoes') {
+      return 'notas_fiscais';
+    }
     if (paramModelName === 'perfis') {
       return 'usuarios';
     }
     return modelName; // Fallback para o nome do modelo principal
-  }, [paramModelName, modelName, isMeliView, isMagentoView, isIntelipostView]);
+  }, [paramModelName, modelName, isMeliView, isMagentoView, isTiktokView, isShopeeView, isIntelipostView, isNotasFiscaisView, isInutilizacoesView]);
 
-  const userPermissions = user?.permissoes?.[permissionKey] || { acesso: false, acoes: [], colunas: [], subpaginas: [] };
+  const userPermissions = useMemo(() => {
+    const base = user?.permissoes?.[permissionKey] || { acesso: false, acoes: [], colunas: [], subpaginas: [] };
+    if (isNotasFiscaisView || isInutilizacoesView || modelName === 'nfe_inutilizacoes') {
+      const pedidosPerms = user?.permissoes?.pedidos || {};
+      const notasPerms = user?.permissoes?.notas_fiscais || pedidosPerms;
+      return {
+        ...base,
+        acesso: base.acesso || notasPerms.acesso !== false,
+        acoes: base.acoes?.length ? base.acoes : ['visualizar', 'criar', 'editar', 'excluir'],
+        colunas: base.colunas?.length ? base.colunas : (pedidosPerms.colunas || [])
+      };
+    }
+    return base;
+  }, [user, permissionKey, isNotasFiscaisView, isInutilizacoesView, modelName]);
 
   // Se for admin, libera tudo. Se não, checa a lista de ações.
   const canCreate = user?.perfil === 'admin' || userPermissions.acoes?.includes('create');
@@ -411,6 +435,10 @@ const GenericList = () => {
   // --- ESTADOS PARA MODAL DANFE (COMPLETA / SIMPLIFICADA) ---
   const [isDanfeModalOpen, setIsDanfeModalOpen] = useState(false);
   const [danfeModalIds, setDanfeModalIds] = useState([]);
+
+  // --- ESTADOS PARA INUTILIZAÇÃO DE NFE ---
+  const [isModalInutilizarOpen, setIsModalInutilizarOpen] = useState(false);
+  const [isModalHistoricoOpen, setIsModalHistoricoOpen] = useState(false);
 
   // --- ESTADOS PARA CANCELAMENTO NFE ---
   const [isCancelNFeModalOpen, setIsCancelNFeModalOpen] = useState(false);
@@ -1063,12 +1091,10 @@ const GenericList = () => {
           url = `/generic/${modelName}`;
         }
 
-        if (statusFilter && statusFilter !== 'Todos') {
-          if (statusFilter === 'Nota Fiscal') {
-            params.situacao = "Expedição,Despachado,Cancelado";
-          } else {
-            params.situacao = statusFilter;
-          }
+        if (isNotasFiscaisView || statusFilter === 'Nota Fiscal') {
+          params.situacao = "Expedição,Despachado,Cancelado";
+        } else if (statusFilter && statusFilter !== 'Todos') {
+          params.situacao = statusFilter;
         }
 
         // Aplica filtros avançados (JSON)
@@ -2070,7 +2096,7 @@ const GenericList = () => {
 
       // Navega para a aba de Nota Fiscal apenas se a situação foi alterada
       if (data.situation_changed) {
-        navigate(`/pedidos/Nota Fiscal`);
+        navigate(`/pedidos/Expedição`);
         // Atualiza a lista local
         setData(prev => prev.filter((item) => item.id !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
         setTotalCount(prev => Math.max(0, prev - 1));
@@ -2190,11 +2216,8 @@ const GenericList = () => {
         }
       }
 
-      // Navega para a aba da nova situação (Trata 'Expedição' como 'Nota Fiscal')
-      const targetTab = (conferenciaConfig.newStatus === 'Expedição')
-        ? 'Nota Fiscal'
-        : conferenciaConfig.newStatus;
-      navigate(`/pedidos/${targetTab}`);
+      // Navega para a aba da nova situação
+      navigate(`/pedidos/${conferenciaConfig.newStatus}`);
 
       setData(data.filter((item) => item.id !== selectedRowId && item.id_sequencial !== targetId && item.id !== targetId));
       setTotalCount(prev => Math.max(0, prev - 1));
@@ -2249,12 +2272,10 @@ const GenericList = () => {
       const params = {};
 
       // Adiciona filtro de situação (abas)
-      if (statusFilter && statusFilter !== 'Todos') {
-        if (statusFilter === 'Nota Fiscal') {
-          params.situacao = "Expedição,Despachado,Finalizado,Cancelado";
-        } else {
-          params.situacao = statusFilter;
-        }
+      if (isNotasFiscaisView || statusFilter === 'Nota Fiscal') {
+        params.situacao = "Expedição,Despachado,Finalizado,Cancelado";
+      } else if (statusFilter && statusFilter !== 'Todos') {
+        params.situacao = statusFilter;
       }
 
       // Aplica filtros avançados (JSON) - IGUAL AO FETCHDATA
@@ -2809,11 +2830,18 @@ const GenericList = () => {
 
   // --- BREADCRUMB & HEADER: Hooks DEVEM ficar ANTES dos early returns (Rules of Hooks) ---
   const pageTitle = useMemo(() => {
+    if (isNotasFiscaisView) return 'Notas Fiscais';
     const rawPlural = metadata?.display_name_plural || metadata?.display_name || HUMAN_MODEL_NAMES[modelName] || modelName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     return statusFilter && statusFilter !== 'Todos' ? `${rawPlural} (${statusFilter})` : rawPlural;
-  }, [metadata, modelName, statusFilter]);
+  }, [metadata, modelName, statusFilter, isNotasFiscaisView]);
 
   const breadcrumbCrumbs = useMemo(() => {
+    if (isNotasFiscaisView) {
+      return [
+        { label: 'Home', path: '/dashboard' },
+        { label: 'Notas Fiscais', path: null }
+      ];
+    }
     const activeModel = paramModelName || modelName;
     const entry = MODULE_MAP[activeModel];
     const crumbs = [{ label: 'Home', path: '/dashboard' }];
@@ -2831,7 +2859,7 @@ const GenericList = () => {
 
     crumbs.push({ label: currentPageLabel, path: null });
     return crumbs;
-  }, [paramModelName, modelName, statusFilter, metadata]);
+  }, [paramModelName, modelName, statusFilter, metadata, isNotasFiscaisView]);
 
   useEffect(() => {
     if (setPageHeader && metadata) {
@@ -2943,7 +2971,9 @@ const GenericList = () => {
                                   );
                                 }}
                               </Menu.Item>
-                              {metadata?.fields?.map((field) => (
+                              {metadata?.fields
+                                ?.filter(f => f && f.name && f.name !== 'id' && f.name !== 'id_empresa' && f.label?.toLowerCase() !== 'id interno' && f.name !== 'itens' && f.name !== 'retiradas_detalhadas' && f.name !== 'retiradas_detalhadas_json')
+                                ?.map((field) => (
                                 <Menu.Item key={field.name}>
                                   {({ active }) => {
                                     const isSelected = filterVal.column === field.name;
@@ -3319,8 +3349,8 @@ const GenericList = () => {
         {/* Barra de Ações (Botões) */}
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
           {/* Botões Lado Esquerdo */}
-          <div className="flex gap-2">
-            {!isIntelipostView && !isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && modelName !== 'nfe_rece_bidas' && canCreate && (
+          <div className="flex flex-wrap items-center gap-2">
+            {!isIntelipostView && !isNotasFiscaisView && statusFilter !== 'Nota Fiscal' && !isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && modelName !== 'nfe_rece_bidas' && modelName !== 'nfe_inutilizacoes' && canCreate && (
               <Link
                 to={`/${modelName}/new`}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700 text-sm font-medium"
@@ -3503,7 +3533,7 @@ const GenericList = () => {
           </div>
 
           {/* Ações de Seleção (Lado Direito) */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
 
             {/* BOTÃO INVENTÁRIO (Apenas para módulo estoque, em todas as abas) */}
             {modelName === 'estoque' && (
@@ -3553,7 +3583,7 @@ const GenericList = () => {
             )}
 
             {/* Botão Editar Atualizado */}
-            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canEdit && modelName !== 'estoque' && (
+            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canEdit && modelName !== 'estoque' && modelName !== 'nfe_inutilizacoes' && (
               <button
                 onClick={handleEditClick}
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -3565,7 +3595,7 @@ const GenericList = () => {
             )}
 
             {/* Novo Botão Deletar / Cancelar */}
-            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canDelete && modelName !== 'estoque' && (
+            {!isMeliView && !isMagentoView && !isTiktokView && !isShopeeView && canDelete && modelName !== 'estoque' && modelName !== 'nfe_inutilizacoes' && (
               <button
                 onClick={handleDeleteClick} // Chama a função que abre o modal
                 disabled={!selectedRowId} // Desabilitado se nada selecionado
@@ -3704,11 +3734,25 @@ const GenericList = () => {
               </button>
             )}
 
+            {/* BOTÃO INUTILIZAR NUMERAÇÃO (Apenas na tela de Inutilizações) */}
+            {modelName === 'nfe_inutilizacoes' && (
+              <button
+                type="button"
+                onClick={() => setIsModalInutilizarOpen(true)}
+                className="flex items-center px-4 py-2 bg-rose-600 text-white rounded-md shadow-sm hover:bg-rose-700 text-sm font-medium transition-colors"
+                title="Inutilizar faixa ou número de NF-e na SEFAZ"
+              >
+                <FileX size={16} className="mr-2" />
+                Inutilizar Numeração
+              </button>
+            )}
+
             {/* BOTÕES DE STATUS RENDERIZADOS DINAMICAMENTE */}
             {
               statusChangeActions[modelName]?.map((action, index) => {
                 // Só mostra o botão se o filtro de status atual bater
-                if (action.currentStatus !== statusFilter) {
+                const isStatusMatch = action.currentStatus === statusFilter || (isNotasFiscaisView && action.currentStatus === 'Nota Fiscal');
+                if (!isStatusMatch) {
                   return null;
                 }
 
@@ -4235,6 +4279,28 @@ const GenericList = () => {
                         else if (String(value).includes('110111')) { docLabel = 'Cancelamento'; bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
                         else if (String(value).includes('Evento')) { const evCode = String(value).split('_').pop(); docLabel = `Evento (${evCode})`; bgColor = 'bg-orange-100'; textColor = 'text-orange-800'; borderColor = 'border-orange-300'; }
                         return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{docLabel}</span>;
+                      }
+
+                      if (modelName === 'nfe_inutilizacoes') {
+                        if (colName === 'cstat') {
+                          const isSuccess = String(value) === '102';
+                          return (
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${isSuccess ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-red-100 text-red-800 border-red-300'}`}>
+                              {isSuccess ? 'Homologado (102)' : `Rejeição (${value || 'Erro'})`}
+                            </span>
+                          );
+                        }
+                        if (colName === 'modelo') {
+                          const isNfce = String(value) === '65';
+                          return (
+                            <span className="px-2.5 py-0.5 rounded-md text-xs font-medium border bg-blue-100 text-blue-800 border-blue-300">
+                              {isNfce ? '65 - NFC-e' : '55 - NF-e'}
+                            </span>
+                          );
+                        }
+                        if (colName === 'sucesso') {
+                          return <BooleanDisplay value={value} trueLabel="Sim" falseLabel="Não" trueColor="green" falseColor="red" />;
+                        }
                       }
 
                       if (colName === 'tipo_conta') {
@@ -4921,6 +4987,22 @@ const GenericList = () => {
         isOpen={isInventarioModalOpen}
         onClose={() => setIsInventarioModalOpen(false)}
         onSuccess={() => setRefreshTrigger(prev => prev + 1)}
+      />
+
+      {/* MODAL DE INUTILIZAÇÃO DE NF-E */}
+      <ModalInutilizarNFe
+        isOpen={isModalInutilizarOpen}
+        onClose={() => setIsModalInutilizarOpen(false)}
+        onSuccess={() => {
+          setRefreshTrigger(prev => prev + 1);
+        }}
+      />
+
+      {/* MODAL DE HISTÓRICO DE INUTILIZAÇÕES DE NF-E */}
+      <ModalHistoricoInutilizacoes
+        isOpen={isModalHistoricoOpen}
+        onClose={() => setIsModalHistoricoOpen(false)}
+        onOpenNovaInutilizacao={() => setIsModalInutilizarOpen(true)}
       />
 
     </div >

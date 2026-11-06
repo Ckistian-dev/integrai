@@ -380,10 +380,8 @@ def receber_webhook_shopee(
             id_empresa = pedido.id_empresa
 
     if not id_empresa:
-        # Fallback: primeira empresa configurada
-        first_cfg = db.query(models.ShopeeConfiguracao).first()
-        if first_cfg:
-            id_empresa = first_cfg.id_empresa
+        logger.warning(f"Webhook Shopee rejeitado por segurança: loja/empresa não identificada para shop_id={shop_id}")
+        return {"message": "success", "status": "shop_not_identified"}
 
     if not id_empresa:
         logger.warning(f"Webhook Shopee recebido, mas nenhuma empresa/loja foi identificada: shop_id={shop_id}")

@@ -29,6 +29,7 @@ const MainLayout = () => {
   // O estado de expansão agora é controlado pelo novo layout
   const [isExpanded, setIsExpanded] = useState(false);
   const [isPipelineOpen, setIsPipelineOpen] = useState(false);
+  const [isNotasFiscaisOpen, setIsNotasFiscaisOpen] = useState(false);
   const [isIntegraOpen, setIsIntegraOpen] = useState(false);
   const [isFinanceiroOpen, setIsFinanceiroOpen] = useState(false);
   const [isUsuariosOpen, setIsUsuariosOpen] = useState(false);
@@ -42,11 +43,12 @@ const MainLayout = () => {
     { name: 'Cadastros', path: '/cadastros', icon: List, module: 'cadastros' },
     { name: 'Produtos', path: '/produtos', icon: Box, module: 'produtos' },
     { name: 'Pedidos', path: '/pedidos', icon: ShoppingCart, module: 'pedidos' },
+    { name: 'Notas Fiscais', path: '/notas_fiscais', icon: FileText, module: 'notas_fiscais' },
     { name: 'Embalagens', path: '/embalagens', icon: Archive, module: 'embalagens' },
     { name: 'Estoque', path: '/estoque', icon: Package, module: 'estoque' },
     { name: 'Financeiro', path: '/contas', icon: Landmark, module: 'contas' },
     { name: 'Regras Tributárias', path: '/tributacoes', icon: FileText, module: 'tributacoes' },
-    { name: 'DF-e', path: '/nfe_recebidas', icon: FileSearch, module: 'nfe_rece_bidas' },
+
     { name: 'Relatórios', path: '/relatorios', icon: BarChart2, module: 'relatorios' },
     { name: 'Integrações', path: '/integracoes', icon: Layers, module: 'integracoes' },
     // Adicione mais itens conforme necessário
@@ -153,7 +155,7 @@ const MainLayout = () => {
     { name: 'Faturamento', path: '/pedidos/Faturamento' },
     { name: 'Expedição', path: '/pedidos/Expedição' },
     { name: 'Despachado', path: '/pedidos/Despachado' },
-    { name: 'Nota Fiscal', path: '/pedidos/Nota Fiscal' },
+    
     { name: 'Cancelado', path: '/pedidos/Cancelado' },
     { name: 'Todos', path: '/pedidos/Todos' },
   ], []); // Array de dependência vazio, é estático
@@ -211,11 +213,23 @@ const MainLayout = () => {
     [estoqueItems]
   );
 
+  const notasFiscaisItems = useMemo(() => [
+    { name: 'Notas Fiscais de Produtos', path: '/notas_fiscais' },
+    { name: 'Inutilização', path: '/nfe_inutilizacoes' },
+    { name: 'DF-e', path: '/nfe_recebidas' },
+  ], []);
+
+  const notasFiscaisPaths = useMemo(() =>
+    notasFiscaisItems.map(item => item.path),
+    [notasFiscaisItems]
+  );
+
   const isPedidosActive = location.pathname.startsWith('/pedidos');
   const isIntegraActive = location.pathname.startsWith('/integracoes') || location.pathname.startsWith('/intelipost_configuracoes') || location.pathname.startsWith('/atendai_configuracoes') || location.pathname.startsWith('/elastic_email_configuracoes') || location.pathname.startsWith('/meli_configuracoes') || location.pathname.startsWith('/magento_configuracoes') || location.pathname.startsWith('/tiktok_configuracoes') || location.pathname.startsWith('/shopee_configuracoes') || location.pathname.startsWith('/shopee_pedidos') || location.pathname.startsWith('/email_regras') || location.pathname.startsWith('/outras_empresas_configuracoes');
   const isFinanceiroActive = location.pathname.startsWith('/contas') || location.pathname.startsWith('/classificacao_contabil');
   const isUsuariosActive = location.pathname.startsWith('/usuarios') || location.pathname.startsWith('/perfis');
   const isEstoqueActive = location.pathname.startsWith('/estoque');
+  const isNotasFiscaisActive = location.pathname.startsWith('/notas_fiscais') || location.pathname.startsWith('/nfe_inutilizacoes') || location.pathname.startsWith('/nfe_recebidas');
 
   const isPipelineListActive = useMemo(
     () => {
@@ -282,6 +296,18 @@ const MainLayout = () => {
     [location.pathname, estoquePaths]
   );
 
+  const isNotasFiscaisListActive = useMemo(
+    () => {
+      try {
+        const decodedPathname = decodeURIComponent(location.pathname);
+        return notasFiscaisPaths.includes(decodedPathname);
+      } catch (e) {
+        return notasFiscaisPaths.includes(location.pathname);
+      }
+    },
+    [location.pathname, notasFiscaisPaths]
+  );
+
   useEffect(() => {
     // SÓ ABRE se a rota for EXATA.
     // NUNCA FECHE (sem 'else'), para não conflitar com o clique manual.
@@ -300,7 +326,10 @@ const MainLayout = () => {
     if (isEstoqueListActive) {
       setIsEstoqueOpen(true);
     }
-  }, [isPipelineListActive, isIntegraListActive, isFinanceiroListActive, isUsuariosListActive, isEstoqueListActive]); // Depende da booleana específica
+    if (isNotasFiscaisListActive) {
+      setIsNotasFiscaisOpen(true);
+    }
+  }, [isPipelineListActive, isIntegraListActive, isFinanceiroListActive, isUsuariosListActive, isEstoqueListActive, isNotasFiscaisListActive]); // Depende da booleana específica
 
   const handleMouseEnter = () => {
     setIsExpanded(true);
@@ -320,6 +349,9 @@ const MainLayout = () => {
     if (isEstoqueListActive) {
       setIsEstoqueOpen(true);
     }
+    if (isNotasFiscaisListActive) {
+      setIsNotasFiscaisOpen(true);
+    }
   };
 
   // Ele deve fechar o acordeão ao sair.
@@ -330,6 +362,7 @@ const MainLayout = () => {
     setIsFinanceiroOpen(false);
     setIsUsuariosOpen(false);
     setIsEstoqueOpen(false);
+    setIsNotasFiscaisOpen(false);
   };
 
   const handleSingletonClick = async (e, model) => {
@@ -567,6 +600,90 @@ const MainLayout = () => {
                               {status.name}
                             </span>
 
+                          </NavLink>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Caso especial para "Notas Fiscais"
+            if (item.name === 'Notas Fiscais') {
+              const hasNotasAccess = hasPermission('notas_fiscais') || hasPermission('nfe_rece_bidas');
+              if (!hasNotasAccess) {
+                return (
+                  <div key={item.name} className={`flex items-center justify-between w-full p-3 rounded-lg ${disabledClass}`}>
+                    <div className="flex items-center">
+                      <item.icon size={24} className="flex-shrink-0" />
+                      <span className={`ml-4 font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ${isExpanded ? 'opacity-100 w-full' : 'opacity-0 w-0'}`}>{item.name}</span>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={item.name}>
+                  <button
+                    onClick={() => setIsNotasFiscaisOpen(!isNotasFiscaisOpen)}
+                    className={`flex items-center justify-between w-full p-3 rounded-lg transition-colors duration-200 ${isNotasFiscaisActive
+                      ? 'bg-teal-700 text-white' // Ativo
+                      : 'hover:bg-teal-600' // Normal
+                      }`}
+                  >
+                    <div className="flex items-center">
+                      <item.icon size={24} className="flex-shrink-0" />
+                      <span className={`ml-4 font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ${isExpanded ? 'opacity-100 w-full' : 'opacity-0 w-0'}`}>
+                        {item.name}
+                      </span>
+                    </div>
+                    {/* Seta do Acordeão */}
+                    <ChevronDown
+                      size={20}
+                      className={`flex-shrink-0 transition-transform duration-300 ${isNotasFiscaisOpen ? 'rotate-180' : 'rotate-0'
+                        } ${isExpanded ? 'opacity-100' : 'opacity-0'}`}
+                    />
+                  </button>
+
+                  {/* Submenu Notas Fiscais */}
+                  <div
+                    className={`transition-all duration-300 ease-in-out overflow-hidden ${(isNotasFiscaisOpen && isExpanded) ? 'max-h-96' : 'max-h-0'
+                      } ${isExpanded ? 'pl-10' : 'pl-0'}`}
+                  >
+                    <div className="flex flex-col space-y-1 pt-2">
+                      {notasFiscaisItems.map(subItem => {
+                        let isAllowed = true;
+                        if (subItem.name === 'DF-e') {
+                          isAllowed = hasPermission('nfe_rece_bidas') || hasPermission('notas_fiscais');
+                        } else {
+                          isAllowed = hasPermission('notas_fiscais');
+                        }
+
+                        if (!isAllowed) {
+                          return (
+                            <div key={subItem.name} className={`flex items-center py-2 px-3 rounded-lg text-sm cursor-not-allowed opacity-40 grayscale bg-transparent text-gray-500 hover:bg-transparent ${!isExpanded ? 'justify-center' : ''}`}>
+                              <span className="whitespace-nowrap overflow-hidden">
+                                {subItem.name}
+                              </span>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <NavLink
+                            key={subItem.name}
+                            to={subItem.path}
+                            end={subItem.path === '/notas_fiscais'}
+                            className={({ isActive }) =>
+                              `flex items-center py-2 px-3 rounded-lg text-sm ${isActive
+                                ? 'bg-teal-600 text-white font-medium'
+                                : 'text-gray-300 hover:bg-gray-700'
+                              } ${!isExpanded ? 'justify-center' : ''}`
+                            }
+                          >
+                            <span className="whitespace-nowrap overflow-hidden">
+                              {subItem.name}
+                            </span>
                           </NavLink>
                         );
                       })}

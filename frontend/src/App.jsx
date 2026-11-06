@@ -26,6 +26,7 @@ const DefaultRedirect = () => {
     { module: 'cadastros', path: '/cadastros' },
     { module: 'produtos', path: '/produtos' },
     { module: 'pedidos', path: '/pedidos/Todos' },
+    { module: 'notas_fiscais', path: '/notas_fiscais' },
     { module: 'embalagens', path: '/embalagens' },
     { module: 'estoque', path: '/estoque' },
     { module: 'contas', path: '/contas' },
@@ -70,6 +71,15 @@ function App() {
               <Dashboard />
             </PermissionRoute>
           } />
+
+          {/* Rotas Genéricas (Dispatcher) */}
+          {/* Rota Específica para Notas Fiscais */}
+          <Route path="notas_fiscais" element={
+            <PermissionRoute module="notas_fiscais">
+              <GenericList />
+            </PermissionRoute>
+          } />
+          <Route path="notas_fiscais/inutilizacoes" element={<Navigate to="/nfe_inutilizacoes" replace />} />
 
           {/* Rotas Genéricas (Dispatcher) */}
           <Route path=":modelName/:statusFilter?" element={

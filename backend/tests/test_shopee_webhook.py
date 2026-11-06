@@ -156,12 +156,18 @@ class TestShopeeWebhook(unittest.TestCase):
 
         app.dependency_overrides[get_db] = override_get_db
         try:
-            client = TestClient(app)
-            response = client.post("/api/v1/shopee/webhook", json={
-                "shop_id": 99999,
-                "code": 3,
-                "data": {"ordersn": "241012DCXHJUIKJ", "status": "SHIPPED"}
-            })
+            import asyncio
+            from httpx import ASGITransport, AsyncClient
+
+            async def _run_test():
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+                    return await ac.post("/api/v1/shopee/webhook", json={
+                        "shop_id": 99999,
+                        "code": 3,
+                        "data": {"ordersn": "241012DCXHJUIKJ", "status": "SHIPPED"}
+                    })
+
+            response = asyncio.run(_run_test())
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json().get("message"), "success")
             mock_process.assert_called_once()

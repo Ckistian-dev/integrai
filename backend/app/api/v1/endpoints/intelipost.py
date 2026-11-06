@@ -17,6 +17,7 @@ from app.core.db.database import get_db
 from app.api.dependencies import get_current_active_user
 from app.core.db import models
 from app.core.service.intelipost_service import IntelipostService
+from app.crud import crud_user
 from app.core.logger import log_info, log_error, log_warning
 from app.core.error_codes import IntelipostErrorCode, LogStatus
 

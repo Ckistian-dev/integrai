@@ -20,7 +20,7 @@ def get_current_user(
     Dependência de segurança:
     1. Valida o token JWT.
     2. Extrai o id_usuario.
-    3. Retorna o objeto Usuario do banco de dados.
+    3. Retorna o objeto Usuario do banco de dados com autoridade estrita do DB para perfil e permissões.
     Esta função será injetada em todos os endpoints protegidos.
     """
     credentials_exception = HTTPException(
@@ -55,7 +55,9 @@ def get_current_user(
     if user.id_empresa != token_data.id_empresa:
         raise credentials_exception
         
-    user.perfil = perfil
+    # Atribui o perfil e permissões REAIS do banco de dados (evita confiança cega no token)
+    user.perfil = user.perfil_rel.nome if user.perfil_rel else (perfil or "Sem Perfil")
+    user.permissoes = user.perfil_rel.permissoes if user.perfil_rel else {}
         
     return user
 

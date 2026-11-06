@@ -1,0 +1,34 @@
+[2026-11-04 11:56:08.477] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_PROCESSING] - Enviando log integrai_logs_2026-11-03.txt para o Google Drive...
+[2026-11-04 11:56:08.478] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Log integrai_logs_2026-11-03.txt enviado com sucesso ao Drive (ID: drive_file_123).
+[2026-11-04 11:56:08.479] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Arquivo local anterior integrai_logs_2026-11-03.txt removido do disco.
+[2026-11-04 11:56:08.479] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Limpeza de logs no Drive concluída: 1 arquivo(s) > 30 dias excluído(s).
+Notificação (Webhook) recebida da Shopee: {'shop_id': 99999, 'code': 3, 'data': {'ordersn': '241012DCXHJUIKJ', 'status': 'SHIPPED'}}
+HTTP Request: POST http://testserver/api/v1/shopee/webhook "HTTP/1.1 200 OK"
+HTTP Request: GET http://testserver/ "HTTP/1.1 200 OK"
+[2026-11-04 14:10:21.328] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_PROCESSING] - Enviando log integrai_logs_2026-11-03.txt para o Google Drive...
+[2026-11-04 14:10:21.329] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Log integrai_logs_2026-11-03.txt enviado com sucesso ao Drive (ID: drive_file_123).
+[2026-11-04 14:10:21.329] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Arquivo local anterior integrai_logs_2026-11-03.txt removido do disco.
+[2026-11-04 14:10:21.329] [INFO] [SYSTEM:log_service:rotate_and_sync_logs] [STATUS_SUCCESS] - Limpeza de logs no Drive concluída: 1 arquivo(s) > 30 dias excluído(s).
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 200 OK"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 200 OK"
+[2026-11-04 14:54:53.865] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-100 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 100 | ano: 2026
+[2026-11-04 14:54:53.877] [WARNING] [NFE:nfe_service:inutilizar_numeracao] [SEFAZ retornou não homologado para inutilização: cStat 206 - Rejeicao: NF-e ja esta inutilizada na Base de Dados da SEFAZ] - {'id_empresa': 1, 'serie': 1, 'inicial': 100, 'final': 100, 'cstat': '206'}
+[2026-11-04 14:54:53.881] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-102 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | ano: 2026
+[2026-11-04 14:54:53.882] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_SUCCESS] - Inutilização homologada com sucesso (cStat 102): Prot 135260000000001 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | cstat: 102
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 200 OK"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 200 OK"
+[2026-11-04 15:11:59.319] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-100 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 100 | ano: 2026
+[2026-11-04 15:11:59.322] [WARNING] [NFE:nfe_service:inutilizar_numeracao] [SEFAZ retornou não homologado para inutilização: cStat 206 - Rejeicao: NF-e ja esta inutilizada na Base de Dados da SEFAZ] - {'id_empresa': 1, 'serie': 1, 'inicial': 100, 'final': 100, 'cstat': '206'}
+[2026-11-04 15:11:59.326] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-102 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | ano: 2026
+[2026-11-04 15:11:59.327] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_SUCCESS] - Inutilização homologada com sucesso (cStat 102): Prot 135260000000001 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | cstat: 102
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 200 OK"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 200 OK"
+[2026-11-04 15:38:33.979] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-100 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 100 | ano: 2026
+[2026-11-04 15:38:33.992] [WARNING] [NFE:nfe_service:inutilizar_numeracao] [SEFAZ retornou não homologado para inutilização: cStat 206 - Rejeicao: NF-e ja esta inutilizada na Base de Dados da SEFAZ] - {'id_empresa': 1, 'serie': 1, 'inicial': 100, 'final': 100, 'cstat': '206'}
+[2026-11-04 15:38:33.996] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-102 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | ano: 2026
+[2026-11-04 15:38:33.997] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_SUCCESS] - Inutilização homologada com sucesso (cStat 102): Prot 135260000000001 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | cstat: 102
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 200 OK"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 200 OK"

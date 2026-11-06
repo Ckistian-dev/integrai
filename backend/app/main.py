@@ -24,12 +24,21 @@ origins = [origin.strip() for origin in origins_str.split(",") if origin]
 # Configuracão do CORS
 app.add_middleware(
     CORSMiddleware,
-    # Atualize para a origem do seu frontend (Vite geralmente usa 5173)
     allow_origins=origins, 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Middleware de cabeçalhos de segurança (OWASP Top 10 Hardening)
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Middleware global para interceptar exceções não tratadas e registrar com código de erro estruturado
 @app.middleware("http")

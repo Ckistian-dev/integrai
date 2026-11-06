@@ -1,3 +1,4 @@
+from app.core.security_guard import verify_model_access
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, case, cast, String, Date, and_, or_, DateTime, inspect
@@ -147,6 +148,9 @@ def get_dynamic_card_data(
     log_info("DASHBOARD", "dashboard_endpoint", "get_dynamic_card_data", LogStatus.PROCESSING,
              f"Executando query de card para modelo: {query.modelo} (tipo: {query.tipo})",
              {"modelo": query.modelo, "tipo": query.tipo, "id_empresa": current_user.id_empresa})
+
+    # Verificação de segurança RBAC: Impede consultas não autorizadas a tabelas administrativas via dashboard
+    verify_model_access(query.modelo, "read", current_user)
 
     registry = get_registry_entry(query.modelo)
     if not registry:

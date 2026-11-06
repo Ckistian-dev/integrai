@@ -150,7 +150,9 @@ class Empresa(EmpresaBase):  # RENOMEADO de EmpresaRead para Empresa
     id: int
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
-    certificado_arquivo: Optional[bytes] = None
+    certificado_arquivo: Optional[bytes] = Field(default=None, exclude=True)
+    certificado_senha: Optional[str] = Field(default=None, exclude=True)
+    tem_certificado: Optional[bool] = False
     
     nfe_numero_sequencial: Optional[int] = None
     nfce_numero_sequencial: Optional[int] = None
@@ -214,6 +216,7 @@ class Usuario(UsuarioBase):  # RENOMEADO de UsuarioRead para Usuario
     id: int
     id_sequencial: Optional[int] = None
     id_empresa: int
+    senha: Optional[str] = Field(default=None, exclude=True)
     situacao: Optional[bool] = None
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
@@ -472,6 +475,45 @@ Nfe_recebida = NotaFiscalRecebida
 Nfe_recebidaCreate = NotaFiscalRecebidaCreate
 Nfe_recebidaUpdate = NotaFiscalRecebidaUpdate
 
+# --- Schemas de Inutilização de NF-e ---
+class NfeInutilizacao(BaseModel):
+    id: int
+    modelo: str = "55"
+    serie: int = 1
+    numero_inicial: int
+    numero_final: int
+    ano: int
+    justificativa: str
+    cstat: Optional[str] = None
+    xmotivo: Optional[str] = None
+    protocolo: Optional[str] = None
+    data_recebimento: Optional[datetime] = None
+    sucesso: bool = False
+    created_at: Optional[datetime] = None
+    id_usuario: Optional[int] = None
+    id_empresa: int
+
+    class Config:
+        from_attributes = True
+
+class NfeInutilizacaoCreate(BaseModel):
+    modelo: Optional[str] = "55"
+    serie: int = 1
+    numero_inicial: int
+    numero_final: int
+    ano: Optional[int] = None
+    justificativa: str
+
+class NfeInutilizacaoUpdate(BaseModel):
+    justificativa: Optional[str] = None
+
+Nfe_inutilizacao = NfeInutilizacao
+Nfe_inutilizacaoCreate = NfeInutilizacaoCreate
+Nfe_inutilizacaoUpdate = NfeInutilizacaoUpdate
+Nfe_inutilizacoes = NfeInutilizacao
+Nfe_inutilizacoesCreate = NfeInutilizacaoCreate
+Nfe_inutilizacoesUpdate = NfeInutilizacaoUpdate
+
 # --- 6. Schemas de Conta (Pagar/Receber) ---
 
 class ContaBase(BaseModel):
@@ -641,6 +683,7 @@ class PedidoBase(BaseModel):
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = RegraTipoOperacaoEnum.venda_mercadoria
+    natureza_operacao: Optional[int] = None
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
     numero_nf: Optional[str] = None
@@ -730,6 +773,7 @@ class PedidoUpdate(BaseModel):
     observacoes_nf: Optional[str] = None
     ordem_finalizacao: Optional[Decimal] = Field(None)
     tipo_operacao: Optional[RegraTipoOperacaoEnum] = None
+    natureza_operacao: Optional[int] = None
     retiradas_detalhadas: Optional[List[Dict[str, Any]]] = None
     
     numero_nf: Optional[str] = None
@@ -917,6 +961,10 @@ class IntelipostConfiguracao(IntelipostConfiguracaoBase):
     id_empresa: int
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
+
+    @field_serializer('api_key', check_fields=False)
+    def mask_api_key(self, v: Optional[str], _info):
+        return "********" if v else None
 
     class Config:
         from_attributes = True
@@ -1142,6 +1190,10 @@ class ShopeeConfiguracao(ShopeeConfiguracaoBase):
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
 
+    @field_serializer('partner_key', 'access_token', 'refresh_token', check_fields=False)
+    def mask_shopee_secrets(self, v: Optional[str], _info):
+        return "********" if v else None
+
     class Config:
         from_attributes = True
 
@@ -1358,6 +1410,7 @@ def update_all_forward_refs():
     ElasticEmailConfiguracao.model_rebuild()
     AtendaiConfiguracao.model_rebuild()
     NotaFiscalRecebida.model_rebuild()
+    NfeInutilizacao.model_rebuild()
     EmailRegra.model_rebuild()
     
 update_all_forward_refs()

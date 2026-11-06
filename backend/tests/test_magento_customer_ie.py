@@ -140,6 +140,187 @@ def test_find_or_create_customer_updates_existing_client():
         assert res.fantasia == "TOLEHIDRO MANGUEIRAS E HIDRAULICOS"
         mock_db.commit.assert_called()
 
+def test_extract_magento_ie_from_customer_payload():
+    mock_db = MagicMock()
+    mock_config = MagicMock()
+    mock_config.base_url = "https://example.com"
+    mock_config.store_view_code = "default"
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_config
+
+    service = MagentoService(mock_db, id_empresa=3)
+
+    # Payload exato fornecido pelo usuário
+    customer_payload = {
+        "id": 920,
+        "group_id": 2,
+        "default_billing": "964",
+        "default_shipping": "963",
+        "created_at": "2026-10-21 20:28:54",
+        "updated_at": "2026-10-21 20:30:46",
+        "created_in": "Visão principal",
+        "email": "lucas@mageshop.com.br",
+        "firstname": "Lucas PJ",
+        "lastname": "mageshop",
+        "store_id": 1,
+        "taxvat": "61.027.898/0001-86",
+        "website_id": 1,
+        "addresses": [
+            {
+                "id": 963,
+                "customer_id": 920,
+                "region": {"region_code": "PR", "region": "Paraná", "region_id": 499},
+                "region_id": 499,
+                "country_id": "BR",
+                "street": ["Rua Amir Dalla Vecchia", "503", "", "Vila Gaúcha"],
+                "telephone": "(45)99951-5687",
+                "postcode": "85966218",
+                "city": "Marechal Cândido Rondon",
+                "firstname": "Lucas PJ",
+                "lastname": "mageshop",
+                "vat_id": "61.027.898/0001-86",
+                "default_shipping": True
+            },
+            {
+                "id": 964,
+                "customer_id": 920,
+                "region": {"region_code": "PR", "region": "Paraná", "region_id": 499},
+                "region_id": 499,
+                "country_id": "BR",
+                "street": ["Rua Amir Dalla Vecchia", "503", "", "Vila Gaúcha"],
+                "telephone": "45999515687",
+                "postcode": "85966218",
+                "city": "Marechal Cândido Rondon",
+                "firstname": "Lucas PJ",
+                "lastname": "mageshop",
+                "vat_id": "61.027.898/0001-86",
+                "default_billing": True
+            }
+        ],
+        "disable_auto_group_change": 0,
+        "extension_attributes": {
+            "is_subscribed": False
+        },
+        "custom_attributes": [
+            {"attribute_code": "is_disabled", "value": "0"},
+            {"attribute_code": "is_approved", "value": "0"},
+            {"attribute_code": "ww_is_disabled", "value": False},
+            {"attribute_code": "ie", "value": "ISENTO"},
+            {"attribute_code": "cnpj", "value": "61.027.898/0001-86"},
+            {"attribute_code": "customer_id_pagarme", "value": "0"}
+        ]
+    }
+
+    # 1. Testando chamada passando customer_data explicitamente
+    ie1 = service._extract_magento_ie(order_data={}, billing={}, customer_data=customer_payload)
+    assert ie1 == "ISENTO"
+
+    # 2. Testando chamada passando diretamente o payload de cliente como primeiro argumento
+    ie2 = service._extract_magento_ie(customer_payload)
+    assert ie2 == "ISENTO"
+
+def test_find_or_create_customer_with_customer_api_lookup():
+    mock_db = MagicMock()
+    mock_config = MagicMock()
+    mock_config.base_url = "https://example.com"
+    mock_config.store_view_code = "default"
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_config
+
+    service = MagentoService(mock_db, id_empresa=3)
+
+    # Simula cliente ainda não existente no ERP
+    mock_db.query.return_value.filter.return_value.first.side_effect = [
+        None, # busca por CNPJ
+        None  # busca por email
+    ]
+
+    order_data = {
+        "increment_id": "000001880",
+        "customer_id": 920,
+        "customer_email": "lucas@mageshop.com.br",
+        "billing_address": {
+            "firstname": "Lucas PJ",
+            "lastname": "mageshop",
+            "vat_id": "61.027.898/0001-86",
+            "email": "lucas@mageshop.com.br",
+            "telephone": "45999515687",
+            "postcode": "85966218",
+            "region_code": "PR",
+            "city": "Marechal Cândido Rondon",
+            "street": ["Rua Amir Dalla Vecchia", "503", "", "Vila Gaúcha"]
+        }
+    }
+
+    customer_payload = {
+        "id": 920,
+        "email": "lucas@mageshop.com.br",
+        "taxvat": "61.027.898/0001-86",
+        "custom_attributes": [
+            {"attribute_code": "ie", "value": "ISENTO"},
+            {"attribute_code": "cnpj", "value": "61.027.898/0001-86"}
+        ]
+    }
+
+    with patch.object(service, 'get_customer', return_value=customer_payload) as mock_get_cust:
+        with patch('app.core.service.nfe_service.NFeService') as mock_nfe_cls:
+            cliente = service._find_or_create_customer(order_data)
+
+            mock_get_cust.assert_called_once_with(920)
+            # Não deve chamar SEFAZ já que o cliente tem IE = ISENTO informada
+            mock_nfe_cls.assert_not_called()
+
+            mock_db.add.assert_called_once()
+            created_client = mock_db.add.call_args[0][0]
+            assert created_client.cpf_cnpj == "61027898000186"
+            assert created_client.inscricao_estadual == "ISENTO"
+            assert created_client.indicador_ie == models.CadastroIndicadorIEEnum.isento
+
+def test_find_or_create_customer_updates_existing_client_to_isento():
+    mock_db = MagicMock()
+    mock_config = MagicMock()
+    mock_config.base_url = "https://example.com"
+    mock_config.store_view_code = "default"
+
+    # Cliente já cadastrado no banco, mas com indicador_ie='9' (não contribuinte) e sem IE
+    existing_client = models.Cadastro(
+        id=777,
+        id_empresa=3,
+        cpf_cnpj="61027898000186",
+        nome_razao="LUCAS PJ",
+        tipo_pessoa=models.CadastroTipoPessoaEnum.juridica,
+        indicador_ie=models.CadastroIndicadorIEEnum.nao_contribuinte,
+        inscricao_estadual=None
+    )
+
+    mock_db.query.return_value.filter.return_value.first.side_effect = [
+        mock_config,
+        existing_client
+    ]
+
+    service = MagentoService(mock_db, id_empresa=3)
+
+    order_data = {
+        "increment_id": "000001881",
+        "customer_id": 920,
+        "billing_address": {
+            "vat_id": "61.027.898/0001-86",
+            "region_code": "PR"
+        }
+    }
+
+    customer_payload = {
+        "id": 920,
+        "taxvat": "61.027.898/0001-86",
+        "custom_attributes": [
+            {"attribute_code": "ie", "value": "ISENTO"}
+        ]
+    }
+
+    with patch.object(service, 'get_customer', return_value=customer_payload):
+        res = service._find_or_create_customer(order_data)
+        assert res.inscricao_estadual == "ISENTO"
+        assert res.indicador_ie == models.CadastroIndicadorIEEnum.isento
+        mock_db.commit.assert_called()
+
 if __name__ == "__main__":
     print("Running test_extract_magento_ie_from_custom_attributes...")
     test_extract_magento_ie_from_custom_attributes()
@@ -147,4 +328,12 @@ if __name__ == "__main__":
     test_find_or_create_customer_pj_sefaz_lookup()
     print("Running test_find_or_create_customer_updates_existing_client...")
     test_find_or_create_customer_updates_existing_client()
+    print("Running test_extract_magento_ie_from_customer_payload...")
+    test_extract_magento_ie_from_customer_payload()
+    print("Running test_find_or_create_customer_with_customer_api_lookup...")
+    test_find_or_create_customer_with_customer_api_lookup()
+    print("Running test_find_or_create_customer_updates_existing_client_to_isento...")
+    test_find_or_create_customer_updates_existing_client_to_isento()
     print("ALL TESTS PASSED!")
+
+

@@ -17,6 +17,7 @@ TZ_BR = timezone(timedelta(hours=-3))
 from typing import Tuple, Optional, Dict, Any
 import time # Importar para usar time.sleep()
 from lxml import etree
+from app.core.security_guard import safe_xml_fromstring
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -3870,6 +3871,7 @@ class NFeService:
                     pedido.data_nf = datetime.now(TZ_BR).date() # Preenche a data da NF
                     pedido.pdf_danfe = pdf_b64
                     pedido.numero_nf = str(numero_nf)
+                    pedido.natureza_operacao = int(tp_nf)
                     
                     # Atualiza Sequencial da Empresa (Apenas se não for desenvolvimento)
                     is_development = os.getenv("ENVIRONMENT", "development") == "development"
@@ -5090,7 +5092,7 @@ class NFeService:
             else:
                 xml_data = xml_content
             
-            root = etree.fromstring(xml_data)
+            root = safe_xml_fromstring(xml_data)
             
             # Namespaces
             ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
@@ -5384,3 +5386,218 @@ class NFeService:
         self.db.commit()
         logger.info(f"Importação da nota ID {nota_id} finalizada com sucesso.")
         return {"success": True}
+
+    def inutilizar_numeracao(
+        self,
+        modelo: str,
+        serie: int,
+        numero_inicial: int,
+        numero_final: int,
+        justificativa: str,
+        ano: Optional[int] = None,
+        id_usuario: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Inutiliza uma faixa de numeração de NF-e ou NFC-e junto à SEFAZ.
+        Persiste a tentativa no histórico em nfe_inutilizacoes.
+        """
+        # 1. Validações prévias
+        if not justificativa or len(justificativa.strip()) < 15:
+            raise HTTPException(
+                status_code=400,
+                detail="A justificativa deve conter no mínimo 15 caracteres para inutilização na SEFAZ."
+            )
+
+        if numero_inicial is None or numero_final is None or numero_inicial <= 0 or numero_final < numero_inicial:
+            raise HTTPException(
+                status_code=400,
+                detail="Faixa de numeração inválida. O número final deve ser maior ou igual ao número inicial, e ambos maiores que zero."
+            )
+
+        if serie is None or serie < 0:
+            raise HTTPException(status_code=400, detail="Série inválida.")
+
+        if not self.empresa.certificado_arquivo or not self.empresa.certificado_senha:
+            raise HTTPException(
+                status_code=400,
+                detail="Certificado digital A1 não configurado para a empresa emitente."
+            )
+
+        # 2. Configurações de Certificado e SEFAZ
+        temp_path = None
+        try:
+            cert_data = self.empresa.certificado_arquivo
+            if cert_data and len(cert_data) > 0 and cert_data[0] != 0x30:
+                try:
+                    cert_data = base64.b64decode(cert_data, validate=True)
+                except Exception:
+                    pass
+
+            tmp = tempfile.NamedTemporaryFile(suffix=".pfx", delete=False)
+            tmp.write(cert_data)
+            if hasattr(tmp, "close"):
+                tmp.close()
+            temp_path = getattr(tmp, "name", str(tmp))
+
+            uf_empresa = self.empresa.estado.value if hasattr(self.empresa.estado, "value") else str(self.empresa.estado)
+            uf_empresa = uf_empresa.upper()
+
+            ambiente_homologacao = (
+                self.empresa.ambiente_sefaz == models.EmpresaAmbienteSefazEnum.homologacao
+                or (hasattr(self.empresa.ambiente_sefaz, "value") and self.empresa.ambiente_sefaz.value == 2)
+                or self.empresa.ambiente_sefaz == 2
+            )
+
+            comunicacao = ComunicacaoSefaz(
+                uf=uf_empresa,
+                certificado=temp_path,
+                certificado_senha=self.empresa.certificado_senha,
+                homologacao=ambiente_homologacao
+            )
+
+            ano_inut = ano or datetime.now().year
+            modelo_sefaz = "nfe" if str(modelo) in ("55", "nfe") else "nfce"
+            cnpj_limpo = re.sub(r"\D", "", str(self.empresa.cnpj or ""))
+
+            log_info(
+                "NFE", "nfe_service", "inutilizar_numeracao", LogStatus.PROCESSING,
+                f"Transmitindo pedido de inutilização para SEFAZ: mod {modelo}, série {serie}, faixa {numero_inicial}-{numero_final}",
+                {"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final, "ano": ano_inut}
+            )
+
+            # 3. Transmissão para SEFAZ
+            try:
+                resposta = comunicacao.inutilizacao(
+                    modelo=modelo_sefaz,
+                    cnpj=cnpj_limpo,
+                    numero_inicial=numero_inicial,
+                    numero_final=numero_final,
+                    justificativa=justificativa.strip(),
+                    ano=ano_inut,
+                    serie=str(serie)
+                )
+            except Exception as e:
+                log_error(
+                    "NFE", "nfe_service", "inutilizar_numeracao", NfeErrorCode.NFE_ERRO_COMUNICACAO_SEFAZ,
+                    f"Falha de comunicação com SEFAZ ao inutilizar numeração: {str(e)}",
+                    {"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final}
+                )
+                raise HTTPException(status_code=502, detail=f"Erro na comunicação com a SEFAZ: {str(e)}")
+
+            # 4. Parse e Extração do Retorno
+            raw_xml = resposta
+            if hasattr(resposta, "content"):
+                raw_xml = resposta.content
+            elif isinstance(resposta, tuple) and len(resposta) > 1:
+                raw_xml = resposta[1].content if hasattr(resposta[1], "content") else resposta[1]
+
+            if isinstance(raw_xml, str):
+                raw_xml_bytes = raw_xml.encode("utf-8")
+                xml_str = raw_xml
+            elif isinstance(raw_xml, (bytes, bytearray)):
+                raw_xml_bytes = bytes(raw_xml)
+                xml_str = raw_xml_bytes.decode("utf-8", errors="ignore")
+            else:
+                raw_xml_bytes = str(raw_xml).encode("utf-8")
+                xml_str = str(raw_xml)
+
+            cstat = None
+            xmotivo = None
+            protocolo = None
+            dh_recbto = None
+
+            try:
+                xml_root = safe_xml_fromstring(raw_xml_bytes)
+                cstat_nodes = xml_root.xpath("//*[local-name()='cStat']")
+                if cstat_nodes and cstat_nodes[0].text:
+                    cstat = cstat_nodes[0].text.strip()
+
+                xmotivo_nodes = xml_root.xpath("//*[local-name()='xMotivo']")
+                if xmotivo_nodes and xmotivo_nodes[0].text:
+                    xmotivo = xmotivo_nodes[0].text.strip()
+
+                protocolo_nodes = xml_root.xpath("//*[local-name()='nProt']")
+                if protocolo_nodes and protocolo_nodes[0].text:
+                    protocolo = protocolo_nodes[0].text.strip()
+
+                dhrecbto_nodes = xml_root.xpath("//*[local-name()='dhRecbto']")
+                if dhrecbto_nodes and dhrecbto_nodes[0].text:
+                    dh_str = dhrecbto_nodes[0].text.strip()
+                    try:
+                        dh_recbto = datetime.fromisoformat(dh_str)
+                    except Exception:
+                        dh_recbto = datetime.utcnow()
+            except Exception as e:
+                logger.warning(f"Erro ao processar XML de retorno da inutilização: {e}")
+
+            if dh_recbto is None:
+                dh_recbto = datetime.utcnow()
+
+            sucesso = (cstat == "102")
+
+            # 5. Persistência no Banco de Dados
+            registro = models.NfeInutilizacao(
+                id_empresa=self.id_empresa,
+                id_usuario=id_usuario,
+                modelo="55" if str(modelo) in ("55", "nfe") else "65",
+                serie=serie,
+                numero_inicial=numero_inicial,
+                numero_final=numero_final,
+                ano=ano_inut,
+                justificativa=justificativa.strip(),
+                cstat=cstat,
+                xmotivo=xmotivo,
+                protocolo=protocolo,
+                data_recebimento=dh_recbto,
+                xml_retorno=xml_str,
+                sucesso=sucesso
+            )
+            self.db.add(registro)
+            self.db.commit()
+            try:
+                self.db.refresh(registro)
+            except Exception:
+                pass
+
+            if sucesso:
+                log_info(
+                    "NFE", "nfe_service", "inutilizar_numeracao", LogStatus.SUCCESS,
+                    f"Inutilização homologada com sucesso (cStat 102): Prot {protocolo}",
+                    {"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final, "cstat": cstat}
+                )
+            else:
+                log_warning(
+                    "NFE", "nfe_service", "inutilizar_numeracao",
+                    f"SEFAZ retornou não homologado para inutilização: cStat {cstat} - {xmotivo}",
+                    {"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final, "cstat": cstat}
+                )
+
+            return {
+                "id": getattr(registro, "id", None),
+                "sucesso": sucesso,
+                "cstat": cstat,
+                "xmotivo": xmotivo,
+                "protocolo": protocolo,
+                "data_recebimento": dh_recbto.isoformat() if hasattr(dh_recbto, "isoformat") else str(dh_recbto)
+            }
+
+        finally:
+            if temp_path and isinstance(temp_path, (str, bytes, os.PathLike)):
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except Exception:
+                    pass
+
+    def listar_inutilizacoes(self, limit: int = 100, offset: int = 0):
+        """
+        Retorna o histórico de inutilizações de numeração da empresa ordenadas por data desc.
+        """
+        return (
+            self.db.query(models.NfeInutilizacao)
+            .filter(models.NfeInutilizacao.id_empresa == self.id_empresa)
+            .order_by(models.NfeInutilizacao.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )

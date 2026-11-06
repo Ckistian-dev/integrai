@@ -224,6 +224,7 @@ class AtendaiService:
             # Dados Fiscais
             "tipo_operacao": tipo_operacao_codigo,
             "tipo_operacao_descricao": tipo_operacao_descricao,
+            "natureza_operacao": getattr(pedido, "natureza_operacao", None),
             "numero_nf": getattr(pedido, "numero_nf", None),
             "chave_acesso": getattr(pedido, "chave_acesso", None),
             "chave_nfe_referencia": getattr(pedido, "chave_nfe_referencia", None),

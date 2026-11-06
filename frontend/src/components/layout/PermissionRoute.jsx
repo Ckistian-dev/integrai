@@ -20,6 +20,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
     'cadastros': 'cadastros',
     'produtos': 'produtos',
     'pedidos': 'pedidos',
+    'notas_fiscais': 'notas_fiscais',
     'embalagens': 'embalagens',
     'estoque': 'estoque',
     'contas': 'contas',
@@ -35,7 +36,10 @@ const PermissionRoute = ({ children, module: propModule }) => {
     'mercadolivre_pedidos': 'integracoes',
     'magento_pedidos': 'integracoes',
     'shopee_pedidos': 'integracoes',
-    'intelipost': 'integracoes'
+    'intelipost': 'integracoes',
+    'nfe_recebidas': 'nfe_rece_bidas',
+    'nfe_inutilizacoes': 'notas_fiscais',
+    'nfe_inutilizacao': 'notas_fiscais'
   };
 
   // Determina o módulo atual com base na URL ou parâmetro
@@ -72,6 +76,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
     // Fallback por path para rotas que não usam :modelName
     const path = location.pathname;
     if (path.startsWith('/integracoes')) currentModule = 'integracoes';
+    else if (path.startsWith('/notas_fiscais')) currentModule = 'notas_fiscais';
     else if (path.startsWith('/contas')) currentModule = 'contas';
     else if (path.startsWith('/classificacao_contabil')) currentModule = 'contas';
     else if (path.startsWith('/tributacoes')) currentModule = 'tributacoes';
@@ -92,6 +97,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
       { module: 'cadastros', path: '/cadastros' },
       { module: 'produtos', path: '/produtos' },
       { module: 'pedidos', path: '/pedidos' },
+      { module: 'notas_fiscais', path: '/notas_fiscais' },
       { module: 'embalagens', path: '/embalagens' },
       { module: 'estoque', path: '/estoque' },
       { module: 'contas', path: '/contas' },
