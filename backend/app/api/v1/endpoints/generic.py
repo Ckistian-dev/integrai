@@ -2996,6 +2996,32 @@ def create_item(
 
     return registry["schema"].from_orm(item)
 
+# Helper seguro para rodar corotina assíncrona em endpoint síncrono
+def _exec_async_generic(coro, context_info=None):
+    try:
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
+        else:
+            return asyncio.run(coro)
+    except Exception as exc:
+        ctx = context_info or {}
+        log_error(
+            "GENERIC",
+            "pedidos",
+            "_exec_async_generic",
+            GenericErrorCode.TRIGGER_EXECUTION_FAILED,
+            f"Erro ao executar tarefa assíncrona: {exc}",
+            exc=exc,
+            context=ctx
+        )
+
 # --- Endpoint de Atualização em Lote (PUT) ---
 @router.put("/generic/{model_name}/batch-update")
 def batch_update_items(
@@ -3069,6 +3095,58 @@ def batch_update_items(
                 exc=e,
                 context={"empresa_id": current_user.id_empresa}
             )
+
+        # 🎯 Sincronização em lote com Marketplaces (Mercado Livre e Shopee)
+        if "situacao" in item_data or "status_intelipost" in item_data:
+            meli_svc = None
+            shopee_svc = None
+            for item in items:
+                is_ml_order = bool(
+                    getattr(item, 'meli_order_id', None) or 
+                    getattr(item, 'meli_pack_id', None) or 
+                    getattr(item, 'meli_shipment_id', None) or
+                    "mercado livre" in (item.origem_venda or "").lower() or
+                    "pedido ml:" in (item.observacao or "").lower() or
+                    "id ml:" in (item.observacao or "").lower()
+                )
+                if is_ml_order:
+                    try:
+                        if not meli_svc:
+                            from app.core.service.meli_service import MeliService
+                            meli_svc = MeliService(db, current_user.id_empresa)
+                        _exec_async_generic(meli_svc.update_meli_order_status(item), {"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)})
+                    except Exception as e:
+                        log_error(
+                            "GENERIC",
+                            "pedidos",
+                            "meli_batch_status_sync",
+                            MeliErrorCode.ORDER_SYNC_FAILED,
+                            f"Erro ao sincronizar status ML em lote para pedido #{item.id}: {e}",
+                            exc=e,
+                            context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                        )
+
+                is_shopee_order = bool(
+                    getattr(item, 'shopee_order_sn', None) or 
+                    "shopee" in (item.origem_venda or "").lower() or
+                    "pedido shopee" in (item.observacao or "").lower()
+                )
+                if is_shopee_order:
+                    try:
+                        if not shopee_svc:
+                            from app.core.service.shopee_service import ShopeeService
+                            shopee_svc = ShopeeService(db, current_user.id_empresa)
+                        shopee_svc.update_shopee_order_status(item, is_manual=False)
+                    except Exception as e:
+                        log_error(
+                            "GENERIC",
+                            "pedidos",
+                            "shopee_batch_status_sync",
+                            ShopeeErrorCode.ORDER_SYNC_FAILED,
+                            f"Erro ao sincronizar status Shopee em lote para pedido #{item.id}: {e}",
+                            exc=e,
+                            context={"empresa_id": current_user.id_empresa, "record_id": getattr(item, "id", None)}
+                        )
 
     return {"message": f"{len(items)} itens atualizados com sucesso."}
 
@@ -3515,7 +3593,7 @@ def update_item(
                 getattr(item, col, None) != old_val
                 for col, old_val in old_meli_rules_cols.items()
             )
-            status_ml_mudou = (old_situacao != item.situacao) or meli_rules_changed
+            status_ml_mudou = (old_situacao != item.situacao) or (old_intelipost_status != item.status_intelipost) or meli_rules_changed
             is_ml_order = bool(
                 getattr(item, 'meli_order_id', None) or 
                 getattr(item, 'meli_pack_id', None) or 

@@ -5478,9 +5478,10 @@ class NFeService:
                 )
             except Exception as e:
                 log_error(
-                    "NFE", "nfe_service", "inutilizar_numeracao", NfeErrorCode.NFE_ERRO_COMUNICACAO_SEFAZ,
+                    "NFE", "nfe_service", "inutilizar_numeracao", NfeErrorCode.SEFAZ_COMMUNICATION,
                     f"Falha de comunicação com SEFAZ ao inutilizar numeração: {str(e)}",
-                    {"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final}
+                    exc=e,
+                    context={"id_empresa": self.id_empresa, "serie": serie, "inicial": numero_inicial, "final": numero_final}
                 )
                 raise HTTPException(status_code=502, detail=f"Erro na comunicação com a SEFAZ: {str(e)}")
 

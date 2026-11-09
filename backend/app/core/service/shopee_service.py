@@ -1378,10 +1378,15 @@ class ShopeeService:
     def arrange_shipment(self, order_sn: str, pedido: models.Pedido = None) -> Dict[str, Any]:
         """
         Inicia o processo logístico/despacho de um pedido na Shopee (v2.logistics.ship_order):
-        1. Consulta parâmetros de envio via GET /api/v2/logistics/get_shipping_parameter
-        2. Dispara POST /api/v2/logistics/ship_order com dropoff, pickup ou non_integrated.
+        1. Valida se o pedido já foi processado ou despachado anteriormente.
+        2. Consulta parâmetros de envio via GET /api/v2/logistics/get_shipping_parameter.
+        3. Dispara POST /api/v2/logistics/ship_order com dropoff, pickup ou non_integrated conforme retornado.
         """
         try:
+            if pedido and getattr(pedido, 'shopee_order_status', None) in ['PROCESSED', 'SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED']:
+                logger.info(f"Pedido Shopee {order_sn} já está com status '{pedido.shopee_order_status}'. Despacho não precisa ser reagendado.")
+                return {"status": "success", "message": f"Pedido Shopee {order_sn} já foi processado/despachado ({pedido.shopee_order_status})."}
+
             access_token = self._get_valid_access_token()
             shop_id = str(self.config.shop_id)
             timestamp = int(time.time())
@@ -1400,10 +1405,35 @@ class ShopeeService:
             }
 
             resp_param = requests.get(url_param, params=params_param, timeout=15.0)
-            data_param = resp_param.json()
+            try:
+                data_param = resp_param.json()
+            except Exception:
+                data_param = {}
             
-            shipping_info = data_param.get("response", {}) if resp_param.status_code == 200 else {}
+            if resp_param.status_code != 200 or data_param.get("error"):
+                err_param = data_param.get("message") or data_param.get("error") or resp_param.text
+                logger.warning(f"Erro/Aviso ao consultar parâmetros de envio Shopee para {order_sn} (status={resp_param.status_code}): {err_param}")
+                return {
+                    "status": "warning",
+                    "message": f"Pedido Shopee {order_sn} não está pronto para despacho: {err_param}",
+                    "data": data_param
+                }
+
+            shipping_info = data_param.get("response", {}) if isinstance(data_param.get("response"), dict) else {}
             logger.info(f"Parâmetros de envio Shopee para {order_sn}: {shipping_info}")
+
+            # Avalia tipo de logística retornado pela Shopee
+            has_dropoff = "dropoff" in shipping_info or shipping_info.get("dropoff") is not None
+            has_pickup = "pickup" in shipping_info or shipping_info.get("pickup") is not None
+            has_non_integrated = "non_integrated" in shipping_info
+
+            if not (has_dropoff or has_pickup or has_non_integrated):
+                logger.warning(f"Nenhum método logístico (dropoff, pickup ou non_integrated) retornado pela Shopee para o pedido {order_sn}. Resposta: {data_param}")
+                return {
+                    "status": "warning",
+                    "message": f"Pedido Shopee {order_sn} não possui métodos de envio disponíveis no momento.",
+                    "data": data_param
+                }
 
             # 2. Monta payload do ship_order
             path_ship = "/api/v2/logistics/ship_order"
@@ -1427,45 +1457,45 @@ class ShopeeService:
 
             payload_ship = {"order_sn": str(order_sn)}
 
-            # Avalia tipo de logística retornado pela Shopee
-            has_dropoff = "dropoff" in shipping_info or shipping_info.get("dropoff") is not None
-            has_pickup = "pickup" in shipping_info or shipping_info.get("pickup") is not None
-            has_non_integrated = "non_integrated" in shipping_info
-
             if has_dropoff:
                 # Modalidade Postagem / Agência (Dropoff)
                 dropoff_payload = {}
-                branch_list = shipping_info.get("dropoff", {}).get("branch_list", [])
-                if branch_list:
-                    dropoff_payload["branch_id"] = branch_list[0].get("branch_id")
+                drop_dict = shipping_info.get("dropoff")
+                if isinstance(drop_dict, dict):
+                    branch_list = drop_dict.get("branch_list", [])
+                    if branch_list and isinstance(branch_list, list) and isinstance(branch_list[0], dict):
+                        dropoff_payload["branch_id"] = branch_list[0].get("branch_id")
                 payload_ship["dropoff"] = dropoff_payload
             elif has_pickup:
                 # Modalidade Coleta (Pickup)
-                pickup_info = shipping_info.get("pickup", {})
-                address_list = pickup_info.get("address_list", [])
+                pickup_info = shipping_info.get("pickup") if isinstance(shipping_info.get("pickup"), dict) else {}
                 pickup_payload = {}
-                if address_list:
+                address_list = pickup_info.get("address_list", [])
+                if address_list and isinstance(address_list, list) and isinstance(address_list[0], dict):
                     pickup_payload["address_id"] = address_list[0].get("address_id")
                 time_slot_list = pickup_info.get("time_slot_list", [])
-                if time_slot_list:
+                if time_slot_list and isinstance(time_slot_list, list) and isinstance(time_slot_list[0], dict):
                     pickup_payload["pickup_time_id"] = time_slot_list[0].get("pickup_time_id")
                 payload_ship["pickup"] = pickup_payload
             elif has_non_integrated:
                 payload_ship["non_integrated"] = {"tracking_number": str(tracking_code)}
-            else:
-                # Fallback padrão: Dropoff vazio
-                payload_ship["dropoff"] = {}
 
             logger.info(f"Disparando ship_order na Shopee para pedido {order_sn}: {payload_ship}")
             resp_ship = requests.post(url_ship, params=params_ship, json=payload_ship, timeout=20.0)
-            data_ship = resp_ship.json()
+            try:
+                data_ship = resp_ship.json()
+            except Exception:
+                data_ship = {}
             
             logger.info(f"Resposta ship_order Shopee ({order_sn}): status={resp_ship.status_code}, body={resp_ship.text}")
             
             if resp_ship.status_code == 200 and not data_ship.get("error"):
                 return {"status": "success", "message": "Despacho/envio agendado na Shopee com sucesso!", "data": data_ship}
+            elif "already" in str(data_ship).lower():
+                return {"status": "success", "message": "Despacho já constava como agendado na Shopee!", "data": data_ship}
             else:
                 err_msg = data_ship.get("message") or data_ship.get("error") or resp_ship.text
+                logger.warning(f"Aviso no agendamento de envio Shopee ({order_sn}): {err_msg}")
                 return {"status": "warning", "message": f"Aviso no agendamento de envio Shopee: {err_msg}", "data": data_ship}
 
         except Exception as e:
@@ -1707,9 +1737,26 @@ class ShopeeService:
         status_intelipost_str = str(getattr(pedido, 'status_intelipost', '') or '')
         
         # 1. Avaliação de Regras Customizadas da ShopeeConfiguracao
+        STATUS_HIERARCHY = {
+            'COMPLETED': 40,
+            'DELIVERED': 40,
+            'ENTREGUE': 40,
+            'FINALIZADO': 40,
+            'TO_CONFIRM_RECEIVE': 35,
+            'SHIPPED': 30,
+            'DESPACHADO': 30,
+            'EM TRANSITO': 30,
+            'PROCESSED': 25,
+            'READY_TO_SHIP': 20,
+            'FATURAMENTO': 20,
+            'EXPEDICAO': 20,
+            'EMBALAGEM': 20,
+        }
+
         target_shopee_status = target_status
         regras = getattr(self.config, 'regras_atualizacao_status', None) or []
         if not target_shopee_status and isinstance(regras, list):
+            matched_rules = []
             for regra in regras:
                 coluna = regra.get('coluna_pedido')
                 valor_esperado_norm = normalize_str(regra.get('valor_coluna', ''))
@@ -1734,23 +1781,47 @@ class ShopeeService:
                         matched = True
 
                     if matched:
-                        target_shopee_status = status_alvo_shopee
-                        logger.info(f"Regra Shopee casou! Coluna '{coluna}' = '{val_atual}' -> Status Shopee: '{target_shopee_status}'")
-                        break
+                        prio = STATUS_HIERARCHY.get(status_alvo_shopee.upper(), 10)
+                        matched_rules.append((prio, status_alvo_shopee, coluna, val_atual))
+
+            if matched_rules:
+                matched_rules.sort(key=lambda x: x[0], reverse=True)
+                target_shopee_status = matched_rules[0][1]
+                logger.info(f"Regra Shopee casou! Coluna '{matched_rules[0][2]}' = '{matched_rules[0][3]}' -> Status Shopee: '{target_shopee_status}'")
 
         # 2. Mapeamento Padrão
-        if not target_shopee_status:
-            sit_norm = normalize_str(situacao_str)
-            inteli_norm = normalize_str(status_intelipost_str)
-            
-            if sit_norm in ['finalizado', 'entregue', 'delivered', 'completed'] or inteli_norm in ['delivered', 'entregue']:
-                target_shopee_status = 'COMPLETED'
-            elif sit_norm in ['despachado', 'em transito', 'shipped', 'a caminho'] or inteli_norm in ['shipped', 'in_transit', 'in transit', 'out_for_delivery', 'despachado', 'em transito']:
-                target_shopee_status = 'SHIPPED'
-            elif sit_norm in ['faturamento', 'expedicao', 'embalagem', 'producao', 'ready_to_ship']:
-                target_shopee_status = 'READY_TO_SHIP'
+        default_status = None
+        sit_norm = normalize_str(situacao_str)
+        inteli_norm = normalize_str(status_intelipost_str)
+        
+        if sit_norm in ['finalizado', 'entregue', 'delivered', 'completed'] or inteli_norm in ['delivered', 'entregue']:
+            default_status = 'COMPLETED'
+        elif sit_norm in ['despachado', 'em transito', 'shipped', 'a caminho'] or inteli_norm in ['shipped', 'in_transit', 'in transit', 'out_for_delivery', 'despachado', 'em transito']:
+            default_status = 'SHIPPED'
+        elif sit_norm in ['faturamento', 'expedicao', 'embalagem', 'producao', 'ready_to_ship']:
+            default_status = 'READY_TO_SHIP'
+
+        if default_status:
+            default_prio = STATUS_HIERARCHY.get(default_status, 10)
+            target_prio = STATUS_HIERARCHY.get(target_shopee_status.upper() if target_shopee_status else '', 0)
+            if not target_shopee_status or default_prio > target_prio:
+                target_shopee_status = default_status
 
         logger.info(f"Status Shopee alvo determinado: {target_shopee_status} para pedido {order_sn}")
+
+        # Se o pedido já avançou para um status igual ou superior na Shopee e o gatilho for automático, não regride nem reexecuta
+        current_shopee_status = getattr(pedido, 'shopee_order_status', None) or ''
+        curr_prio = STATUS_HIERARCHY.get(current_shopee_status.upper(), 0)
+        target_prio = STATUS_HIERARCHY.get(target_shopee_status.upper() if target_shopee_status else '', 0)
+
+        if not is_manual and curr_prio >= target_prio and curr_prio >= 20:
+            logger.info(f"Pedido Shopee {order_sn} já está em '{current_shopee_status}' (nível {curr_prio}), que é igual ou superior ao status alvo '{target_shopee_status}' (nível {target_prio}). Nenhuma ação de despacho necessária.")
+            return {
+                "success": True,
+                "status": "success",
+                "message": f"Pedido Shopee {order_sn} já está em status igual ou superior ({current_shopee_status}).",
+                "target_status": target_shopee_status
+            }
 
         # 3. Execução das Ações de Envio/Entrega na Shopee
         ship_result = None
@@ -1799,7 +1870,13 @@ class ShopeeService:
 
         # C) Status de Preparação (READY_TO_SHIP)
         elif target_shopee_status in ['READY_TO_SHIP', 'ready_to_ship']:
-            ship_result = self.arrange_shipment(order_sn=order_sn, pedido=pedido)
+            # READY_TO_SHIP indica que o pedido está pronto para separação/preparação.
+            # Na Shopee, o pedido já se encontra em READY_TO_SHIP após a compensação do pagamento
+            # e validação da NF-e (INVOICE_PENDING -> READY_TO_SHIP).
+            # Não chamamos arrange_shipment (ship_order) aqui, pois ship_order é a ação de despacho
+            # (que move o pedido para PROCESSED/SHIPPED).
+            if not pedido.shopee_order_status or pedido.shopee_order_status in ['UNPAID', 'INVOICE_PENDING']:
+                pedido.shopee_order_status = 'READY_TO_SHIP'
 
         # 4. Sincroniza detalhes atuais do pedido via Shopee API (v2.order.get_order_detail)
         try:
@@ -1840,15 +1917,23 @@ class ShopeeService:
         except Exception:
             pass
 
+        is_success = True
+        final_status = "success"
         final_msg = "Status sincronizado com a Shopee com sucesso!"
         if delivery_result:
+            if not delivery_result.get("success"):
+                is_success = False
+                final_status = delivery_result.get("status") or "error"
             final_msg = delivery_result.get("message") or final_msg
         elif ship_result:
+            if ship_result.get("status") in ["warning", "error"]:
+                is_success = False
+                final_status = ship_result.get("status")
             final_msg = ship_result.get("message") or final_msg
 
         return {
-            "success": True,
-            "status": "success",
+            "success": is_success,
+            "status": final_status,
             "message": final_msg,
             "target_status": target_shopee_status,
             "shopee_order_status": getattr(pedido, 'shopee_order_status', None),

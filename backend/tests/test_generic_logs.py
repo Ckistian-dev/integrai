@@ -44,5 +44,28 @@ class TestGenericLogs(unittest.TestCase):
         self.assertTrue(res.get("success"))
         mock_log_info.assert_called()
 
+    @patch("app.core.service.elastic_email_service.log_info")
+    def test_elastic_email_send_trigger_emails_no_rules_skipped(self, mock_log_info):
+        import asyncio
+        from app.core.service.elastic_email_service import ElasticEmailService
+        
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+        
+        service = ElasticEmailService(mock_db, id_empresa=1)
+        mock_pedido = MagicMock()
+        mock_pedido.id = 8832
+
+        results = asyncio.run(service.send_trigger_emails(
+            pedido=mock_pedido,
+            situacao_de="Em Aberto",
+            situacao_para="Atendido",
+        ))
+        self.assertEqual(results, [])
+        mock_log_info.assert_called_once()
+        # Valida que o quarto argumento passado ao log_info é LogStatus.SKIPPED
+        args, kwargs = mock_log_info.call_args
+        self.assertEqual(args[3], LogStatus.SKIPPED)
+
 if __name__ == "__main__":
     unittest.main()

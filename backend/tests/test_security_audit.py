@@ -66,7 +66,8 @@ class TestSecurityAudit(unittest.TestCase):
         mock_user.perfil = "Vendedor"
         mock_user.permissoes = {"pedidos": {"acesso": True}}
 
-        for model in ["usuarios", "perfil", "empresas", "shopee_configuracoes", "intelipost_configuracoes"]:
+        # Tabelas estritamente administrativas ou de usuários: bloqueadas para leitura e escrita
+        for model in ["usuarios", "perfil", "shopee_configuracoes", "intelipost_configuracoes"]:
             with self.assertRaises(HTTPException) as ctx:
                 verify_model_access(model, "read", mock_user)
             self.assertEqual(ctx.exception.status_code, 403)
@@ -78,6 +79,58 @@ class TestSecurityAudit(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 verify_model_access(model, "delete", mock_user)
             self.assertEqual(ctx.exception.status_code, 403)
+
+        # Minha Empresa: criação, atualização e exclusão são bloqueadas para usuários sem permissão no módulo
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("empresas", "create", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("empresas", "update", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("empresas", "delete", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_rbac_operational_reference_models_read_allowed_but_edit_blocked(self):
+        """
+        Garante que dados de apoio (empresas, produtos, tributações, embalagens, cadastros)
+        podem ser lidos para rotinas operacionais (faturamento, pedidos, etiquetas),
+        mas qualquer tentativa de edição sem a respectiva permissão resulta em 403 Forbidden.
+        """
+        mock_user = MagicMock(spec=models.Usuario)
+        mock_user.perfil = "Operador"
+        # Usuário só tem acesso ao módulo de pedidos
+        mock_user.permissoes = {
+            "pedidos": {
+                "acesso": True,
+                "acoes": ["faturamento", "conferencia"]
+            }
+        }
+
+        # 1. Leitura é permitida para apoiar faturamento e visualização
+        verify_model_access("empresas", "read", mock_user)
+        verify_model_access("produtos", "read", mock_user)
+        verify_model_access("tributacoes", "read", mock_user)
+        verify_model_access("embalagens", "read", mock_user)
+        verify_model_access("cadastros", "read", mock_user)
+
+        # 2. Edição/criação/exclusão de empresa é estritamente bloqueada
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("empresas", "update", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        # 3. Edição/criação/exclusão de produtos é estritamente bloqueada
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("produtos", "update", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as ctx:
+            verify_model_access("produtos", "create", mock_user)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        # 4. Atualização de pedidos com ação operacional (faturamento/conferencia) é permitida
+        verify_model_access("pedidos", "update", mock_user)
 
     def test_rbac_admin_user_allowed_access(self):
         """Verifica se usuário com perfil admin possui acesso irrestrito aos modelos."""

@@ -1,0 +1,31 @@
+HTTP Request: GET http://testserver/test-unhandled-exception-endpoint "HTTP/1.1 500 Internal Server Error"
+Sucesso ao listar pedidos ML. Retornando 0 itens de um total de 0
+HTTP Request: GET http://testserver/api/v1/nfe/inutilizacoes?limit=50&offset=0 "HTTP/1.1 200 OK"
+HTTP Request: POST http://testserver/api/v1/nfe/inutilizar "HTTP/1.1 200 OK"
+[2026-11-09 08:39:15.761] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-100 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 100 | ano: 2026
+[2026-11-09 08:39:15.762] [WARNING] [NFE:nfe_service:inutilizar_numeracao] [SEFAZ retornou não homologado para inutilização: cStat 206 - Rejeicao: NF-e ja esta inutilizada na Base de Dados da SEFAZ] - {'id_empresa': 1, 'serie': 1, 'inicial': 100, 'final': 100, 'cstat': '206'}
+[2026-11-09 08:39:15.765] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_PROCESSING] - Transmitindo pedido de inutilização para SEFAZ: mod 55, série 1, faixa 100-102 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | ano: 2026
+[2026-11-09 08:39:15.766] [INFO] [NFE:nfe_service:inutilizar_numeracao] [STATUS_SUCCESS] - Inutilização homologada com sucesso (cStat 102): Prot 135260000000001 | id_empresa: 1 | serie: 1 | inicial: 100 | final: 102 | cstat: 102
+[ANTI-SSRF] Esquema inválido bloqueado: file em file:///etc/passwd
+[ANTI-SSRF] Esquema inválido bloqueado: file em file:///C:/backend/.env
+[ANTI-SSRF] Hostname bloqueado: 127.0.0.1
+[ANTI-SSRF] Hostname bloqueado: localhost
+[ANTI-SSRF] Hostname bloqueado: 169.254.169.254
+[ANTI-SSRF] IP privado/loopback bloqueado: 10.0.0.1
+[ANTI-SSRF] IP privado/loopback bloqueado: 192.168.1.1
+[ANTI-SSRF] IP privado/loopback bloqueado: 172.16.0.5
+[ANTI-SSRF] Esquema inválido bloqueado: gopher em gopher://localhost:70
+[ANTI-SSRF] Esquema inválido bloqueado: ftp em ftp://anonymous@internal.corp
+[ANTI-SSRF] Hostname bloqueado: metadata.google.internal
+HTTP Request: GET http://testserver/ "HTTP/1.1 200 OK"
+Iniciando sincronização de status para pedido Shopee 241012DCXHJUIKJ (ERP #<MagicMock name='mock.id_sequencial' id='1316807351312'>)
+Status Shopee alvo determinado: SHIPPED para pedido 241012DCXHJUIKJ
+Disparando update_tracking_status Shopee para 241012DCXHJUIKJ: {'order_sn': '241012DCXHJUIKJ', 'logistics_status': 'logistics_delivery_done', 'tracking_number': "<MagicMock name='mock.shopee_tracking_number' id='1316807487040'>", 'tracking_url': "<MagicMock name='mock.intelipost_tracking_url' id='1316807015696'>"}
+Resposta update_tracking_status Shopee (241012DCXHJUIKJ): status=200, body=<MagicMock name='post().text' id='1316807080176'>
+Disparando update_tracking_status Shopee para 241012DCXHJUIKJ: {'order_sn': '241012DCXHJUIKJ', 'logistics_status': 'logistics_delivery_done', 'tracking_number': "<MagicMock name='mock.shopee_tracking_number' id='1316807777392'>", 'tracking_url': "<MagicMock name='mock.intelipost_tracking_url' id='1316807785744'>"}
+Resposta update_tracking_status Shopee (241012DCXHJUIKJ): status=400, body=<MagicMock name='post().text' id='1316807853744'>
+[SHOPEE SSL] O pedido 241012DCXHJUIKJ utiliza Logística Integrada Oficial da Shopee (SPX/Correios). A Shopee não permite marcar como entregue manualmente via API; a confirmação é feita automaticamente pela transportadora oficial.
+Notificação (Webhook) recebida da Shopee: {'shop_id': 99999, 'code': 3, 'data': {'ordersn': '241012DCXHJUIKJ', 'status': 'SHIPPED'}}
+HTTP Request: POST http://testserver/api/v1/shopee/webhook "HTTP/1.1 200 OK"
+Notificação (Webhook) recebida da Shopee: {'shop_id': 99999, 'code': 3, 'data': {'ordersn': '241012DCXHJUIKJ', 'status': 'SHIPPED'}}
+HTTP Request: POST http://testserver/api/v1/shopee/webhook "HTTP/1.1 200 OK"

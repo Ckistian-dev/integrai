@@ -307,60 +307,144 @@ async def atualizar_status_pedido_ml(
     """
     pedido = db.query(models.Pedido).filter(
         models.Pedido.id_empresa == current_user.id_empresa,
-        models.Pedido.id_sequencial == pedido_id
+        (models.Pedido.id_sequencial == pedido_id) | (models.Pedido.id == pedido_id)
     ).first()
 
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
 
     service = MeliService(db, current_user.id_empresa)
-    if target_status:
-        situacao_str = pedido.situacao.value if hasattr(pedido.situacao, 'value') else str(pedido.situacao or "")
-        
-        # Resolução de link de rastreamento
-        final_tracking_url = tracking_url
-        if not final_tracking_url and service.config and getattr(service.config, 'campo_link_rastreio', None):
-            val_cfg = getattr(pedido, service.config.campo_link_rastreio, None)
-            if val_cfg and (str(val_cfg).startswith("http://") or str(val_cfg).startswith("https://")):
-                final_tracking_url = str(val_cfg).strip()
-        if not final_tracking_url:
-            final_tracking_url = getattr(pedido, 'intelipost_tracking_url', None)
+    success = await service.update_meli_order_status(pedido, target_status=target_status, is_manual=True)
+    return {
+        "success": success,
+        "message": f"Status atualizado para '{target_status or pedido.meli_status_envio}' no Mercado Livre com sucesso!" if success else "Não foi possível atualizar o status no Mercado Livre.",
+        "status_envio": pedido.meli_status_envio,
+        "historico": pedido.meli_historico
+    }
 
-        tracking = (
-            getattr(pedido, 'meli_tracking_number', None) or 
-            getattr(pedido, 'intelipost_tracking_code', None) or
-            getattr(pedido, 'numero_nf', None)
-        )
-        ml_order_ids = service._extract_ml_ids_from_pedido(pedido)
-        if not ml_order_ids:
-            raise HTTPException(status_code=400, detail="Nenhum ID do Mercado Livre associado a este pedido.")
-        
-        success = False
-        for m_id in ml_order_ids:
-            res = await service.update_shipment_status_by_order(
-                order_id_ml=m_id,
-                erp_status=situacao_str,
-                tracking_number=tracking,
-                target_ml_status=target_status,
-                pedido=pedido,
-                tracking_url=final_tracking_url
-            )
-            if res:
-                success = True
-        return {
-            "success": success,
-            "message": f"Status atualizado para '{target_status}' no Mercado Livre com sucesso!" if success else "Não foi possível atualizar o status no Mercado Livre.",
-            "status_envio": pedido.meli_status_envio,
-            "historico": pedido.meli_historico
-        }
+
+@router.post("/mercadolivre/pedidos/{pedido_id}/confirmar-entrega")
+async def confirmar_entrega_pedido_meli(
+    pedido_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Confirma expressamente a entrega de um pedido ME1 no Mercado Livre (status 'delivered').
+    """
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        (models.Pedido.id_sequencial == pedido_id) | (models.Pedido.id == pedido_id)
+    ).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    service = MeliService(db, current_user.id_empresa)
+    success = await service.update_meli_order_status(pedido, target_status="delivered", is_manual=True)
+    return {
+        "success": success,
+        "message": "Entrega confirmada no Mercado Livre com sucesso!" if success else "Não foi possível confirmar a entrega no Mercado Livre.",
+        "status_envio": pedido.meli_status_envio,
+        "historico": pedido.meli_historico
+    }
+
+
+@router.post("/mercadolivre/pedidos/confirmar-entrega-por-ml-id/{order_id_ml}")
+async def confirmar_entrega_por_ml_id(
+    order_id_ml: str,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Confirma a entrega de um envio ME1 diretamente pelo ID do Mercado Livre (order_id, pack_id ou shipment_id),
+    atualizando tanto o Mercado Livre quanto o pedido local no ERP caso localizado.
+    """
+    service = MeliService(db, current_user.id_empresa)
+    clean_id = str(order_id_ml).strip()
+    
+    # Tenta localizar o pedido correspondente no ERP
+    pedido = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        (models.Pedido.meli_order_id.ilike(f"%{clean_id}%")) |
+        (models.Pedido.meli_pack_id.ilike(f"%{clean_id}%")) |
+        (models.Pedido.meli_shipment_id == clean_id) |
+        (models.Pedido.observacao.ilike(f"%{clean_id}%"))
+    ).first()
+
+    if pedido:
+        success = await service.update_meli_order_status(pedido, target_status="delivered", is_manual=True)
     else:
-        success = await service.update_meli_order_status(pedido)
-        return {
-            "success": success,
-            "message": "Status sincronizado com o Mercado Livre com sucesso!" if success else "Não foi possível sincronizar o status no Mercado Livre.",
-            "status_envio": pedido.meli_status_envio,
-            "historico": pedido.meli_historico
-        }
+        success = await service.update_shipment_status_by_order(
+            order_id_ml=clean_id,
+            erp_status="Entregue",
+            target_ml_status="delivered"
+        )
+
+    return {
+        "success": success,
+        "message": f"Entrega do pedido ML #{clean_id} confirmada com sucesso!" if success else f"Falha ao confirmar entrega do pedido ML #{clean_id}.",
+        "pedido_id": getattr(pedido, 'id', None),
+        "status_envio": getattr(pedido, 'meli_status_envio', 'delivered' if success else None)
+    }
+
+
+@router.post("/mercadolivre/pedidos/sincronizar-entregas-pendentes")
+async def sincronizar_entregas_pendentes_meli(
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Varre todos os pedidos da empresa que são do Mercado Livre e já constam como Entregue/Finalizado
+    ou status_intelipost='DELIVERED'/'Entregue', mas ainda não foram finalizados como 'delivered' no Mercado Livre.
+    """
+    service = MeliService(db, current_user.id_empresa)
+    from sqlalchemy import or_
+
+    pedidos = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        or_(
+            models.Pedido.meli_order_id.isnot(None),
+            models.Pedido.meli_pack_id.isnot(None),
+            models.Pedido.meli_shipment_id.isnot(None),
+            models.Pedido.origem_venda.ilike("%mercado livre%"),
+            models.Pedido.observacao.ilike("%pedido ml%")
+        ),
+        or_(
+            models.Pedido.situacao.in_([models.PedidoSituacaoEnum.entregue]),
+            models.Pedido.status_intelipost.ilike("%delivered%"),
+            models.Pedido.status_intelipost.ilike("%entregue%")
+        ),
+        or_(
+            models.Pedido.meli_status_envio.is_(None),
+            ~models.Pedido.meli_status_envio.ilike("%delivered%")
+        )
+    ).all()
+
+    results = []
+    for ped in pedidos:
+        try:
+            ok = await service.update_meli_order_status(ped, target_status="delivered", is_manual=True)
+            results.append({
+                "pedido_id": ped.id,
+                "id_sequencial": ped.id_sequencial,
+                "meli_order_id": ped.meli_order_id,
+                "success": ok
+            })
+        except Exception as e:
+            results.append({
+                "pedido_id": ped.id,
+                "id_sequencial": ped.id_sequencial,
+                "success": False,
+                "error": str(e)
+            })
+
+    total_success = sum(1 for r in results if r.get("success"))
+    return {
+        "total_encontrados": len(pedidos),
+        "total_atualizados": total_success,
+        "detalhes": results
+    }
 
 
 @router.post("/mercadolivre/pedidos/{pedido_id}/enviar-rastreio")
@@ -376,7 +460,7 @@ async def enviar_rastreio_pedido_meli(
     """
     pedido = db.query(models.Pedido).filter(
         models.Pedido.id_empresa == current_user.id_empresa,
-        models.Pedido.id_sequencial == pedido_id
+        (models.Pedido.id_sequencial == pedido_id) | (models.Pedido.id == pedido_id)
     ).first()
 
     if not pedido:

@@ -97,7 +97,7 @@ class ElasticEmailService:
                 "EMAIL",
                 "elastic_email",
                 "send_trigger_emails",
-                LogStatus.INFO,
+                LogStatus.SKIPPED,
                 f"Nenhuma regra de e-mail encontrada para a transição '{situacao_de}' -> '{situacao_para}'",
                 context={"empresa_id": self.id_empresa}
             )
@@ -140,7 +140,7 @@ class ElasticEmailService:
                 "EMAIL",
                 "elastic_email",
                 "_send_for_regra",
-                EmailErrorCode.DISPATCH_FAILED,
+                EmailErrorCode.RECIPIENT_MISSING,
                 f"Pedido {pedido.id} sem e-mail de cliente. Regra '{regra.nome}' não enviada.",
                 context={"empresa_id": self.id_empresa}
             )
@@ -251,12 +251,14 @@ class ElasticEmailService:
                         "transaction_id": data.get("TransactionID"),
                     }
                 else:
+                    err_text = resp.text
+                    err_code = EmailErrorCode.PLAN_EXPIRED if "plan expired" in err_text.lower() else EmailErrorCode.DISPATCH_FAILED
                     log_error(
                         "EMAIL",
                         "elastic_email",
                         "_send_for_regra",
-                        EmailErrorCode.DISPATCH_FAILED,
-                        f"[EmailRegra '{regra.nome}'] Erro API Elastic Email: {resp.status_code} - {resp.text}",
+                        err_code,
+                        f"[EmailRegra '{regra.nome}'] Erro API Elastic Email: {resp.status_code} - {err_text}",
                         context={"empresa_id": self.id_empresa}
                     )
                     return {
@@ -320,7 +322,7 @@ class ElasticEmailService:
             "EMAIL",
             "elastic_email",
             "send_invoice_email",
-            LogStatus.INFO,
+            LogStatus.SKIPPED,
             f"Nenhuma regra de e-mail encontrada para o fluxo de NFe do pedido {pedido.id}. Nenhum e-mail enviado.",
             context={"empresa_id": self.id_empresa}
         )

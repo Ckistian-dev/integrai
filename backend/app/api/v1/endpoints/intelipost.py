@@ -178,11 +178,12 @@ async def _sync_meli_order_background(pedido_id: int, id_empresa: int, tracking_
                     return
 
                 meli_svc = MeliService(db_bg, id_empresa)
-                await meli_svc.update_meli_order_status(pedido)
+                sync_ok = await meli_svc.update_meli_order_status(pedido)
                 if tracking_url and not getattr(pedido, 'rastreio_enviado', False):
                     await meli_svc.send_meli_tracking_link(pedido, tracking_url)
 
-                _LAST_SYNCED_STATE[state_key] = current_state
+                if sync_ok is not False:
+                    _LAST_SYNCED_STATE[state_key] = current_state
             except Exception as e:
                 print(f"[INTELIPOST BG] Erro ao sincronizar status ML em background para pedido #{pedido_id}: {e}")
             finally:

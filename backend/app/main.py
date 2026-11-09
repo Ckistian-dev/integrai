@@ -1,5 +1,13 @@
 import os
 import logging
+import bcrypt
+
+# Compatibilidade passlib com bcrypt >= 4.0.0 (evita AttributeError: module 'bcrypt' has no attribute '__about__')
+if not hasattr(bcrypt, "__about__"):
+    class _BcryptAbout:
+        __version__ = getattr(bcrypt, "__version__", "4.0.1")
+    bcrypt.__about__ = _BcryptAbout()
+
 from fastapi import FastAPI, Response, status, Request
 from fastapi.responses import JSONResponse
 from app.api.v1.api import api_router as v1_router

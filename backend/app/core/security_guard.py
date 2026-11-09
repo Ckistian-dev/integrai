@@ -175,13 +175,31 @@ MODULE_MAP = {
     "email_regras": "integracoes"
 }
 
+# Modelos de apoio e referência operacional: leitura (read) é permitida para todos os
+# usuários autenticados da empresa (necessária para faturamento, visualização de pedidos,
+# cálculo tributário, impressão de etiquetas e autocomplete de itens).
+# AÇÕES DE ESCRITA (create, update, delete) nestes modelos CONTINUAM RIGIDAMENTE PROTEGIDAS
+# pelas permissões do módulo.
+OPERATIONAL_REFERENCE_MODELS = {
+    "empresas",
+    "produtos",
+    "embalagens",
+    "tributacoes",
+    "regras_tributarias",
+    "cadastros"
+}
+
 def verify_model_access(model_name: str, action: str, current_user: Any):
     """
     Garante que:
     1. Apenas usuários 'admin' acessem modelos estritamente administrativos e credenciais de integrações.
-    2. Operadores respeitem a matriz de permissões de módulo ('acesso' e 'acoes').
+    2. Modelos de apoio/referência (empresas, produtos, embalagens, tributações, cadastros) possam ser
+       lidos (read) por qualquer usuário autenticado da empresa para viabilizar faturamento, visualização
+       de pedidos e rotinas operacionais, mas bloqueia edição/criação/exclusão sem permissão explícita.
+    3. Operadores respeitem a matriz de permissões de módulo ('acesso' e 'acoes') para escrita e módulos restritos.
     """
     model_lower = model_name.lower().strip()
+    action_lower = action.lower().strip()
     user_profile = (getattr(current_user, "perfil", "") or "").lower()
     is_admin = (user_profile == "admin")
 
@@ -203,15 +221,65 @@ def verify_model_access(model_name: str, action: str, current_user: Any):
     if not isinstance(permissoes, dict):
         permissoes = {}
 
-    # Caso especial: Usuários e Minha Empresa requerem admin ou permissão explícita no módulo
-    if model_lower in ("usuarios", "empresas"):
-        mod_key = "usuarios" if model_lower == "usuarios" else "empresas"
-        if not (permissoes.get(mod_key, {}).get("acesso") is True):
+    # 3. Modelos de apoio/referência operacional: leitura permitida para todos os usuários da empresa
+    if action_lower == "read" and model_lower in OPERATIONAL_REFERENCE_MODELS:
+        return
+
+    # 4. Caso especial: Módulo 'empresas'
+    # Leitura já tratada acima (permitida).
+    # Criação e exclusão são exclusivas para administrador.
+    # Edição requer permissão explícita de edição no módulo 'empresas'.
+    if model_lower == "empresas":
+        if action_lower in ("create", "delete"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Acesso negado: o recurso '{model_name}' requer privilégios de Administrador."
+                detail="Acesso negado: apenas administradores podem criar ou excluir empresas."
             )
+        if action_lower == "update":
+            emp_perm = permissoes.get("empresas", {})
+            if not isinstance(emp_perm, dict) or not emp_perm.get("acesso"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Acesso negado: você não tem permissão para editar os dados da empresa."
+                )
+            acoes = emp_perm.get("acoes", [])
+            if isinstance(acoes, list) and len(acoes) > 0 and not any(a in acoes for a in ["edit", "editar", "update"]):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Acesso negado: você não tem permissão de edição no módulo 'empresas'."
+                )
+        return
 
+    # 5. Caso especial: Módulo 'usuarios'
+    # Requer permissão explícita no módulo 'usuarios'
+    if model_lower == "usuarios":
+        usr_perm = permissoes.get("usuarios", {})
+        if not isinstance(usr_perm, dict) or not usr_perm.get("acesso"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acesso negado: o recurso '{model_name}' requer privilégios de Administrador ou permissão em 'Usuários'."
+            )
+        if isinstance(usr_perm, dict):
+            acoes = usr_perm.get("acoes", [])
+            if isinstance(acoes, list) and len(acoes) > 0:
+                if action_lower == "delete" and not any(a in acoes for a in ["excluir", "deletar", "delete"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Acesso negado: você não tem permissão de exclusão no módulo 'usuarios'."
+                    )
+                if action_lower == "create" and not any(a in acoes for a in ["criar", "create"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Acesso negado: você não tem permissão de criação no módulo 'usuarios'."
+                    )
+                if action_lower == "update" and not any(a in acoes for a in ["editar", "edit", "update"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Acesso negado: você não tem permissão de edição no módulo 'usuarios'."
+                    )
+        return
+
+    # 6. Demais módulos via MODULE_MAP
     module_key = MODULE_MAP.get(model_lower)
     if module_key:
         if module_key in ("notas_fiscais", "nfe_rece_bidas"):
@@ -229,21 +297,33 @@ def verify_model_access(model_name: str, action: str, current_user: Any):
         if isinstance(mod_perm, dict):
             acoes = mod_perm.get("acoes", [])
             if isinstance(acoes, list) and len(acoes) > 0:
-                if action == "delete" and not any(a in acoes for a in ["excluir", "deletar", "delete"]):
+                if action_lower == "delete" and not any(a in acoes for a in ["excluir", "deletar", "delete"]):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail=f"Acesso negado: você não tem permissão de exclusão no módulo '{module_key}'."
                     )
-                if action == "create" and not any(a in acoes for a in ["criar", "create"]):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Acesso negado: você não tem permissão de criação no módulo '{module_key}'."
-                    )
-                if action == "update" and not any(a in acoes for a in ["editar", "edit", "update"]):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Acesso negado: você não tem permissão de edição no módulo '{module_key}'."
-                    )
+                if action_lower in ("create", "inutilizar"):
+                    allowed_create = ["criar", "create"]
+                    if module_key == "notas_fiscais":
+                        allowed_create.extend(["inutilizar", "faturamento"])
+                    if not any(a in acoes for a in allowed_create):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Acesso negado: você não tem permissão de criação no módulo '{module_key}'."
+                        )
+                if action_lower == "update":
+                    allowed_update = ["editar", "edit", "update"]
+                    if module_key == "pedidos":
+                        allowed_update.extend([
+                            "faturamento", "programar", "conferencia",
+                            "imprimir_etiqueta_volume", "imprimir_etiqueta",
+                            "devolucao", "complemento"
+                        ])
+                    if not any(a in acoes for a in allowed_update):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Acesso negado: você não tem permissão de edição no módulo '{module_key}'."
+                        )
 
 
 # ==============================================================================

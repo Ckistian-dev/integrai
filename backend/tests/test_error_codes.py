@@ -20,6 +20,12 @@ class TestErrorCodes(unittest.TestCase):
         self.assertTrue(DbErrorCode.INTEGRITY_VIOLATION.startswith("ERR_DB_"))
         self.assertTrue(SystemErrorCode.UNHANDLED_EXCEPTION.startswith("ERR_SYSTEM_"))
         self.assertTrue(LogStatus.SUCCESS.startswith("STATUS_"))
+        self.assertTrue(LogStatus.SKIPPED.startswith("STATUS_"))
+        self.assertTrue(LogStatus.INFO.startswith("STATUS_"))
+        self.assertTrue(NfeErrorCode.NFE_ERRO_COMUNICACAO_SEFAZ.startswith("ERR_NFE_"))
+        self.assertTrue(ShopeeErrorCode.ORDER_SYNC_FAILED.startswith("ERR_SHOPEE_"))
+        self.assertTrue(MeliErrorCode.ORDER_SYNC_FAILED.startswith("ERR_MELI_"))
+        self.assertTrue(MagentoErrorCode.ORDER_SYNC_FAILED.startswith("ERR_MAGENTO_"))
 
 if __name__ == "__main__":
     unittest.main()

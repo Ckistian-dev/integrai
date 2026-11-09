@@ -1559,7 +1559,10 @@ class MeliService:
         current = list(pedido.meli_historico) if isinstance(getattr(pedido, 'meli_historico', None), list) else []
         current.append(entry)
         pedido.meli_historico = current
-        flag_modified(pedido, "meli_historico")
+        try:
+            flag_modified(pedido, "meli_historico")
+        except Exception:
+            pass
         try:
             self.db.add(pedido)
             self.db.commit()
@@ -1747,18 +1750,21 @@ class MeliService:
             )
 
             # 8. Data do evento (ISO 8601 com timezone UTC 'Z')
+            # Recua 15 segundos para evitar qualquer rejeição de clock skew (data no futuro) pela API do Mercado Livre
             now_dt = datetime.now(timezone.utc)
-            date_iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            base_event_dt = now_dt - timedelta(seconds=15)
+            date_iso = base_event_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
             # Helper para chamada POST à V2 de seller_notifications
             url_v2 = f"{self.base_url}/v2/shipments/{shipment_id}/seller_notifications"
 
-            async def _send_notification(status_val: str, substatus_val: Optional[str], comment_val: str):
+            async def _send_notification(status_val: str, substatus_val: Optional[str], comment_val: str, custom_iso_date: Optional[str] = None):
+                target_date_iso = custom_iso_date or date_iso
                 payload_body = {
                     "payload": {
                         "service_id": int(service_id),
                         "comment": comment_val,
-                        "date": date_iso
+                        "date": target_date_iso
                     },
                     "status": status_val,
                     "substatus": substatus_val
@@ -1776,6 +1782,14 @@ class MeliService:
                     data_resp = resp.json()
                 except Exception:
                     data_resp = {"status_code": resp.status_code, "text": resp.text}
+
+                # Tratamento de status já atingido (idempotência amigável)
+                if not is_ok and resp.status_code in [400, 409]:
+                    resp_txt_lower = str(resp.text).lower()
+                    if "already" in resp_txt_lower or "delivered" in resp_txt_lower or "final" in resp_txt_lower:
+                        logger.info(f"Mercado Livre indicou que o envio {shipment_id} já se encontra no status '{status_val}'. Tratando como sucesso idempotente.")
+                        is_ok = True
+
                 return is_ok, data_resp
 
             # 9. Envio com respeito à sequência obrigatória
@@ -1783,14 +1797,15 @@ class MeliService:
             if target_macro == 'shipped' and target_substatus is not None:
                 if current_status != 'shipped':
                     logger.info(f"Envio {shipment_id} está em '{current_status}'. Enviando transição preliminar obrigatória 'shipped' (substatus: null)...")
-                    pre_ok, pre_resp = await _send_notification('shipped', None, "A caminho - Despachado para a transportadora")
+                    pre_shipped_iso = (base_event_dt - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    pre_ok, pre_resp = await _send_notification('shipped', None, "A caminho - Despachado para a transportadora", custom_iso_date=pre_shipped_iso)
                     if pedido:
                         self._add_meli_history_entry(pedido, {
                             "status": "shipped",
                             "substatus": None,
                             "nome_referencia": "A caminho",
                             "comentario": "Transição preliminar obrigatória: A caminho",
-                            "data_evento": date_iso,
+                            "data_evento": pre_shipped_iso,
                             "tracking_number": resolved_track_code if has_both_tracking else None,
                             "tracking_url": resolved_track_url if has_both_tracking else None,
                             "service_id": service_id,
@@ -1804,14 +1819,15 @@ class MeliService:
             elif target_macro in ['delivered', 'not_delivered']:
                 if current_status not in ['shipped', target_macro]:
                     logger.info(f"Envio {shipment_id} está em '{current_status}'. Enviando transição preliminar 'shipped' antes da finalização como '{target_macro}'...")
-                    pre_ok, pre_resp = await _send_notification('shipped', None, "A caminho - Em trânsito")
+                    pre_shipped_iso = (base_event_dt - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    pre_ok, pre_resp = await _send_notification('shipped', None, "A caminho - Em trânsito", custom_iso_date=pre_shipped_iso)
                     if pedido:
                         self._add_meli_history_entry(pedido, {
                             "status": "shipped",
                             "substatus": None,
                             "nome_referencia": "A caminho",
                             "comentario": "Transição preliminar antes da finalização",
-                            "data_evento": date_iso,
+                            "data_evento": pre_shipped_iso,
                             "tracking_number": resolved_track_code if has_both_tracking else None,
                             "tracking_url": resolved_track_url if has_both_tracking else None,
                             "service_id": service_id,
@@ -1859,6 +1875,8 @@ class MeliService:
                             pedido.data_entrega = now_dt.date()
                         if not pedido.data_finalizacao:
                             pedido.data_finalizacao = now_dt.date()
+                        if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'entregue'):
+                            pedido.situacao = models.PedidoSituacaoEnum.entregue
                     try:
                         self.db.add(pedido)
                         self.db.commit()
@@ -1896,11 +1914,12 @@ class MeliService:
                 except Exception:
                     pass
 
-    async def update_meli_order_status(self, pedido):
+    async def update_meli_order_status(self, pedido, target_status: Optional[str] = None, is_manual: bool = False):
         """
         Atualiza o status dos envios no Mercado Livre associados a um pedido do ERP.
         Utiliza os campos dedicados com fallback para parsing da observação.
-        Mapeia tanto a situacao do pedido quanto o status de rastreio (Intelipost/Transportadora).
+        Mapeia tanto a situacao do pedido quanto o status de rastreio (Intelipost/Transportadora)
+        com hierarquia de prioridades estrita para garantir transições corretas (ex: finalizado/entregue sobrepõe despachado).
         """
         import unicodedata
         
@@ -1940,10 +1959,45 @@ class MeliService:
                 tracking_link = str(tracking_number).strip()
             tracking_number = None
 
-        # 🎯 Avaliação estrita das regras configuradas em MeliStatusRulesInput
-        target_ml_status = None
+        # 1. Hierarquia de prioridades dos status Mercado Livre
+        STATUS_HIERARCHY_MELI = {
+            'DELIVERED': 40,
+            'ENTREGUE': 40,
+            'NOT_DELIVERED': 40,
+            'REFUSED_DELIVERY': 40,
+            'RETURNED': 40,
+            'RETURNING_TO_SENDER': 40,
+            'RETURNED_TO_SENDER': 40,
+            'OUT_FOR_DELIVERY': 35,
+            'SAIU_PARA_ENTREGA': 35,
+            'SOON_DELIVER': 34,
+            'AT_THE_DOOR': 33,
+            'RECEIVER_ABSENT': 32,
+            'BAD_ADDRESS': 32,
+            'DANGEROUS_AREA': 32,
+            'UNAUTHORIZED_RECEIVER': 32,
+            'IMPASSABLE_ZONE': 32,
+            'NOT_VISITED': 32,
+            'DOCUMENTATION_ISSUE': 31,
+            'TAXES_ISSUE': 31,
+            'FISCALIZATION_ISSUE': 31,
+            'SHIPPED': 30,
+            'DESPACHADO': 30,
+            'EM TRANSITO': 30,
+            'A CAMINHO': 30,
+            'HANDLING': 20,
+            'READY_TO_SHIP': 20,
+            'FATURAMENTO': 20,
+            'EXPEDICAO': 20,
+            'EMBALAGEM': 20,
+        }
+
+        target_ml_status = target_status
+
+        # 2. Avaliação de Regras Customizadas (MeliConfiguracao.regras_atualizacao_status) com hierarquia
         regras = getattr(self.config, 'regras_atualizacao_status', None) or []
-        if isinstance(regras, list):
+        if not target_ml_status and isinstance(regras, list):
+            matched_rules = []
             for regra in regras:
                 if not isinstance(regra, dict):
                     continue
@@ -1959,22 +2013,61 @@ class MeliService:
                     continue
 
                 val_atual_str = str(val_atual.value if hasattr(val_atual, 'value') else val_atual).strip()
-                val_esperado_str = str(valor_esperado).strip()
+                val_esperado_norm = normalize_str(valor_esperado)
+                val_atual_norm = normalize_str(val_atual_str)
                 
                 matched = False
-                if normalize_str(val_atual_str) == normalize_str(val_esperado_str):
+                if val_atual_norm == val_esperado_norm:
                     matched = True
-                elif hasattr(val_atual, 'name') and normalize_str(val_atual.name) == normalize_str(val_esperado_str):
+                elif hasattr(val_atual, 'name') and normalize_str(val_atual.name) == val_esperado_norm:
+                    matched = True
+                elif val_esperado_norm in ["entregue", "finalizado", "delivered", "completed", "concluido"] and val_atual_norm in ["entregue", "finalizado", "delivered", "completed", "concluido"]:
+                    matched = True
+                elif val_esperado_norm in ["saiu para entrega", "saiu_para_entrega", "out_for_delivery"] and val_atual_norm in ["saiu para entrega", "saiu_para_entrega", "out_for_delivery"]:
+                    matched = True
+                elif val_esperado_norm in ["em transito", "shipped", "despachado", "a caminho"] and val_atual_norm in ["em transito", "shipped", "despachado", "a caminho"]:
                     matched = True
 
                 if matched:
-                    target_ml_status = status_alvo_ml
-                    logger.info(f"Regra ML casou! Campo '{coluna}' = '{val_atual}' -> Status ML Alvo: '{target_ml_status}'")
-                    break
+                    prio = STATUS_HIERARCHY_MELI.get(status_alvo_ml.upper(), 10)
+                    matched_rules.append((prio, status_alvo_ml, coluna, val_atual))
+
+            if matched_rules:
+                matched_rules.sort(key=lambda x: x[0], reverse=True)
+                target_ml_status = matched_rules[0][1]
+                logger.info(f"Regra ML casou! Campo '{matched_rules[0][2]}' = '{matched_rules[0][3]}' -> Status ML Alvo: '{target_ml_status}' (prioridade {matched_rules[0][0]})")
+
+        # 3. Mapeamento Padrão de Fallback e Elevação de Prioridade
+        default_status = None
+        sit_norm = normalize_str(situacao_para_str)
+        inteli_norm = normalize_str(status_intelipost_str)
+        
+        if sit_norm in ['finalizado', 'entregue', 'delivered', 'completed'] or inteli_norm in ['delivered', 'entregue']:
+            default_status = 'delivered'
+        elif sit_norm in ['saiu para entrega', 'saiu_para_entrega', 'out_for_delivery'] or inteli_norm in ['out_for_delivery', 'saiu para entrega', 'saiu_para_entrega']:
+            default_status = 'out_for_delivery'
+        elif sit_norm in ['despachado', 'em transito', 'shipped', 'a caminho'] or inteli_norm in ['shipped', 'in_transit', 'in transit', 'despachado', 'em transito']:
+            default_status = 'shipped'
+
+        if default_status:
+            default_prio = STATUS_HIERARCHY_MELI.get(default_status.upper(), 10)
+            target_prio = STATUS_HIERARCHY_MELI.get(target_ml_status.upper() if target_ml_status else '', 0)
+            if not target_ml_status or default_prio > target_prio:
+                target_ml_status = default_status
+                logger.info(f"Mapeamento padrão ML aplicado: '{target_ml_status}' (situacao='{situacao_para_str}', status_intelipost='{status_intelipost_str}')")
 
         if not target_ml_status:
-            logger.debug(f"Nenhuma regra ML casou para o pedido ERP #{pedido.id}. Nenhuma atualização enviada ao Mercado Livre.")
+            logger.debug(f"Nenhuma regra ou mapeamento padrão ML casou para o pedido ERP #{pedido.id}. Nenhuma atualização enviada ao Mercado Livre.")
             return False
+
+        # 4. Prevenção de regressão de status (se automático)
+        current_meli_status = getattr(pedido, 'meli_status_envio', None) or ''
+        curr_prio = STATUS_HIERARCHY_MELI.get(current_meli_status.split('(')[0].strip().upper(), 0)
+        target_prio = STATUS_HIERARCHY_MELI.get(target_ml_status.split('(')[0].strip().upper(), 0)
+
+        if not is_manual and curr_prio >= target_prio and curr_prio >= 30:
+            logger.info(f"Pedido ERP #{pedido.id} já está em status ML '{current_meli_status}' (nível {curr_prio}), igual ou superior ao alvo '{target_ml_status}' (nível {target_prio}). Nenhuma ação necessária.")
+            return True
 
         logger.info(f"Enviando atualização ao Mercado Livre para pedido ERP #{pedido.id} -> IDs ML: {ml_order_ids} | Status ML Alvo: '{target_ml_status}'")
         
