@@ -165,6 +165,7 @@ async def _sync_meli_order_background(pedido_id: int, id_empresa: int, tracking_
                     return
 
                 current_state = (
+                    str(pedido.situacao or "").strip(),
                     str(pedido.status_intelipost or "").strip(),
                     str(pedido.intelipost_tracking_code or "").strip(),
                     str(pedido.intelipost_tracking_url or "").strip()
@@ -201,6 +202,7 @@ def _run_shopee_sync_sync(pedido_id: int, id_empresa: int, tracking_url: Optiona
             return
 
         current_state = (
+            str(pedido.situacao or "").strip(),
             str(pedido.status_intelipost or "").strip(),
             str(pedido.intelipost_tracking_code or "").strip(),
             str(pedido.intelipost_tracking_url or "").strip()
@@ -572,9 +574,24 @@ def _processar_webhook_intelipost(
     if any(s in state_str for s in ["DELIVERED", "ENTREGUE"]):
         if not pedido.data_finalizacao:
             pedido.data_finalizacao = ref_date
+        if not pedido.data_entrega:
+            pedido.data_entrega = ref_date
+        if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'entregue'):
+            pedido.situacao = models.PedidoSituacaoEnum.entregue
+    elif any(s in state_str for s in ["OUT_FOR_DELIVERY", "SAIU_PARA_ENTREGA", "SAIU PARA ENTREGA"]):
+        if pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+            if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'saiu_para_entrega'):
+                pedido.situacao = models.PedidoSituacaoEnum.saiu_para_entrega
     elif any(s in state_str for s in ["SHIPPED", "IN_TRANSIT", "TRANSITO", "DESPACHADO", "EM_TRANSITO"]):
         if not pedido.data_despacho:
             pedido.data_despacho = ref_date
+        if hasattr(models, 'PedidoSituacaoEnum') and pedido.situacao in [
+            models.PedidoSituacaoEnum.orcamento, models.PedidoSituacaoEnum.aprovacao,
+            models.PedidoSituacaoEnum.programacao, models.PedidoSituacaoEnum.producao,
+            models.PedidoSituacaoEnum.embalagem, models.PedidoSituacaoEnum.faturamento,
+            models.PedidoSituacaoEnum.expedicao
+        ]:
+            pedido.situacao = models.PedidoSituacaoEnum.despachado
 
     # Gravação no histórico apenas se a ocorrência não for duplicada
     if not is_exact_duplicate_in_history:
@@ -699,4 +716,69 @@ def buscar_transportadora_por_nome(
     return {
         "id": transportadora.id_sequencial if transportadora.id_sequencial is not None else transportadora.id,
         "nome_razao": transportadora.nome_razao
+    }
+
+@router.post("/intelipost/pedidos/sincronizar-entregas-pendentes")
+def sincronizar_entregas_pendentes_intelipost(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_active_user)
+):
+    """
+    Localiza pedidos cujo status_intelipost já é 'Entregue' ou 'DELIVERED', mas cuja situação no ERP
+    ainda não foi atualizada para 'Entregue', e atualiza a situação do pedido e datas de entrega/finalização.
+    Dispara também a sincronização em segundo plano para Mercado Livre e Shopee caso aplicável.
+    """
+    pedidos = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        or_(
+            models.Pedido.status_intelipost.ilike("%entregue%"),
+            models.Pedido.status_intelipost.ilike("%delivered%")
+        ),
+        models.Pedido.situacao != models.PedidoSituacaoEnum.entregue,
+        models.Pedido.situacao != models.PedidoSituacaoEnum.cancelado
+    ).all()
+
+    hoje = datetime.now().date()
+    atualizados = []
+
+    for ped in pedidos:
+        ped.situacao = models.PedidoSituacaoEnum.entregue
+        if not ped.data_finalizacao:
+            ped.data_finalizacao = hoje
+        if not ped.data_entrega:
+            ped.data_entrega = hoje
+
+        is_ml_order = bool(
+            getattr(ped, 'meli_order_id', None) or
+            getattr(ped, 'meli_pack_id', None) or
+            getattr(ped, 'meli_shipment_id', None) or
+            "mercado livre" in (ped.origem_venda or "").lower() or
+            "pedido ml:" in (ped.observacao or "").lower()
+        )
+        is_shopee_order = bool(
+            getattr(ped, 'shopee_order_sn', None) or
+            "shopee" in (ped.origem_venda or "").lower() or
+            "pedido shopee" in (ped.observacao or "").lower()
+        )
+
+        if is_ml_order:
+            background_tasks.add_task(_sync_meli_order_background, ped.id, current_user.id_empresa, None)
+        if is_shopee_order:
+            background_tasks.add_task(_sync_shopee_order_background, ped.id, current_user.id_empresa, None)
+
+        atualizados.append({
+            "id": ped.id,
+            "id_sequencial": ped.id_sequencial,
+            "status_intelipost": ped.status_intelipost,
+            "nova_situacao": ped.situacao.value if hasattr(ped.situacao, 'value') else str(ped.situacao)
+        })
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "total_encontrados": len(pedidos),
+        "total_atualizados": len(atualizados),
+        "pedidos_atualizados": atualizados
     }

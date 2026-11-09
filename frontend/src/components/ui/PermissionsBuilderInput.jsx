@@ -69,6 +69,7 @@ const SYSTEM_MODULES = [
         {key: 'Faturamento', label: 'Faturamento'},
         {key: 'Expedição', label: 'Expedição'},
         {key: 'Despachado', label: 'Despachado'},
+        {key: 'Entregue', label: 'Entregue'},
         {key: 'Cancelado', label: 'Cancelado'}
     ]
   },

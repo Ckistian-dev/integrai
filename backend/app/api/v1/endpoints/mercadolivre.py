@@ -395,13 +395,44 @@ async def sincronizar_entregas_pendentes_meli(
     current_user: models.Usuario = Depends(get_current_active_user)
 ):
     """
-    Varre todos os pedidos da empresa que são do Mercado Livre e já constam como Entregue/Finalizado
-    ou status_intelipost='DELIVERED'/'Entregue', mas ainda não foram finalizados como 'delivered' no Mercado Livre.
+    Sincroniza bidirecionalmente as entregas do Mercado Livre:
+    1. Pedidos do ML já entregues no Mercado Livre (meli_status_envio='delivered') cuja situação local ainda não seja 'Entregue' são atualizados para situacao='Entregue'.
+    2. Pedidos do ML já entregues localmente (situacao='Entregue' ou status_intelipost='Entregue') cujo status no ML ainda não seja 'delivered' são transmitidos ao Mercado Livre.
     """
     service = MeliService(db, current_user.id_empresa)
     from sqlalchemy import or_
 
-    pedidos = db.query(models.Pedido).filter(
+    hoje = datetime.now().date()
+
+    # 1. Pedidos entregues no ML que precisam ser atualizados localmente no ERP
+    pedidos_locais_a_atualizar = db.query(models.Pedido).filter(
+        models.Pedido.id_empresa == current_user.id_empresa,
+        or_(
+            models.Pedido.meli_order_id.isnot(None),
+            models.Pedido.meli_pack_id.isnot(None),
+            models.Pedido.meli_shipment_id.isnot(None),
+            models.Pedido.origem_venda.ilike("%mercado livre%"),
+            models.Pedido.observacao.ilike("%pedido ml%")
+        ),
+        models.Pedido.meli_status_envio.ilike("%delivered%"),
+        models.Pedido.situacao != models.PedidoSituacaoEnum.entregue,
+        models.Pedido.situacao != models.PedidoSituacaoEnum.cancelado
+    ).all()
+
+    total_locais_atualizados = 0
+    for ped in pedidos_locais_a_atualizar:
+        ped.situacao = models.PedidoSituacaoEnum.entregue
+        if not ped.data_finalizacao:
+            ped.data_finalizacao = hoje
+        if not ped.data_entrega:
+            ped.data_entrega = hoje
+        total_locais_atualizados += 1
+
+    if total_locais_atualizados > 0:
+        db.commit()
+
+    # 2. Pedidos entregues localmente/transportadora que precisam ser enviados ao ML
+    pedidos_ml_a_transmitir = db.query(models.Pedido).filter(
         models.Pedido.id_empresa == current_user.id_empresa,
         or_(
             models.Pedido.meli_order_id.isnot(None),
@@ -422,7 +453,7 @@ async def sincronizar_entregas_pendentes_meli(
     ).all()
 
     results = []
-    for ped in pedidos:
+    for ped in pedidos_ml_a_transmitir:
         try:
             ok = await service.update_meli_order_status(ped, target_status="delivered", is_manual=True)
             results.append({
@@ -441,8 +472,10 @@ async def sincronizar_entregas_pendentes_meli(
 
     total_success = sum(1 for r in results if r.get("success"))
     return {
-        "total_encontrados": len(pedidos),
-        "total_atualizados": total_success,
+        "total_encontrados": len(pedidos_ml_a_transmitir) + len(pedidos_locais_a_atualizar),
+        "total_atualizados": total_success + total_locais_atualizados,
+        "total_locais_atualizados": total_locais_atualizados,
+        "total_ml_transmitidos": total_success,
         "detalhes": results
     }
 

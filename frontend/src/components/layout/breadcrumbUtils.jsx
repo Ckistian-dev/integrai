@@ -138,7 +138,9 @@ export const isPathAccessible = (path, user) => {
     const parts = cleanPath.split('/');
     const statusFilter = parts[2];
     if (statusFilter && statusFilter !== 'Todos' && perm.subpaginas) {
-      return perm.subpaginas.includes(decodeURIComponent(statusFilter));
+      const decoded = decodeURIComponent(statusFilter);
+      if (decoded === 'Entregue' && (perm.subpaginas.includes('Despachado') || perm.subpaginas.includes('Todos'))) return true;
+      return perm.subpaginas.includes(decoded);
     }
     return true;
   }

@@ -80,6 +80,9 @@ const MainLayout = () => {
     if (!modulePerms || modulePerms.acesso === false) return false;
     if (!modulePerms.subpaginas || !Array.isArray(modulePerms.subpaginas) || modulePerms.subpaginas.length === 0) return true;
 
+    // Se o usuário já tiver permissão para 'Despachado' ou 'Todos', libera também 'Entregue' por padrão
+    if (module === 'pedidos' && subpageName === 'Entregue' && (modulePerms.subpaginas.includes('Despachado') || modulePerms.subpaginas.includes('Todos'))) return true;
+
     return modulePerms.subpaginas.includes(subpageName);
   };
 
@@ -158,7 +161,7 @@ const MainLayout = () => {
     { name: 'Faturamento', path: '/pedidos/Faturamento' },
     { name: 'Expedição', path: '/pedidos/Expedição' },
     { name: 'Despachado', path: '/pedidos/Despachado' },
-    
+    { name: 'Entregue', path: '/pedidos/Entregue' },
     { name: 'Cancelado', path: '/pedidos/Cancelado' },
     { name: 'Todos', path: '/pedidos/Todos' },
   ], []); // Array de dependência vazio, é estático
@@ -570,7 +573,7 @@ const MainLayout = () => {
 
                   {/* Submenu da Pipeline (Acordeão) */}
                   <div
-                    className={`transition-all duration-300 ease-in-out overflow-hidden ${(isPipelineOpen && isExpanded) ? 'max-h-[500px]' : 'max-h-0'
+                    className={`transition-all duration-300 ease-in-out overflow-hidden ${(isPipelineOpen && isExpanded) ? 'max-h-[600px]' : 'max-h-0'
                       } ${isExpanded ? 'pl-10' : 'pl-0'}`} // Ajusta o recuo quando expandido
                   >
                     <div className="flex flex-col space-y-1 pt-2">

@@ -276,6 +276,197 @@ class TestMeliDeliveryStatus(unittest.TestCase):
             finally:
                 loop.close()
 
+    def test_process_meli_webhook_delivered_updates_situacao(self):
+        """Verifica que o webhook do Mercado Livre atualiza pedido.situacao para 'Entregue'."""
+        svc = MeliService(self.mock_db, self.id_empresa)
+        pedido = MagicMock(spec=models.Pedido)
+        pedido.id = 601
+        pedido.situacao = models.PedidoSituacaoEnum.despachado
+        pedido.meli_status_envio = "shipped"
+        pedido.meli_shipment_id = "48351911188"
+        pedido.meli_tracking_number = None
+        pedido.meli_logistic_type = None
+        pedido.meli_historico = []
+        pedido.data_finalizacao = None
+        pedido.data_entrega = None
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = pedido
+        self.mock_db.query.return_value = mock_query
+
+        mock_client = AsyncMock()
+        mock_ship_resp = MagicMock()
+        mock_ship_resp.status_code = 200
+        mock_ship_resp.json.return_value = {
+            "id": 48351911188,
+            "order_id": 2000015711968005,
+            "status": "delivered",
+            "substatus": None,
+            "tracking_number": "869838889",
+            "logistic_type": "custom"
+        }
+        mock_client.get.return_value = mock_ship_resp
+
+        with patch.object(svc, "get_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                res = loop.run_until_complete(svc.process_meli_webhook("shipments", "/shipments/48351911188"))
+                self.assertEqual(res.get("status"), "success")
+                self.assertEqual(pedido.situacao, models.PedidoSituacaoEnum.entregue)
+                self.assertEqual(pedido.meli_status_envio, "delivered")
+                self.assertIsNotNone(pedido.data_finalizacao)
+                self.assertIsNotNone(pedido.data_entrega)
+            finally:
+                loop.close()
+
+    def test_process_meli_webhook_out_for_delivery_updates_situacao(self):
+        """Verifica que o webhook do ML com substatus 'out_for_delivery' atualiza situacao para saiu_para_entrega."""
+        svc = MeliService(self.mock_db, self.id_empresa)
+        pedido = MagicMock(spec=models.Pedido)
+        pedido.id = 602
+        pedido.situacao = models.PedidoSituacaoEnum.despachado
+        pedido.meli_status_envio = "shipped"
+        pedido.meli_shipment_id = "48351911188"
+        pedido.meli_tracking_number = None
+        pedido.meli_logistic_type = None
+        pedido.meli_historico = []
+        pedido.data_despacho = None
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = pedido
+        self.mock_db.query.return_value = mock_query
+
+        mock_client = AsyncMock()
+        mock_ship_resp = MagicMock()
+        mock_ship_resp.status_code = 200
+        mock_ship_resp.json.return_value = {
+            "id": 48351911188,
+            "order_id": 2000015711968005,
+            "status": "shipped",
+            "substatus": "out_for_delivery",
+            "tracking_number": "869838889",
+            "logistic_type": "custom"
+        }
+        mock_client.get.return_value = mock_ship_resp
+
+        with patch.object(svc, "get_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                res = loop.run_until_complete(svc.process_meli_webhook("shipments", "/shipments/48351911188"))
+                self.assertEqual(res.get("status"), "success")
+                self.assertEqual(pedido.situacao, models.PedidoSituacaoEnum.saiu_para_entrega)
+                self.assertEqual(pedido.meli_status_envio, "shipped (out_for_delivery)")
+            finally:
+                loop.close()
+
+    def test_intelipost_webhook_delivered_updates_situacao(self):
+        """Verifica que o webhook da Intelipost com DELIVERED atualiza situacao para 'Entregue'."""
+        from app.api.v1.endpoints.intelipost import _processar_webhook_intelipost
+        pedido = MagicMock(spec=models.Pedido)
+        pedido.id = 701
+        pedido.id_empresa = 1
+        pedido.id_pedido_intelipost = "VAR701N"
+        pedido.situacao = models.PedidoSituacaoEnum.despachado
+        pedido.status_intelipost = "Saiu para entrega"
+        pedido.intelipost_tracking_code = "869838889"
+        pedido.intelipost_tracking_url = "https://track.example.com"
+        pedido.intelipost_historico = []
+        pedido.data_finalizacao = None
+        pedido.data_entrega = None
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = pedido
+        self.mock_db.query.return_value = mock_query
+
+        payload = {
+            "order_number": "VAR701N",
+            "status": "Entregue",
+            "history": {
+                "shipment_order_volume_state": "DELIVERED",
+                "shipment_order_volume_state_localized": "Entregue",
+                "event_date_iso": "2026-11-09T10:00:00Z"
+            }
+        }
+        mock_request = MagicMock()
+        mock_bg = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id_empresa = 1
+
+        with patch("app.api.v1.endpoints.intelipost.flag_modified"):
+            res = _processar_webhook_intelipost(
+                request=mock_request,
+                background_tasks=mock_bg,
+                payload=payload,
+                db=self.mock_db,
+                current_user=mock_user
+            )
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(pedido.situacao, models.PedidoSituacaoEnum.entregue)
+        self.assertEqual(pedido.status_intelipost, "Entregue")
+        self.assertIsNotNone(pedido.data_finalizacao)
+        self.assertIsNotNone(pedido.data_entrega)
+
+    def test_update_shipment_status_already_delivered_in_ml_updates_situacao(self):
+        """Verifica que se o envio já consta como 'delivered' no Mercado Livre, o ERP sincroniza situacao para 'Entregue'."""
+        svc = MeliService(self.mock_db, self.id_empresa)
+        svc.config = MagicMock()
+        svc.config.campo_link_rastreio = None
+
+        pedido = MagicMock(spec=models.Pedido)
+        pedido.id = 801
+        pedido.situacao = models.PedidoSituacaoEnum.despachado
+        pedido.meli_order_id = "2000015711968005"
+        pedido.meli_shipment_id = "48351911188"
+        pedido.meli_status_envio = "shipped"
+        pedido.meli_historico = []
+        pedido.data_entrega = None
+        pedido.data_finalizacao = None
+
+        mock_client = AsyncMock()
+        mock_ship_get = MagicMock()
+        mock_ship_get.status_code = 200
+        mock_ship_get.json.return_value = {
+            "id": 48351911188,
+            "mode": "me1",
+            "status": "delivered",
+            "substatus": None,
+            "site_id": "MLB"
+        }
+        mock_client.get.return_value = mock_ship_get
+
+        with patch.object(svc, "get_client", new_callable=AsyncMock) as mock_get_client, \
+             patch.object(svc, "_resolve_all_ml_ids", new_callable=AsyncMock) as mock_res_ids:
+            mock_get_client.return_value = mock_client
+            mock_res_ids.return_value = {"shipment_id": "48351911188", "order_id": "2000015711968005"}
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                res = loop.run_until_complete(
+                    svc.update_shipment_status_by_order(
+                        order_id_ml="48351911188",
+                        erp_status="Entregue",
+                        target_ml_status="delivered",
+                        pedido=pedido
+                    )
+                )
+                self.assertTrue(res)
+                # Como já estava 'delivered' no ML, não precisa fazer novo POST, mas DEVE sincronizar o pedido local para 'Entregue'
+                self.assertEqual(pedido.situacao, models.PedidoSituacaoEnum.entregue)
+                self.assertEqual(pedido.meli_status_envio, "delivered")
+                self.assertIsNotNone(pedido.data_entrega)
+                self.assertIsNotNone(pedido.data_finalizacao)
+            finally:
+                loop.close()
+
 if __name__ == "__main__":
     unittest.main()
+
 

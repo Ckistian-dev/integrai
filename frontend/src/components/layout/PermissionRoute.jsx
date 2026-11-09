@@ -147,6 +147,7 @@ const PermissionRoute = ({ children, module: propModule }) => {
           !Array.isArray(modulePerms.subpaginas) || 
           modulePerms.subpaginas.length === 0 ||
           modulePerms.subpaginas.includes(requiredSubpage) ||
+          (currentModule === 'pedidos' && requiredSubpage === 'Entregue' && (modulePerms.subpaginas.includes('Despachado') || modulePerms.subpaginas.includes('Todos'))) ||
           (requiredSubpage === 'DF-e' && permissions['nfe_rece_bidas']?.acesso);
 
         if (!hasModuleAccess || !hasSubpageAccess) {

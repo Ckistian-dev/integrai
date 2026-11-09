@@ -3070,12 +3070,19 @@ def batch_update_items(
                         pass
                 setattr(item, key, val_to_set)
 
-    # 🎯 Lógica específica: Preencher data_despacho se estiver despachando pedidos
-    if model_name == "pedidos" and item_data.get("situacao") in ["Despachado", models.PedidoSituacaoEnum.despachado]:
+    # 🎯 Lógica específica: Preencher data_despacho ou data_entrega/data_finalizacao se estiver atualizando situação de pedidos
+    if model_name == "pedidos":
         hoje = datetime.now(TZ_BR).date()
-        for item in items:
-            if getattr(item, "data_despacho", None) is None:
-                setattr(item, "data_despacho", hoje)
+        if item_data.get("situacao") in ["Despachado", models.PedidoSituacaoEnum.despachado]:
+            for item in items:
+                if getattr(item, "data_despacho", None) is None:
+                    setattr(item, "data_despacho", hoje)
+        elif item_data.get("situacao") in ["Entregue", models.PedidoSituacaoEnum.entregue]:
+            for item in items:
+                if getattr(item, "data_entrega", None) is None:
+                    setattr(item, "data_entrega", hoje)
+                if getattr(item, "data_finalizacao", None) is None:
+                    setattr(item, "data_finalizacao", hoje)
                 
     db.commit()
 
@@ -3380,9 +3387,14 @@ def update_item(
                         detail="O pedido não pode ser movido para Expedição pois ainda não foi criado na Intelipost. Realize o faturamento/integração primeiro."
                     )
         
-        # Lógica específica: Preencher data_despacho ao despachar
+        # Lógica específica: Preencher data_despacho ou data_entrega/data_finalizacao ao mudar situação
         if new_situacao_from_payload == models.PedidoSituacaoEnum.despachado and db_obj.data_despacho is None:
             item_data["data_despacho"] = datetime.now(TZ_BR).date()
+        elif new_situacao_from_payload == models.PedidoSituacaoEnum.entregue:
+            if db_obj.data_entrega is None:
+                item_data["data_entrega"] = datetime.now(TZ_BR).date()
+            if db_obj.data_finalizacao is None:
+                item_data["data_finalizacao"] = datetime.now(TZ_BR).date()
 
     # 🎯 LÓGICA ESPECÍFICA: Validação de Plano de Contas vs Tipo de Conta
     if model_name == "contas":

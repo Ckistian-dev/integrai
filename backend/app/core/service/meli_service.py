@@ -1646,9 +1646,33 @@ class MeliService:
             if pedido:
                 pedido.meli_shipment_id = str(shipment_id)
                 if current_status:
-                    pedido.meli_status_envio = str(current_status)
+                    status_display = current_status if not current_substatus else f"{current_status} ({current_substatus})"
+                    pedido.meli_status_envio = str(status_display)
                 if logistic_type and not pedido.meli_logistic_type:
                     pedido.meli_logistic_type = str(logistic_type)
+
+                # Sincroniza situacao caso o status no ML já esteja em estágio avançado
+                if current_status == 'delivered':
+                    if not pedido.data_entrega:
+                        pedido.data_entrega = datetime.now(timezone.utc).date()
+                    if not pedido.data_finalizacao:
+                        pedido.data_finalizacao = datetime.now(timezone.utc).date()
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'entregue'):
+                        pedido.situacao = models.PedidoSituacaoEnum.entregue
+                elif current_substatus == 'out_for_delivery' and pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'saiu_para_entrega'):
+                        pedido.situacao = models.PedidoSituacaoEnum.saiu_para_entrega
+                elif current_status in ['shipped', 'in_transit']:
+                    if not pedido.data_despacho:
+                        pedido.data_despacho = datetime.now(timezone.utc).date()
+                    if hasattr(models, 'PedidoSituacaoEnum') and pedido.situacao in [
+                        models.PedidoSituacaoEnum.orcamento, models.PedidoSituacaoEnum.aprovacao,
+                        models.PedidoSituacaoEnum.programacao, models.PedidoSituacaoEnum.producao,
+                        models.PedidoSituacaoEnum.embalagem, models.PedidoSituacaoEnum.faturamento,
+                        models.PedidoSituacaoEnum.expedicao
+                    ]:
+                        pedido.situacao = models.PedidoSituacaoEnum.despachado
+
                 try:
                     self.db.add(pedido)
                     self.db.commit()
@@ -1703,6 +1727,18 @@ class MeliService:
             # 5. Validação de transições finais e irreversíveis
             if current_status == 'delivered':
                 logger.info(f"Envio {shipment_id} já está finalizado como 'delivered' (irreversível). Nenhuma alteração permitida.")
+                if pedido and pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'entregue'):
+                        pedido.situacao = models.PedidoSituacaoEnum.entregue
+                    if not pedido.data_entrega:
+                        pedido.data_entrega = datetime.now(timezone.utc).date()
+                    if not pedido.data_finalizacao:
+                        pedido.data_finalizacao = datetime.now(timezone.utc).date()
+                    try:
+                        self.db.add(pedido)
+                        self.db.commit()
+                    except Exception:
+                        pass
                 return True
 
             if current_status == 'not_delivered':
@@ -1870,6 +1906,16 @@ class MeliService:
                     if target_macro == 'shipped':
                         if not pedido.data_despacho:
                             pedido.data_despacho = now_dt.date()
+                        if target_substatus == 'out_for_delivery' and pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+                            if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'saiu_para_entrega'):
+                                pedido.situacao = models.PedidoSituacaoEnum.saiu_para_entrega
+                        elif hasattr(models, 'PedidoSituacaoEnum') and pedido.situacao in [
+                            models.PedidoSituacaoEnum.orcamento, models.PedidoSituacaoEnum.aprovacao,
+                            models.PedidoSituacaoEnum.programacao, models.PedidoSituacaoEnum.producao,
+                            models.PedidoSituacaoEnum.embalagem, models.PedidoSituacaoEnum.faturamento,
+                            models.PedidoSituacaoEnum.expedicao
+                        ]:
+                            pedido.situacao = models.PedidoSituacaoEnum.despachado
                     elif target_macro == 'delivered':
                         if not pedido.data_entrega:
                             pedido.data_entrega = now_dt.date()
@@ -2385,15 +2431,30 @@ class MeliService:
                 if logistic_type and not pedido.meli_logistic_type:
                     pedido.meli_logistic_type = str(logistic_type)
 
-                # Atualiza datas de despacho / entrega
-                if ml_status in ['shipped', 'in_transit']:
-                    if not pedido.data_despacho:
-                        pedido.data_despacho = datetime.now(timezone.utc).date()
-                elif ml_status in ['delivered']:
+                # Atualiza datas de despacho / entrega e situação do pedido
+                if ml_status in ['delivered']:
                     if not pedido.data_finalizacao:
                         pedido.data_finalizacao = datetime.now(timezone.utc).date()
                     if not pedido.data_entrega:
                         pedido.data_entrega = datetime.now(timezone.utc).date()
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'entregue'):
+                        pedido.situacao = models.PedidoSituacaoEnum.entregue
+                elif ml_substatus == 'out_for_delivery' and pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'saiu_para_entrega'):
+                        pedido.situacao = models.PedidoSituacaoEnum.saiu_para_entrega
+                elif ml_status in ['shipped', 'in_transit']:
+                    if not pedido.data_despacho:
+                        pedido.data_despacho = datetime.now(timezone.utc).date()
+                    if hasattr(models, 'PedidoSituacaoEnum') and pedido.situacao in [
+                        models.PedidoSituacaoEnum.orcamento, models.PedidoSituacaoEnum.aprovacao,
+                        models.PedidoSituacaoEnum.programacao, models.PedidoSituacaoEnum.producao,
+                        models.PedidoSituacaoEnum.embalagem, models.PedidoSituacaoEnum.faturamento,
+                        models.PedidoSituacaoEnum.expedicao
+                    ]:
+                        pedido.situacao = models.PedidoSituacaoEnum.despachado
+                elif ml_status in ['cancelled'] and pedido.situacao != getattr(models.PedidoSituacaoEnum, 'entregue', None):
+                    if hasattr(models, 'PedidoSituacaoEnum') and hasattr(models.PedidoSituacaoEnum, 'cancelado'):
+                        pedido.situacao = models.PedidoSituacaoEnum.cancelado
 
                 # Registra no histórico de eventos do Mercado Livre (similar ao webhook da Intelipost)
                 ref_name = self._get_status_ref_name(str(ml_status), str(ml_substatus) if ml_substatus else None)

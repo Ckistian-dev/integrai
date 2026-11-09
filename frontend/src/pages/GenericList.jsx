@@ -276,6 +276,16 @@ const statusChangeActions = {
       modalConfirmText: "Sim, Despachar"
     },
     {
+      currentStatus: "Despachado",
+      newStatus: "Entregue",
+      buttonLabel: "Entregar",
+      buttonIcon: CheckCircle,
+      buttonClasses: "bg-emerald-600 hover:bg-emerald-700",
+      modalTitle: "Confirmar Entrega do Pedido",
+      modalDescription: "Deseja marcar este pedido como Entregue? Isso registrará a entrega no ERP e sincronizará com Mercado Livre e Shopee.",
+      modalConfirmText: "Sim, Marcar Entregue"
+    },
+    {
       currentStatus: "Nota Fiscal",
       newStatus: "Despachado", // Ajustado de Finalizado para Despachado
       buttonLabel: "Corrigir NFE",
@@ -1355,6 +1365,10 @@ const GenericList = () => {
       const payload = { situacao: newStatus };
       if (newStatus === 'Despachado') {
         payload.data_despacho = new Date().toISOString().split('T')[0]; // Current date in YYYY-MM-DD format
+      } else if (newStatus === 'Entregue') {
+        const today = new Date().toISOString().split('T')[0];
+        payload.data_entrega = today;
+        payload.data_finalizacao = today;
       }
 
       if (selectedRowIds.length > 1) {
@@ -1375,7 +1389,7 @@ const GenericList = () => {
         } else {
           setData(prev => prev.map((item) =>
             (selectedRowIds.includes(item.id) || selectedRowIds.includes(item.id_sequencial))
-              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
+              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : newStatus === 'Entregue' ? { data_entrega: payload.data_entrega, data_finalizacao: payload.data_finalizacao } : {}) }
               : item
           ));
         }
@@ -1384,6 +1398,8 @@ const GenericList = () => {
         setSelectedRowIds([]);
         toast.success(newStatus === 'Despachado'
           ? `${count} pedidos despachados com sucesso!`
+          : newStatus === 'Entregue'
+          ? `${count} pedidos marcados como entregues com sucesso!`
           : `${count} itens atualizados com sucesso!`
         );
       } else {
@@ -1396,7 +1412,7 @@ const GenericList = () => {
         } else {
           setData(prev => prev.map((item) =>
             (item.id === selectedRowId || item.id_sequencial === selectedRowId || item.id_sequencial === idToUpdate)
-              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : {}) }
+              ? { ...item, situacao: newStatus, ...(newStatus === 'Despachado' ? { data_despacho: payload.data_despacho } : newStatus === 'Entregue' ? { data_entrega: payload.data_entrega, data_finalizacao: payload.data_finalizacao } : {}) }
               : item
           ));
         }
@@ -1404,6 +1420,8 @@ const GenericList = () => {
         setSelectedRowIds([]);
         toast.success(newStatus === 'Despachado'
           ? `Pedido despachado com sucesso.`
+          : newStatus === 'Entregue'
+          ? `Pedido marcado como entregue com sucesso.`
           : `Item alterado para ${newStatus} com sucesso.`
         );
       }
@@ -4323,6 +4341,9 @@ const GenericList = () => {
                           const label = (field?.options || []).find(opt => String(opt.value) === String(value))?.label || value;
                           let bgColor = 'bg-gray-100'; let textColor = 'text-gray-800'; let borderColor = 'border-gray-200';
                           if (String(value) === 'Cancelado') { bgColor = 'bg-red-100'; textColor = 'text-red-800'; borderColor = 'border-red-300'; }
+                          else if (String(value) === 'Entregue') { bgColor = 'bg-emerald-100'; textColor = 'text-emerald-800'; borderColor = 'border-emerald-300'; }
+                          else if (String(value) === 'Despachado') { bgColor = 'bg-blue-100'; textColor = 'text-blue-800'; borderColor = 'border-blue-300'; }
+                          else if (String(value) === 'Saiu para Entrega') { bgColor = 'bg-indigo-100'; textColor = 'text-indigo-800'; borderColor = 'border-indigo-300'; }
                           return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${bgColor} ${textColor} ${borderColor}`}>{label}</span>;
                         }
                         if (modelName === 'estoque') {
@@ -4635,21 +4656,30 @@ const GenericList = () => {
           title={
             (selectedRowIds.length > 1 && actionToConfirm?.newStatus === 'Despachado')
               ? "Despachar Pedidos em Lote"
-              : selectedRowIds.length > 1
-                ? `${actionToConfirm?.buttonLabel || 'Alterar Status'} em Lote`
-                : (actionToConfirm?.modalTitle || "Confirmar Ação")
+              : (selectedRowIds.length > 1 && actionToConfirm?.newStatus === 'Entregue')
+                ? "Marcar Pedidos como Entregues em Lote"
+                : selectedRowIds.length > 1
+                  ? `${actionToConfirm?.buttonLabel || 'Alterar Status'} em Lote`
+                  : (actionToConfirm?.modalTitle || "Confirmar Ação")
           }
           variant="info"
           confirmText={
             selectedRowIds.length > 1
-              ? (actionToConfirm?.newStatus === 'Despachado' ? "Sim, Despachar Todos" : "Confirmar em Lote")
+              ? (actionToConfirm?.newStatus === 'Despachado'
+                ? "Sim, Despachar Todos"
+                : actionToConfirm?.newStatus === 'Entregue'
+                  ? "Sim, Marcar Todos Entregues"
+                  : "Confirmar em Lote"
+              )
               : (actionToConfirm?.modalConfirmText || "Confirmar")
           }
         >
           {selectedRowIds.length > 1
             ? (actionToConfirm?.newStatus === 'Despachado'
               ? `Deseja marcar os ${selectedRowIds.length} pedidos selecionados como Despachado? Isso indica que eles saíram para entrega.`
-              : `Deseja alterar a situação dos ${selectedRowIds.length} itens selecionados para "${actionToConfirm?.newStatus}"?`
+              : actionToConfirm?.newStatus === 'Entregue'
+                ? `Deseja marcar os ${selectedRowIds.length} pedidos selecionados como Entregue? Isso registrará a entrega no ERP e sincronizará com Mercado Livre e Shopee.`
+                : `Deseja alterar a situação dos ${selectedRowIds.length} itens selecionados para "${actionToConfirm?.newStatus}"?`
             )
             : (actionToConfirm?.modalDescription || "Você tem certeza?")
           }
